@@ -1,0 +1,51 @@
+Installed 8 packages in 26ms
+
+==============================================================================
+Nova Micro: all pricing rows in us-east-1
+==============================================================================
+  USE1-NovaMicro-cache-read-input-token-count-custom-model      $ 0.0000087500/1K tokens     $0.00000875 per 1K tokens for USE1-NovaMicro-cache-read-input-token-count-custom
+  USE1-NovaMicro-cache-write-input-token-count-custom-model     $ 0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaMicro-cache-write-input-token-count-custom-mode
+  USE1-NovaMicro-cache-write-input-token-count                  $ 0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaMicro-cache-write-input-token-count in US East 
+  USE1-NovaMicro-output-tokens-custom-model                     $ 0.0001400000/1K tokens     $0.00014 per 1K tokens for USE1-NovaMicro-output-tokens-custom-model in US East 
+  USE1-NovaMicro-Customization-Storage                          $ 1.9500000000/Model/month   $1.95 per Model/month for Nova Micro in us-east-1(N. Virginia)
+  USE1-NovaMicro-output-tokens-batch                            $ 0.0000700000/1K tokens     $ 0.00007per 1K tokens for Nova Micro-output-tokens in us-east-1 (N. Virginia)
+  USE1-NovaMicro-Customization-Training                         $ 0.0010000000/1K tokens     $0.001 per 1K tokens for Nova Micro-Customization-Training in US East (N. Virgin
+  USE1-NovaMicro-ProvisionedThroughput-NoCommit-ModelUnits      $60.5000000000/hour          $60.50 per hour for USE1-NovaMicro-ProvisionedThroughput-NoCommit-ModelUnits in 
+  USE1-NovaMicro-ProvisionedThroughput-1month-ModelUnits        $55.0000000000/hour          $55.00 per hour for USE1-NovaMicro-ProvisionedThroughput-1month-ModelUnits in US
+  USE1-NovaMicro-input-tokens-custom-model                      $ 0.0000350000/1K tokens     $0.000035 per 1K tokens for USE1-NovaMicro-input-tokens-custom-model in US East 
+  USE1-NovaMicro-ProvisionedThroughput-6months-ModelUnits       $30.2500000000/hour          $30.25 per hour for USE1-NovaMicro-ProvisionedThroughput-6months-ModelUnits in U
+  USE1-NovaMicro-input-tokens                                   $ 0.0000350000/1K tokens     $ 0.000035 per 1K tokens for Nova Micro-input-tokens in us-east-1 (N. Virginia)
+  USE1-NovaMicro-output-tokens                                  $ 0.0001400000/1K tokens     $ 0.00014 per 1K tokens for Nova Micro-output-tokens in us-east-1 (N. Virginia)
+  USE1-NovaMicro-input-tokens-batch                             $ 0.0000175000/1K tokens     $ 0.0000175 per 1K tokens for Nova Micro-input-tokens in us-east-1 (N. Virginia)
+  USE1-NovaMicro-cache-read-input-token-count                   $ 0.0000087500/1K tokens     $0.00000875 per 1K cache read input tokens of Nova Micro in US East (N. Virginia
+
+==============================================================================
+Claude Haiku 4.5: model-attribute search
+==============================================================================
+
+==============================================================================
+Claude Haiku 4.5: keyword sweep across all AmazonBedrock in us-east-1
+==============================================================================
+Haiku 4.5-shaped hits: 0
+
+==============================================================================
+All Claude Haiku SKUs in us-east-1 (any version)
+==============================================================================
+  USE1-Claude3Haiku-input-tokens                                $ 0.0002500000/1K tokens     $0.00025 per 1K tokens for Claude3Haiku-input-tokens inUS East (N. Virginia)
+
+==============================================================================
+CloudWatch Logs: standard ingest (not vended)
+==============================================================================
+  USE1-FH-Egress-Bytes-CFLogs                                   $ 0.0500000000/GB            $0.05 per GB of CloudFront log data delivered to Kinesis Firehose over 50TB  -  
+  USE1-FH-Egress-Bytes-WAFLogs                                  $ 0.0750000000/GB            $0.075 per GB for the next 20TB of vended log data delivered to Kinesis Firehose
+  USE1-S3-Egress-Bytes-MTLogs                                   $ 0.0750000000/GB            $0.075 per GB for the next 20TB of vended log data delivered to S3 per month in 
+  USE1-Logs-LiveTail                                            $ 0.0100000000/minutes       $0.01 per minute of CloudWatch Logs Live Tail session - US East (N. Virginia)
+  USE1-S3-Egress-Bytes-WAFLogs                                  $ 0.2500000000/GB            $0.25 per GB for the first 10TB of vended log data delivered to S3 per month in 
+  USE1-FH-Egress-Bytes-MTLogs                                   $ 0.0500000000/GB            $0.05 per GB for over 50TB of vended log data delivered to Kinesis Firehose per 
+
+==============================================================================
+KMS customer-managed key monthly charge
+==============================================================================
+  us-east-1-KMS-Keys                                            $ 1.0000000000/Keys          $1 per customer managed KMS key version in US East (N. Virginia)
+
+DONE.

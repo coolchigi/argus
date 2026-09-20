@@ -87,9 +87,9 @@ Five agents. Roles locked. Orchestration framework decided below.
 | # | Agent | Job | Model | Rationale |
 |---|-------|-----|-------|-----------|
 | 1 | Sentinel | Poll IRCC pages hourly, diff, classify each change (form-version bump, procedural, eligibility rule, program open or close). Emit structured `PolicyDelta`. | **Nova Micro** | Structured classification, cheapest capable model per AWS Price List API. |
-| 2 | Analyst | For each `PolicyDelta`, query the affected caseload and generate per-client impact hypotheses (CRS point delta, eligibility flip, deadline shift, LMIA implications, French-bonus stacking). | **Claude Haiku 4.5** if listed at reasonable cost, else **Nova Pro** | Reasoning under structured schema. Follow-up Price List API query needed to confirm Haiku 4.5 SKU availability in us-east-1. |
-| 3 | Auditor | Adversarial review. Reject Analyst outputs that lack citations, fail edge-case checks (LMIA-exempt vs LMIA-supported, category-based-draw NOC overlaps), or violate structured schema. Vote-with-veto authority on the pipeline. | **Nova Pro** (Analyst on Haiku 4.5) OR **Claude Haiku 4.5** (Analyst on Nova Pro) | Cross-family adversarial. Whichever family Analyst uses, Auditor uses the other. Enforced. |
-| 3a | Auditor 2 (parallel) | Second independent Auditor invoked ONLY when Analyst's claim is high-stakes (CRS delta > 30 points, or eligibility flip). Consensus required from both Auditors before Anchor proceeds. | **Nova Pro** or **Claude Haiku 4.5** (opposite family from Auditor 1) | Two-family consensus kills any single-model failure mode. Fires on ~10% of claims. |
+| 2 | Analyst | For each `PolicyDelta`, query the affected caseload and generate per-client impact hypotheses (CRS point delta, eligibility flip, deadline shift, LMIA implications, French-bonus stacking). | **Nova Pro** | Primary reasoning under structured schema. Priced $0.80/M in, $3.20/M out (Price List API 2026-09-19). Claude Haiku 4.5 is available on Bedrock via inference profile but its pricing SKU did not surface through the Price List API; we revisit when its rate card is confirmed. |
+| 3 | Auditor 1 | Adversarial review. Reject Analyst outputs that lack citations, fail edge-case checks (LMIA-exempt vs LMIA-supported, category-based-draw NOC overlaps), or violate structured schema. Vote-with-veto authority on the pipeline. | **Claude 3 Haiku** | Cross-family from Analyst (Anthropic vs Amazon). Priced $0.25/M in (Price List API 2026-09-19). |
+| 3a | Auditor 2 (parallel) | Second independent Auditor invoked ONLY when Analyst's claim is high-stakes (CRS delta > 30 points, or eligibility flip). Consensus required from both Auditors before Anchor proceeds. | **Nova Lite** | Different from Analyst (Nova Pro) and Auditor 1 (Claude 3 Haiku). Priced $0.06/M in. Fires on ~10% of claims per `scripts/cost_model.py`. |
 | 4 | Anchor | Attach exact IRCC paragraph text, URL, and revision hash to every surviving claim. Sign the resulting assessment with KMS ECDSA P-256. No anchor, no publish. | **Nova Micro plus KMS** | Deterministic structured extraction from IRCC page text. KMS for signature. |
 | 5 | Composer | Compose per-client briefs. For high-impact deltas, call HeyGen for a 60-second narrated video. | **Nova Lite** | Plain-language prose composition. Cheap. Longer output than Micro comfortably handles. |
 | 6 | Recall | Nightly re-scan of the last 30 days of IRCC pages. Catches anything Sentinel missed on its hourly pass. Emits `MissedPolicyDelta` events that feed back into the pipeline. | **Nova Micro** | Catches false negatives on the ingest side. One pass per day. |
@@ -276,12 +276,20 @@ No calibrated-to-pass tests. If we mock what we are supposed to be testing, we c
 - All other AWS: budget CA$50.
 - CA$150 total ceiling. Budgets alarm at 50% and 90%.
 
-**Cost transparency for the writeup (target headline numbers, based on the cost model in Section 6):**
-- Cost per policy change monitored across a 100-client caseload: **~CA$0.40 with caching**.
-- Cost per client screening (one policy change, one client): **~CA$0.004**.
-- Monthly cost per RCIC at 100 clients and 3 policy changes per week: **~CA$5**.
+**Cost transparency for the writeup (real numbers from `scripts/cost_model.py`).**
 
-These beat the CA$29-225/user/month range of incumbents by 5x to 40x. Publish this table verbatim in the writeup's "How I Built This" section.
+All Bedrock rates below are verbatim from the AWS Price List API in us-east-1, run 2026-09-19 (see `scripts/pricing_lookup.out`). Per-scenario totals include Bedrock plus KMS plus CloudWatch Logs plus a nominal DynamoDB and Cognito line.
+
+| Scenario | Per PolicyDelta run | Per-client per month | Per-RCIC per month |
+|----------|--------------------:|---------------------:|-------------------:|
+| Demo (10 clients, 1 event/week) | $0.07 | $0.17 | $1.67 |
+| Working RCIC (100 clients, 3 events/week) | $0.67 | $0.10 | $10.11 |
+| Mid-size firm (500 clients, 5 events/week) | $3.35 | $0.15 | $73.93 |
+| Worst case, no caching (100 clients, 3 events/week) | $0.87 | $0.13 | $12.70 |
+
+Incumbent tools charge CA$29 to CA$225 per user per month and do not deliver policy-impact analysis. Argus's cost floor is ~$10 per RCIC per month at typical usage, giving room for a CA$49 to CA$99 price point with a healthy gross margin.
+
+The Analyst step dominates cost. When we optimize prompt shape, this is the target.
 
 ## 15. Scope cuts (won't build)
 
