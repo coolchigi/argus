@@ -38,7 +38,9 @@ dist/
 build/
 coverage/
 
-research/
+research/*
+
+docs/
 
 # Secrets (belt-and-suspenders)
 *.pem
