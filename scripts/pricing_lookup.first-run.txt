@@ -1,0 +1,215 @@
+Installed 1 package in 5ms
+
+==============================================================================
+Service codes: search for 'agentcore' and 'bedrock' and 'cognito'
+==============================================================================
+
+==============================================================================
+Bedrock model-invocation pricing (input, output, cache tokens)
+==============================================================================
+
+--- Nova family ---
+USE1-NovaPro-cache-write-input-token-count-custom-model  $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaPro-cache-write-input-token-count-cus
+USE1-NovaLite-input-tokens-custom-model             $0.0000600000/1K tokens     $0.00006 per 1K tokens for USE1-NovaLite-input-tokens-custom-model in 
+USE1-NovaMicro-cache-read-input-token-count-custom-model  $0.0000087500/1K tokens     $0.00000875 per 1K tokens for USE1-NovaMicro-cache-read-input-token-co
+USE1-NovaPro-Customization-Storage                  $1.9500000000/Model/month   $1.95 per Model/month for Nova Pro in us-east-1(N. Virginia)
+USE1-NovaLite-ProvisionedThroughput-6months-ModelUnits  $30.2500000000/hour          $30.25 per hour for USE1-NovaLite-ProvisionedThroughput-6months-ModelU
+USE1-NovaPro-cache-read-input-token-count           $0.0002000000/1K tokens     $0.0002 per 1K cache read input tokens of Nova Pro in US East (N. Virg
+USE1-NovaMicro-cache-write-input-token-count-custom-model  $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaMicro-cache-write-input-token-count-c
+USE1-NovaPro-Customization-Training                 $0.0080000000/1K tokens     $0.008 per 1K tokens for Nova Pro-Customization-Training in US East (N
+USE1-NovaLite-Customization-Training                $0.0020000000/1K tokens     $0.002 per 1K tokens for Nova Lite-Customization-Training in US East (
+USE1-NovaPro-ProvisionedThroughput-1month-ModelUnits  $55.0000000000/hour          $55.00 per hour for USE1-NovaPro-ProvisionedThroughput-1month-ModelUni
+USE1-NovaPro-input-tokens-batch                     $0.0004000000/1K tokens     $ 0.0004 per 1K tokens for Nova Pro-input-tokens in us-east-1 (N. Virg
+USE1-NovaMicro-cache-write-input-token-count        $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaMicro-cache-write-input-token-count i
+USE1-NovaPro-output-tokens-custom-model             $0.0032000000/1K tokens     $0.0032 per 1K tokens for USE1-NovaPro-output-tokens-custom-model in U
+USE1-NovaPro-input-tokens                           $0.0008000000/1K tokens     $ 0.0008 per 1K tokens for Nova Pro-input-tokens in us-east-1 (N. Virg
+USE1-NovaMicro-output-tokens-custom-model           $0.0001400000/1K tokens     $0.00014 per 1K tokens for USE1-NovaMicro-output-tokens-custom-model i
+USE1-NovaPro-output-tokens-latency-optimized        $0.0040000000/1K tokens     $0.004 per 1K tokens for USE1-NovaPro-output-tokens-latency-optimized 
+USE1-NovaPro-output-tokens-flex                     $0.0016000000/1K tokens     $0.0016 per 1K tokens for USE1-NovaPro-output-tokens-flex in US East (
+USE1-NovaPro-output-tokens                          $0.0032000000/1K tokens     $ 0.0032 per 1K tokens for Nova Pro-output-tokens in us-east-1 (N. Vir
+USE1-NovaLite-output-tokens                         $0.0002400000/1K tokens     $0.00024 per 1K tokens for Nova Lite-output-tokens in us-east-1 (N. Vi
+USE1-NovaPro-cache-write-input-token-count-flex     $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaPro-cache-write-input-token-count-fle
+USE1-NovaMicro-Customization-Storage                $1.9500000000/Model/month   $1.95 per Model/month for Nova Micro in us-east-1(N. Virginia)
+USE1-NovaLite-ProvisionedThroughput-1month-ModelUnits  $55.0000000000/hour          $55.00 per hour for USE1-NovaLite-ProvisionedThroughput-1month-ModelUn
+USE1-NovaPro-ProvisionedThroughput-6months-ModelUnits  $30.2500000000/hour          $30.25 per hour for USE1-NovaPro-ProvisionedThroughput-6months-ModelUn
+USE1-NovaLite-cache-write-input-token-count-custom-model  $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaLite-cache-write-input-token-count-cu
+USE1-NovaPro-cache-read-input-token-count-flex      $0.0001000000/1K tokens     $0.0001 per 1K tokens for USE1-NovaPro-cache-read-input-token-count-fl
+USE1-NovaPro-input-tokens-priority                  $0.0014000000/1K tokens     $0.0014 per 1K tokens for USE1-NovaPro-input-tokens-priority in US Eas
+USE1-NovaLite-input-tokens-batch                    $0.0000300000/1K tokens     $0.00003 per 1K tokens for Nova Lite-input-tokens in us-east-1 (N. Vir
+USE1-NovaLite-cache-read-input-token-count          $0.0000150000/1K tokens     $0.000015 per 1K cache read input tokens of Nova Lite in US East (N. V
+
+--- Claude Haiku (4.5 target) ---
+(no rows matched)
+
+--- Cache-token pricing (write/read) ---
+USE1-xai.grok-4.6-mantle-cache-read-tokens-global-priority  $0.0008750000/1K tokens     $0.000875 per 1K token for xai.grok-4.6-mantle-cache-read-tokens-globa
+USE1-NovaPro-cache-write-input-token-count-custom-model  $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaPro-cache-write-input-token-count-cus
+USE1-moonshotai.kimi-k3-mantle-cache-read-tokens-flex  $0.0001650000/1K tokens     $0.000165 per 1K token for moonshotai.kimi-k3-mantle-cache-read-tokens
+USE1-moonshotai.kimi-k3-mantle-cache-read-tokens-priority  $0.0005775000/1K tokens     $0.0005775 per 1K token for moonshotai.kimi-k3-mantle-cache-read-token
+USE1-NovaMicro-cache-read-input-token-count-custom-model  $0.0000087500/1K tokens     $0.00000875 per 1K tokens for USE1-NovaMicro-cache-read-input-token-co
+USE1-xai.grok-4.6-mantle-cache-read-tokens-global-flex  $0.0002500000/1K tokens     $0.00025 per 1K token for xai.grok-4.6-mantle-cache-read-tokens-global
+USE1-NovaPro-cache-read-input-token-count           $0.0002000000/1K tokens     $0.0002 per 1K cache read input tokens of Nova Pro in US East (N. Virg
+USE1-NovaMicro-cache-write-input-token-count-custom-model  $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaMicro-cache-write-input-token-count-c
+USE1-NovaPremier-cache-write-input-token-count-flex  $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaPremier-cache-write-input-token-count
+USE1-moonshotai.kimi-k3-mantle-cache-write-tokens-30m-standard  $0.0041250000/1K tokens     $0.004125 per 1K token for moonshotai.kimi-k3-mantle-cache-write-token
+USE1-moonshotai.kimi-k3-mantle-cache-write-tokens-30m-global-flex  $0.0018750000/1K tokens     $0.001875 per 1K token for moonshotai.kimi-k3-mantle-cache-write-token
+USE1-Nova2.0Lite-cache-read-input-token-count-custom-model  $0.0000750000/1K tokens     $0.000075 per 1K tokens for USE1-Nova2.0Lite-cache-read-input-token-co
+USE1-NovaMicro-cache-write-input-token-count        $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaMicro-cache-write-input-token-count i
+USE1-xai.grok-4.3-mantle-cache-read-tokens-priority  $0.3500000000/1M tokens     USD 0.35 per 1M tokens for USE1-xai.grok-4.3-mantle-cache-read-tokens-
+USE1-xai.grok-4.3-mantle-cache-read-tokens-flex     $0.1000000000/1M tokens     USD 0.10 per 1M tokens for USE1-xai.grok-4.3-mantle-cache-read-tokens-
+USE1-NovaPremier-cache-read-input-token-count       $0.0006250000/1K tokens     $0.000625 per 1K tokens for USE1-NovaPremier-cache-read-input-token-co
+USE1-moonshotai.kimi-k3-mantle-cache-read-tokens-global-flex  $0.0001500000/1K tokens     $0.00015 per 1K token for moonshotai.kimi-k3-mantle-cache-read-tokens-
+USE1-xai.grok-4.6-mantle-cache-read-tokens-priority  $0.0009625000/1K tokens     $0.0009625 per 1K token for xai.grok-4.6-mantle-cache-read-tokens-prio
+USE1-Nova2.0Lite-cache-write-input-token-count-cross-region-global  $0.0000000000/1K tokens     $0.00 per 1K token for Nova2.0Lite-cache-write-input-token-count-cross
+USE1-NovaPro-cache-write-input-token-count-flex     $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaPro-cache-write-input-token-count-fle
+USE1-Nova2.0Lite-cache-write-input-token-count-priority-cross-region-global  $0.0000000000/1K tokens     $0.00 per 1K token for Nova2.0Lite-cache-write-input-token-count-prior
+USE1-NovaLite-cache-write-input-token-count-custom-model  $0.0000000000/1K tokens     $0.00 per 1K tokens for USE1-NovaLite-cache-write-input-token-count-cu
+USE1-NovaPro-cache-read-input-token-count-flex      $0.0001000000/1K tokens     $0.0001 per 1K tokens for USE1-NovaPro-cache-read-input-token-count-fl
+USE1-xai.grok-4.6-mantle-cache-read-tokens-global-standard  $0.0005000000/1K tokens     $0.0005 per 1K token for xai.grok-4.6-mantle-cache-read-tokens-global-
+USE1-moonshotai.kimi-k3-mantle-cache-write-tokens-30m-flex  $0.0020625000/1K tokens     $0.0020625 per 1K token for moonshotai.kimi-k3-mantle-cache-write-toke
+USE1-Nova2.0Lite-cache-read-input-token-count-priority  $0.0001443750/1K tokens     $0.000144375 per 1K tokens for USE1-Nova2.0Lite-cache-read-input-token
+USE1-Nova2.0Lite-cache-read-input-token-count-priority-cross-region-global  $0.0001312500/1K tokens     $0.00013125 per 1K token for Nova2.0Lite-cache-read-input-token-count-
+USE1-NovaLite-cache-read-input-token-count          $0.0000150000/1K tokens     $0.000015 per 1K cache read input tokens of Nova Lite in US East (N. V
+USE1-moonshotai.kimi-k3-mantle-cache-write-tokens-30m-priority  $0.0072187500/1K tokens     $0.00721875 per 1K token for moonshotai.kimi-k3-mantle-cache-write-tok
+
+==============================================================================
+AgentCore Runtime and Gateway
+==============================================================================
+
+--- Trying service code: AmazonBedrockAgentCore ---
+Runtime:Instance-based:c6id.16xlarge:Management-Hours  $0.3870720000/Hours         $0.387072 per Hour for Runtime:Instance-based:c6id.16xlarge:Management
+Runtime:Instance-based:r5a.4xlarge:Management-Hours  $0.1084800000/Hours         $0.10848 per Hour for Runtime:Instance-based:r5a.4xlarge:Management-Ho
+Runtime:Instance-based:c6a.24xlarge:Management-Hours  $0.4406400000/Hours         $0.44064 per Hour for Runtime:Instance-based:c6a.24xlarge:Management-H
+Runtime:Instance-based:m7i.4xlarge:Management-Hours  $0.0967680000/Hours         $0.096768 per Hour for Runtime:Instance-based:m7i.4xlarge:Management-H
+Runtime:Instance-based:r8idb.4xlarge:Management-Hours  $0.2250910000/Hours         $0.225091 per Hour for Runtime:Instance-based:r8idb.4xlarge:Management
+Runtime:Instance-based:g7e.48xlarge:Management-Hours  $2.5852570000/Hours         $2.585257 per Hour for Runtime:Instance-based:g7e.48xlarge:Management-
+Runtime:Instance-based:c6g.xlarge:Management-Hours  $0.0163200000/Hours         $0.01632 per Hour for Runtime:Instance-based:c6g.xlarge:Management-Hou
+Runtime:Instance-based:m8id.48xlarge:Management-Hours  $1.5035900000/Hours         $1.50359 per Hour for Runtime:Instance-based:m8id.48xlarge:Management-
+Runtime:Instance-based:m5ad.24xlarge:Management-Hours  $0.5932800000/Hours         $0.59328 per Hour for Runtime:Instance-based:m5ad.24xlarge:Management-
+Runtime:Instance-based:r5b.24xlarge:Management-Hours  $0.8582400000/Hours         $0.85824 per Hour for Runtime:Instance-based:r5b.24xlarge:Management-H
+Runtime:Instance-based:m8in.4xlarge:Management-Hours  $0.1603970000/Hours         $0.160397 per Hour for Runtime:Instance-based:m8in.4xlarge:Management-
+Runtime:Instance-based:r8in.24xlarge:Management-Hours  $1.2049920000/Hours         $1.204992 per Hour for Runtime:Instance-based:r8in.24xlarge:Management
+Runtime:Instance-based:c8a.12xlarge:Management-Hours  $0.3103780000/Hours         $0.310378 per Hour for Runtime:Instance-based:c8a.12xlarge:Management-
+Runtime:Instance-based:m5ad.12xlarge:Management-Hours  $0.2966400000/Hours         $0.29664 per Hour for Runtime:Instance-based:m5ad.12xlarge:Management-
+Runtime:Instance-based:c6gn.4xlarge:Management-Hours  $0.0829440000/Hours         $0.082944 per Hour for Runtime:Instance-based:c6gn.4xlarge:Management-
+Runtime:Instance-based:c6a.4xlarge:Management-Hours  $0.0734400000/Hours         $0.07344 per Hour for Runtime:Instance-based:c6a.4xlarge:Management-Ho
+Runtime:Instance-based:r6i.12xlarge:Management-Hours  $0.3628800000/Hours         $0.36288 per Hour for Runtime:Instance-based:r6i.12xlarge:Management-H
+Runtime:Instance-based:r5n.4xlarge:Management-Hours  $0.1430400000/Hours         $0.14304 per Hour for Runtime:Instance-based:r5n.4xlarge:Management-Ho
+Runtime:Instance-based:r6a.large:Management-Hours   $0.0136080000/Hours         $0.013608 per Hour for Runtime:Instance-based:r6a.large:Management-Hou
+Runtime:Instance-based:r7g.xlarge:Management-Hours  $0.0257040000/Hours         $0.025704 per Hour for Runtime:Instance-based:r7g.xlarge:Management-Ho
+Runtime:Instance-based:r6g.8xlarge:Management-Hours  $0.1935360000/Hours         $0.193536 per Hour for Runtime:Instance-based:r6g.8xlarge:Management-H
+Runtime:Instance-based:c6a.12xlarge:Management-Hours  $0.2203200000/Hours         $0.22032 per Hour for Runtime:Instance-based:c6a.12xlarge:Management-H
+Runtime:Instance-based:m6i.12xlarge:Management-Hours  $0.2764800000/Hours         $0.27648 per Hour for Runtime:Instance-based:m6i.12xlarge:Management-H
+Runtime:Instance-based:r6in.16xlarge:Management-Hours  $0.6694270000/Hours         $0.669427 per Hour for Runtime:Instance-based:r6in.16xlarge:Management
+Runtime:Instance-based:g6f.large:Management-Hours   $0.0157560000/Hours         $0.015756 per Hour for Runtime:Instance-based:g6f.large:Management-Hou
+Runtime:Instance-based:c9gd.48xlarge:Management-Hours  $1.2303360000/Hours         $1.230336 per Hour for Runtime:Instance-based:c9gd.48xlarge:Management
+Runtime:Instance-based:m6a.32xlarge:Management-Hours  $0.6635520000/Hours         $0.663552 per Hour for Runtime:Instance-based:m6a.32xlarge:Management-
+Runtime:Instance-based:c8i.24xlarge:Management-Hours  $0.5397700000/Hours         $0.53977 per Hour for Runtime:Instance-based:c8i.24xlarge:Management-H
+Runtime:Instance-based:r7gd.large:Management-Hours  $0.0163320000/Hours         $0.016332 per Hour for Runtime:Instance-based:r7gd.large:Management-Ho
+Runtime:Instance-based:r6id.2xlarge:Management-Hours  $0.0725760000/Hours         $0.072576 per Hour for Runtime:Instance-based:r6id.2xlarge:Management-
+Runtime:Instance-based:c8i.32xlarge:Management-Hours  $0.7196930000/Hours         $0.719693 per Hour for Runtime:Instance-based:c8i.32xlarge:Management-
+Runtime:Instance-based:m5ad.16xlarge:Management-Hours  $0.3955200000/Hours         $0.39552 per Hour for Runtime:Instance-based:m5ad.16xlarge:Management-
+Runtime:Instance-based:r6a.2xlarge:Management-Hours  $0.0544320000/Hours         $0.054432 per Hour for Runtime:Instance-based:r6a.2xlarge:Management-H
+Runtime:Instance-based:c8i.96xlarge:Management-Hours  $2.1590780000/Hours         $2.159078 per Hour for Runtime:Instance-based:c8i.96xlarge:Management-
+Runtime:Instance-based:r5d.2xlarge:Management-Hours  $0.0691200000/Hours         $0.06912 per Hour for Runtime:Instance-based:r5d.2xlarge:Management-Ho
+Runtime:Instance-based:m5dn.8xlarge:Management-Hours  $0.2611200000/Hours         $0.26112 per Hour for Runtime:Instance-based:m5dn.8xlarge:Management-H
+Runtime:Instance-based:r5.12xlarge:Management-Hours  $0.3628800000/Hours         $0.36288 per Hour for Runtime:Instance-based:r5.12xlarge:Management-Ho
+Runtime:Instance-based:c8id.4xlarge:Management-Hours  $0.1064450000/Hours         $0.106445 per Hour for Runtime:Instance-based:c8id.4xlarge:Management-
+Runtime:Instance-based:c6i.2xlarge:Management-Hours  $0.0408000000/Hours         $0.0408 per Hour for Runtime:Instance-based:c6i.2xlarge:Management-Hou
+Runtime:Instance-based:m8g.16xlarge:Management-Hours  $0.3446780000/Hours         $0.344678 per Hour for Runtime:Instance-based:m8g.16xlarge:Management-
+... (441 more rows suppressed)
+
+--- Trying service code: BedrockAgentCore ---
+  (no rows via BedrockAgentCore + 'agentcore' keyword)
+
+--- Trying service code: AmazonBedrockAgent ---
+  (no rows via AmazonBedrockAgent + 'agentcore' keyword)
+
+--- Trying service code: AmazonBedrock ---
+  (no rows via AmazonBedrock + 'agentcore' keyword)
+
+==============================================================================
+Cognito user-pool MAU pricing
+==============================================================================
+USE1-CognitoPlusMRRMAU                              $0.0060000000/CognitoUserPoolsMAU  Cognito Plus multi-region-replication add-on us-east-1 tier 1 pricing
+USE1-CognitoPlusMAU                                 $0.0200000000/CognitoUserPoolsMAU  Cognito Plus us-east-1 tier 1 pricing
+USE1-CognitoEnterpriseMAU                           $0.0150000000/CognitoUserPoolsMAU  Cognito User Pools us-east-1 enterprise users tier 1 pricing
+USE1-CognitoEssentialsMRRMAU                        $0.0045000000/CognitoUserPoolsMAU  Cognito Essentials multi-region-replication add-on us-east-1 tier 1 pr
+USE1-CognitoLiteMAU                                 $0.0055000000/CognitoUserPoolsMAU  Cognito Lite us-east-1 tier 1 pricing
+USE1-CognitoUserPoolsMAU                            $0.0025000000/CognitoUserPoolsMAU  Cognito User Pools us-east-1 tier 4 pricing
+USE1-CognitoASFMAU                                  $0.0200000000/CognitoUserPoolsMAU  Cognito User Pools us-east-1 advanced security features users tier 3 p
+USE1-CognitoEssentialsMAU                           $0.0150000000/CognitoUserPoolsMAU  Cognito Essentials us-east-1 tier 1 pricing
+
+==============================================================================
+KMS: customer-managed keys and API request pricing
+==============================================================================
+us-east-1-KMS-Requests-Asymmetric-RSA_2048          $0.0000030000/Requests      $0.03 per 10000 KMS RSA 2048 requests in US East (N. Virgina)
+us-east-1-KMS-Requests-GenerateDatakeyPair-RSA      $0.0012000000/Requests      $12 per 10000 RSA Generate Data Key Pair Requests in US East (N. Virgi
+us-east-1-KMS-Requests                              $0.0000030000/Requests      $0.03 per 10000 KMS requests in US East (N. Virginia)
+us-east-1-KMS-Requests-Asymmetric                   $0.0000150000/Requests      $0.15 per 10000 KMS Asymmetric Requests excluding RSA 2048 in US East 
+us-east-1-KMS-Requests-GenerateDatakeyPair-ECC      $0.0000100000/Requests      $0.1 per 10000 ECC Generate Data Key Pair Requests in US East (N. Virg
+
+==============================================================================
+CloudWatch Logs: ingestion, storage, encryption
+==============================================================================
+USE1-FH-Egress-Bytes-CFLogs                         $0.0500000000/GB            $0.05 per GB of CloudFront log data delivered to Kinesis Firehose over
+USE1-DataScanned-Bytes                              $0.0050000000/GB            $0.005 per GB log data scanned by CloudWatch Logs Insights queries - U
+USE1-FH-Egress-Bytes-WAFLogs                        $0.0750000000/GB            $0.075 per GB for the next 20TB of vended log data delivered to Kinesi
+USE1-TimedStorage-ByteHrs                           $0.0300000000/GB-Mo         $0.03 per GB-mo of log storage - US East (Northern Virginia)
+USE1-S3-Egress-Bytes-MTLogs                         $0.0750000000/GB            $0.075 per GB for the next 20TB of vended log data delivered to S3 per
+USE1-VendedLog-Bytes-CFLogs                         $0.1000000000/GB            $0.10 per GB of CloudFront vended logs ingested in Standard log class 
+USE1-VendedLog-Bytes-WAFLogs                        $0.2500000000/GB            $0.25 per GB for the next 20TB of vended log data ingested to CloudWat
+USE1-VendedLog-Bytes-MTLogs                         $0.2500000000/GB            $0.25 per GB for the next 20TB of vended log data ingested to CloudWat
+USE1-Logs-LiveTail                                  $0.0100000000/minutes       $0.01 per minute of CloudWatch Logs Live Tail session - US East (N. Vi
+TimedStorage-ByteHrs                                $0.0300000000/GB-Mo         $0.03 per GB-mo of log storage - US East (Northern Virginia)
+USE1-VendedLogIA-Bytes-WAFLogs                      $0.2500000000/GB            $0.25 per GB for the first 10TB of USE1-VendedLogIA-Bytes-WAFLogs in U
+USE1-S3-Egress-Bytes-WAFLogs                        $0.2500000000/GB            $0.25 per GB for the first 10TB of vended log data delivered to S3 per
+USE1-FH-Egress-Bytes-MTLogs                         $0.0500000000/GB            $0.05 per GB for over 50TB of vended log data delivered to Kinesis Fir
+USE1-VendedLogIA-Bytes-CFLogs                       $0.0500000000/GB            $0.05 per GB of CloudFront vended logs ingested in Infrequent Access l
+USE1-VendedLogIA-Bytes-MTLogs                       $0.1500000000/GB            $0.15 per GB for the next 20TB of USE1-VendedLogIA-Bytes-MTLogs in US 
+
+==============================================================================
+VPC-mode extras: NAT Gateway and PrivateLink endpoint
+==============================================================================
+
+--- NAT Gateway ---
+(no rows matched)
+
+--- VPC Interface Endpoints (PrivateLink) ---
+USE1-VpcEndpoint-Resource-Hours                     $0.0200000000/Hrs           $0.02 per hour per VPC resource for VPC endpoint of type 'resource' in
+USE1-VpcEndpoint-Tunnel-Hours                       $0.0200000000/Hrs           $0.02 - Hourly charge to access CIDR resources through Tunnel endpoint
+USE1-VpcResource-Tunnel-Consumer-Bytes              $0.0040000000/GB            $0.004 after the first 5 PB - Per GB charge to access CIDR Resources t
+USE1-VpcEndpoint-GWLBE-Hours                        $0.0100000000/Hrs           $0.01 per Hrs for VpcEndpoint-GWLBE-Hours:VpcEndpoint in US East (N. V
+USE1-VpcEndpoint-Bytes                              $0.0100000000/GB            $0.01 per GB for upto 1 PB monthly data processed by VPC Endpoints
+USE1-VpcEndpoint-Hours                              $0.0100000000/Hrs           $0.01 per VPC Endpoint Hour
+USE1-ClientVPN-EndpointHours                        $0.1000000000/Hourly        $0.1 per Client VPN Endpoint Association Hour
+USE1-RouteServer-EndpointHours                      $0.7500000000/Hour          $0.75 per Hour for USE1-RouteServer-EndpointHours in US East (N. Virgi
+USE1-VpcEndpoint-GWLBE-Bytes                        $0.0035000000/GB            Charge for per GB data processed by AWS Gateway Load Balancer VPC Endp
+USE1-VpcEndpoint-ODB-Resource-Hours                 $0.1000000000/Hrs           $0.10 - Hourly charge to access ODB Network Resource through Resource-
+USE1-VpcEndpoint-Service-Hours                      $0.0500000000/Hrs           $0.05 per hour per active remote region for a VPCE service
+
+==============================================================================
+Amplify Hosting
+==============================================================================
+USE1-HostingComputeRequestCount                     $0.0000003000/Requests      USD 0.30 per 1 million requests for Amplify Hosting Compute
+USE1-BuildDuration                                  $0.0100000000/minutes       $0.01 per build minute (4 vCPU, 7 GB Memory)
+USE1-AmplifyWAF                                     $15.0000000000/Months        $15.00 per Months for USE1-AmplifyWAF in US East (N. Virginia)
+USE1-BuildDuration-XLarge72GB                       $0.1000000000/minutes       $0.10 per minute for BuildDuration-XLarge72GB in US East (N. Virginia)
+USE1-DataTransferOut                                $0.1500000000/GigaBytes     $0.15 per GB served (data transfer out)
+USE1-DataStorage                                    $0.0230000000/GigaBytes     $0.023 per GB build artifacts stored
+USE1-HostingComputeRequestDuration                  $0.0000555556/GB-Seconds    USD 0.20 per GB-Hour for Amplify Hosting Compute
+USE1-BuildDuration-Large16GB                        $0.0250000000/minutes       $0.025 per minute for BuildDuration-Large16GB in US East (N. Virginia)
+
+==============================================================================
+DynamoDB on-demand (PAY_PER_REQUEST)
+==============================================================================
+VectorWriteRequest                                  $0.5200000000/GB            $0.52 per GB of vector write requests in US East (N. Virginia)
+ReplWriteRequestUnits                               $0.0000006250/ReplicatedWriteRequestUnits  $0.625 per million replicated write request units (N. Virginia)
+ReadRequestUnits                                    $0.0000001250/ReadRequestUnits  $0.125 per million read request units (N. Virginia)
+IA-VectorWriteRequest                               $0.6500000000/GB            $0.65 per GB of IA vector write requests in US East (N. Virginia)
+IA-ReplWriteRequestUnits                            $0.0000007800/ReplicatedWriteRequestUnits  $0.78 per million replicated IA write request units in US East (N. Vir
+WriteRequestUnits                                   $0.0000006250/WriteRequestUnits  $0.625 per million write request units (N. Virginia)
+IA-WriteRequestUnits                                $0.0000007800/WriteRequestUnits  $0.78 per million IA write request units in US East (N. Virginia)
+IA-ReadRequestUnits                                 $0.0000001550/ReadRequestUnits  $0.155 per million IA read request units in US East (N. Virginia)
+
+DONE. All prices from the AWS Price List API (us-east-1), pulled at run time.

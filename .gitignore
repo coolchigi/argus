@@ -1,0 +1,45 @@
+# Node
+node_modules/
+.env
+.env.local
+.env.*.local
+.next/
+out/
+
+# Python
+__pycache__/
+.venv/
+*.pyc
+.uv/
+
+# CDK
+cdk.out/
+.cdk.staging/
+
+# AWS SAM
+.aws-sam/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local build artifacts
+brag-output/
+dist/
+build/
+coverage/
+
+# Secrets (belt-and-suspenders)
+*.pem
+*.key
+credentials
+secrets/
