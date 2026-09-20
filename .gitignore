@@ -38,6 +38,8 @@ dist/
 build/
 coverage/
 
+research/
+
 # Secrets (belt-and-suspenders)
 *.pem
 *.key
