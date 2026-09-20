@@ -40,6 +40,7 @@ Match `~/.claude/voice-dna.md` and this repo's writing. Hard rules:
 - The six named agents (Sentinel, Analyst, Auditor, Anchor, Composer, Recall) are separate Bedrock invocations with separate models, prompts, and tool sets. This is a Strands Graph, not an orchestrator plus tools. Agent-as-Tool pattern is banned in this repo.
 - Cross-family adversarial. Analyst and Auditor MUST come from different model families. If they cannot, escalate.
 - Every ImpactAssessment MUST be KMS-signed (ECDSA P-256, public JWKS endpoint). No signature, no publish.
+- NO CLIENT PII IN ARGUS AT ANY LAYER. Not the model, not the application, not the database, not the logs. Client identity is an opaque `client_id` supplied by the RCIC. See design doc Section 6a. Consultant PII (their own name, email, R-license) is the only PII we hold. If a schema field or code path would ingest client names, emails, phone numbers, addresses, or DOB, escalate.
 - Tests stress functionality. If a test is calibrated to pass rather than to catch a real failure, delete it.
 - No hyperfocus on the 13-day countdown, and no scope creep. When in doubt, cut.
 - Any architectural decision that touches Sections 6, 9, or 17 of `docs/argus-design.md` needs an ADR in `docs/adr/`.
