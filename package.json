@@ -1,0 +1,9 @@
+{
+  "name": "argus-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Root package for CDK NodejsFunction bundling. Not published.",
+  "devDependencies": {
+    "esbuild": "^0.28.2"
+  }
+}

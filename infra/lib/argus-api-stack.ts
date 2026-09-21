@@ -1,3 +1,4 @@
+import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigwv2auth from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
@@ -6,12 +7,21 @@ import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as events from 'aws-cdk-lib/aws-events';
 import * as targets from 'aws-cdk-lib/aws-events-targets';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import { Construct } from 'constructs';
+
+const IRCC_SEED_URLS = [
+  'https://www.canada.ca/en/immigration-refugees-citizenship/news.html',
+  'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry/submit-profile/rounds-invitations.html',
+  'https://www.canada.ca/en/immigration-refugees-citizenship/corporate/mandate/policies-operational-instructions-agreements/ministerial-instructions.html',
+  'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry/eligibility/criminal-record/comprehensive-ranking-system/grid.html',
+];
 
 export interface ArgusApiStackProps extends cdk.StackProps {
   readonly userPool: cognito.UserPool;
@@ -74,8 +84,44 @@ export class ArgusApiStack extends cdk.Stack {
     const impactsHandler = placeholder('ImpactsHandler', 'impacts');
     const demoHandler = placeholder('DemoHandler', 'demo');
 
-    // Background workers.
-    const sentinelHandler = placeholder('SentinelHandler', 'sentinel');
+    const sentinelLogGroup = new logs.LogGroup(this, 'SentinelHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-sentinel',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const sentinelHandler = new nodejs.NodejsFunction(this, 'SentinelHandler', {
+      functionName: 'argus-sentinel',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/sentinel/package-lock.json'),
+      entry: path.join(__dirname, '../../services/sentinel/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.minutes(3),
+      memorySize: 512,
+      environment: {
+        POLICY_CORPUS_BUCKET: props.policyCorpusBucket.bucketName,
+        IRCC_SEED_URLS: JSON.stringify(IRCC_SEED_URLS),
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: sentinelLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: {
+        minify: true,
+        target: 'es2022',
+        format: nodejs.OutputFormat.ESM,
+        sourceMap: true,
+      },
+    });
+
+    sentinelHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['events:PutEvents'],
+        resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
+      }),
+    );
+
     const recallHandler = placeholder('RecallHandler', 'recall');
     const orchestratorHandler = placeholder('OrchestratorHandler', 'orchestrator');
     const alertsStreamHandler = placeholder('AlertsStreamHandler', 'alerts-stream');
@@ -101,9 +147,7 @@ export class ArgusApiStack extends cdk.Stack {
     props.clientProfilesTable.grantReadWriteData(demoHandler);
     props.policyEventsTable.grantReadWriteData(demoHandler);
 
-    // Background workers.
     props.policyCorpusBucket.grantReadWrite(sentinelHandler);
-    props.policyEventsTable.grantWriteData(sentinelHandler);
     props.policyCorpusBucket.grantRead(recallHandler);
     props.policyEventsTable.grantReadWriteData(recallHandler);
 
