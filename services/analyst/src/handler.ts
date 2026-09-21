@@ -1,10 +1,12 @@
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
+import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+const eb = new EventBridgeClient({});
 
 const CLIENT_PROFILES_TABLE = requiredEnv('CLIENT_PROFILES_TABLE');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
@@ -117,6 +119,7 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
     for (const client of candidates) {
       try {
         const hyp = await reason(delta, rule, client);
+        await emitHypothesis(hyp, delta, client);
         log('info', 'hypothesis-emitted', {
           runId,
           rcicId,
@@ -238,6 +241,25 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     confidence: (parsed.confidence ?? 'low') as ImpactHypothesis['confidence'],
     reasoning: parsed.reasoning ?? '(no reasoning)',
   };
+}
+
+async function emitHypothesis(hyp: ImpactHypothesis, delta: PolicyDelta, client: ClientProfile): Promise<void> {
+  await eb.send(
+    new PutEventsCommand({
+      Entries: [
+        {
+          Source: 'argus.analyst',
+          DetailType: 'ImpactHypothesis',
+          Detail: JSON.stringify({
+            ...hyp,
+            policyDomain: delta.policyDomain,
+            ruleContent: undefined,
+            clientProfile: stripUndefined(client as unknown as Record<string, unknown>),
+          }),
+        },
+      ],
+    }),
+  );
 }
 
 function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {

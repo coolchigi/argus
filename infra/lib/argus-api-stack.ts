@@ -186,6 +186,13 @@ export class ArgusApiStack extends cdk.Stack {
       }),
     );
 
+    analystHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['events:PutEvents'],
+        resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
+      }),
+    );
+
     new events.Rule(this, 'PolicyDeltaToAnalyst', {
       ruleName: 'argus-policy-delta-to-analyst',
       description: 'Route Sentinel PolicyDelta events to the Analyst Lambda',
@@ -194,6 +201,102 @@ export class ArgusApiStack extends cdk.Stack {
         detailType: ['PolicyDelta'],
       },
       targets: [new targets.LambdaFunction(analystHandler)],
+    });
+
+    const auditorLogGroup = new logs.LogGroup(this, 'AuditorHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-auditor',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const auditorHandler = new nodejs.NodejsFunction(this, 'AuditorHandler', {
+      functionName: 'argus-auditor',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/auditor/package-lock.json'),
+      entry: path.join(__dirname, '../../services/auditor/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.minutes(2),
+      memorySize: 512,
+      environment: {
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        BEDROCK_AUDITOR_MODEL: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: auditorLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.policyRulesTable.grantReadData(auditorHandler);
+
+    auditorHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [
+          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/us.anthropic.claude-haiku-4-5-20251001-v1:0`,
+          `arn:aws:bedrock:*::foundation-model/anthropic.claude-haiku-4-5-20251001-v1:0`,
+        ],
+      }),
+    );
+
+    auditorHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['events:PutEvents'],
+        resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
+      }),
+    );
+
+    new events.Rule(this, 'ImpactHypothesisToAuditor', {
+      ruleName: 'argus-hypothesis-to-auditor',
+      description: 'Route Analyst ImpactHypothesis events to the Auditor Lambda',
+      eventPattern: {
+        source: ['argus.analyst'],
+        detailType: ['ImpactHypothesis'],
+      },
+      targets: [new targets.LambdaFunction(auditorHandler)],
+    });
+
+    const anchorLogGroup = new logs.LogGroup(this, 'AnchorHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-anchor',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const anchorHandler = new nodejs.NodejsFunction(this, 'AnchorHandler', {
+      functionName: 'argus-anchor',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/anchor/package-lock.json'),
+      entry: path.join(__dirname, '../../services/anchor/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.minutes(1),
+      memorySize: 512,
+      environment: {
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        SIGNING_KEY_ID: props.signingKey.keyId,
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: anchorLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.policyRulesTable.grantReadData(anchorHandler);
+    props.impactAssessmentsTable.grantWriteData(anchorHandler);
+    props.signingKey.grantSign(anchorHandler);
+
+    new events.Rule(this, 'AuditVerdictToAnchor', {
+      ruleName: 'argus-verdict-to-anchor',
+      description: 'Route Auditor AuditVerdict events to the Anchor Lambda',
+      eventPattern: {
+        source: ['argus.auditor'],
+        detailType: ['AuditVerdict'],
+      },
+      targets: [new targets.LambdaFunction(anchorHandler)],
     });
 
     const recallHandler = placeholder('RecallHandler', 'recall');
