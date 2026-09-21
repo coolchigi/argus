@@ -46,10 +46,10 @@ export const handler = async (): Promise<{ scanned: number; changed: number; err
 async function scanOne(url: string, runId: string): Promise<ScanResult> {
   try {
     const html = await fetchWithTimeout(url);
-    const newHash = sha256(html);
+    const newHash = sha256(normalize(html));
     const s3Key = keyForUrl(url);
     const previous = await readLatest(s3Key);
-    const previousHash = previous ? sha256(previous) : null;
+    const previousHash = previous ? sha256(normalize(previous)) : null;
 
     if (previousHash === newHash) {
       log('debug', 'unchanged', { runId, url, hash: newHash });
@@ -107,6 +107,16 @@ async function fetchWithTimeout(url: string): Promise<string> {
 
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
+}
+
+function normalize(html: string): string {
+  return html
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/\sdata-[a-z-]+="[^"]*"/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function keyForUrl(url: string): string {
