@@ -27,6 +27,7 @@ export class ArgusStatefulStack extends cdk.Stack {
   public readonly trainingCorrectionTable: dynamodb.Table;
   public readonly policyRulesTable: dynamodb.Table;
   public readonly ruleIndexTable: dynamodb.Table;
+  public readonly briefsTable: dynamodb.Table;
 
   public readonly policyCorpusBucket: s3.Bucket;
   public readonly generatedArtifactsBucket: s3.Bucket;
@@ -178,6 +179,24 @@ export class ArgusStatefulStack extends cdk.Stack {
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // Composer output. One brief per (assessmentKey, rcicId). GSI lets the API
+    // find a brief by its ImpactAssessment. Stream feeds the Alerts dispatcher.
+    this.briefsTable = new dynamodb.Table(this, 'BriefsTable', {
+      tableName: 'argus-briefs',
+      partitionKey: { name: 'rcicId', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'briefId', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+    this.briefsTable.addGlobalSecondaryIndex({
+      indexName: 'byAssessment',
+      partitionKey: { name: 'assessmentKey', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'rcicId', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
     });
 
     // Policy corpus. Snapshots of IRCC pages plus embedding-source markdown.

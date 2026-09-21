@@ -10,6 +10,7 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
@@ -37,6 +38,7 @@ export interface ArgusApiStackProps extends cdk.StackProps {
   readonly trainingCorrectionTable: dynamodb.Table;
   readonly policyRulesTable: dynamodb.Table;
   readonly ruleIndexTable: dynamodb.Table;
+  readonly briefsTable: dynamodb.Table;
 
   readonly policyCorpusBucket: s3.Bucket;
   readonly generatedArtifactsBucket: s3.Bucket;
@@ -299,9 +301,191 @@ export class ArgusApiStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(anchorHandler)],
     });
 
-    const recallHandler = placeholder('RecallHandler', 'recall');
+    // Composer: subscribes to ImpactAssessments DynamoDB stream. For every newly
+    // signed assessment where the client is actually affected, drafts a client
+    // update via Nova Lite, writes it to the Briefs table, and emits BriefReady
+    // for the Alerts dispatcher.
+    const composerLogGroup = new logs.LogGroup(this, 'ComposerHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-composer',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const composerHandler = new nodejs.NodejsFunction(this, 'ComposerHandler', {
+      functionName: 'argus-composer',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/composer/package-lock.json'),
+      entry: path.join(__dirname, '../../services/composer/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.minutes(2),
+      memorySize: 512,
+      environment: {
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        BRIEFS_TABLE: props.briefsTable.tableName,
+        BEDROCK_COMPOSER_MODEL: 'us.amazon.nova-lite-v1:0',
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: composerLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.policyRulesTable.grantReadData(composerHandler);
+    props.briefsTable.grantWriteData(composerHandler);
+    props.impactAssessmentsTable.grantStreamRead(composerHandler);
+
+    composerHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [
+          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/us.amazon.nova-lite-v1:0`,
+          `arn:aws:bedrock:*::foundation-model/amazon.nova-lite-v1:0`,
+        ],
+      }),
+    );
+
+    composerHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['events:PutEvents'],
+        resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
+      }),
+    );
+
+    composerHandler.addEventSource(
+      new lambdaEventSources.DynamoEventSource(props.impactAssessmentsTable, {
+        startingPosition: lambda.StartingPosition.LATEST,
+        batchSize: 5,
+        maxBatchingWindow: cdk.Duration.seconds(5),
+        retryAttempts: 3,
+        bisectBatchOnError: true,
+        reportBatchItemFailures: true,
+        filters: [
+          lambda.FilterCriteria.filter({ eventName: lambda.FilterRule.isEqual('INSERT') }),
+        ],
+      }),
+    );
+
+    // Alerts dispatcher. Subscribes to argus.composer BriefReady, classifies
+    // severity, and sends SES email for high-severity impacts only. Medium and
+    // low route into the weekly digest (deferred). SES runs in sandbox mode
+    // until the domain is verified, which is fine for the demo path.
+    const alertsFromEmail = process.env.ARGUS_SES_FROM ?? 'alerts@tryargus.ca';
+    const alertsDemoRecipient = process.env.ARGUS_DEMO_RCIC_EMAIL ?? '';
+
+    const alertsLogGroup = new logs.LogGroup(this, 'AlertsHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-alerts',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const alertsHandler = new nodejs.NodejsFunction(this, 'AlertsHandler', {
+      functionName: 'argus-alerts',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/alerts/package-lock.json'),
+      entry: path.join(__dirname, '../../services/alerts/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(30),
+      memorySize: 256,
+      environment: {
+        BRIEFS_TABLE: props.briefsTable.tableName,
+        ALERTS_TABLE: props.alertsTable.tableName,
+        RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
+        SES_FROM_EMAIL: alertsFromEmail,
+        DEMO_RCIC_EMAIL: alertsDemoRecipient,
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: alertsLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.briefsTable.grantReadData(alertsHandler);
+    props.alertsTable.grantWriteData(alertsHandler);
+    props.rcicUsersTable.grantReadData(alertsHandler);
+
+    alertsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ses:SendEmail'],
+        resources: [
+          `arn:aws:ses:${this.region}:${this.account}:identity/*`,
+          `arn:aws:ses:${this.region}:${this.account}:configuration-set/*`,
+        ],
+      }),
+    );
+
+    new events.Rule(this, 'BriefReadyToAlerts', {
+      ruleName: 'argus-brief-ready-to-alerts',
+      description: 'Route Composer BriefReady events to the Alerts dispatcher',
+      eventPattern: {
+        source: ['argus.composer'],
+        detailType: ['BriefReady'],
+      },
+      targets: [new targets.LambdaFunction(alertsHandler)],
+    });
+
+    // Recall. Nightly triage that backfills coverage: for every rule captured
+    // in the last N days, decide (via Nova Micro) which clients in each RCIC's
+    // caseload deserve deep analysis, then re-emit PolicyDelta with a
+    // recall-namespaced eventId so Anchor's dedup keeps recall-origin
+    // assessments distinct from live-Sentinel ones. Existing assessment keys
+    // are pruned before the model runs, so we don't pay Bedrock twice.
+    const recallLogGroup = new logs.LogGroup(this, 'RecallHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-recall',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const recallHandler = new nodejs.NodejsFunction(this, 'RecallHandler', {
+      functionName: 'argus-recall',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/recall/package-lock.json'),
+      entry: path.join(__dirname, '../../services/recall/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 512,
+      environment: {
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
+        IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        BEDROCK_TRIAGE_MODEL: 'us.amazon.nova-micro-v1:0',
+        SEEDED_RCIC_IDS: JSON.stringify(['demo-rcic-001']),
+        RECALL_LOOKBACK_DAYS: '30',
+        RECALL_MAX_PAIRS: '200',
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: recallLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.policyRulesTable.grantReadData(recallHandler);
+    props.clientProfilesTable.grantReadData(recallHandler);
+    props.impactAssessmentsTable.grantReadData(recallHandler);
+
+    recallHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [
+          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/us.amazon.nova-micro-v1:0`,
+          `arn:aws:bedrock:*::foundation-model/amazon.nova-micro-v1:0`,
+        ],
+      }),
+    );
+
+    recallHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['events:PutEvents'],
+        resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
+      }),
+    );
+
     const orchestratorHandler = placeholder('OrchestratorHandler', 'orchestrator');
-    const alertsStreamHandler = placeholder('AlertsStreamHandler', 'alerts-stream');
 
     // -----------------------------------------------------------------
     // Grants. Every Lambda gets least-privilege via CDK grant helpers.
@@ -325,8 +509,6 @@ export class ArgusApiStack extends cdk.Stack {
     props.policyEventsTable.grantReadWriteData(demoHandler);
 
     props.policyCorpusBucket.grantReadWrite(sentinelHandler);
-    props.policyCorpusBucket.grantRead(recallHandler);
-    props.policyEventsTable.grantReadWriteData(recallHandler);
 
     // Orchestrator has the biggest surface (it fans out to all agents).
     props.clientProfilesTable.grantReadData(orchestratorHandler);
@@ -337,9 +519,9 @@ export class ArgusApiStack extends cdk.Stack {
     props.policyCorpusBucket.grantRead(orchestratorHandler);
     props.signingKey.grantSign(orchestratorHandler); // Anchor step signs ImpactAssessments.
 
-    // Alerts stream processor: reads from ImpactAssessments stream, writes Alerts.
-    props.impactAssessmentsTable.grantStreamRead(alertsStreamHandler);
-    props.alertsTable.grantWriteData(alertsStreamHandler);
+    // Alerts dispatcher (Phase 5B): subscribes to argus.composer BriefReady
+    // events, sends SES email for high-severity impacts, records send history
+    // in AlertsTable. Wired below alongside its EventBridge rule.
 
     // -----------------------------------------------------------------
     // API Gateway HTTP API with Cognito authorizer.
