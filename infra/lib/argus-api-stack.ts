@@ -20,7 +20,7 @@ const IRCC_SEED_URLS = [
   'https://www.canada.ca/en/immigration-refugees-citizenship/news.html',
   'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry/submit-profile/rounds-invitations.html',
   'https://www.canada.ca/en/immigration-refugees-citizenship/corporate/mandate/policies-operational-instructions-agreements/ministerial-instructions.html',
-  'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry/eligibility/criminal-record/comprehensive-ranking-system/grid.html',
+  'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry/check-score.html',
 ];
 
 export interface ArgusApiStackProps extends cdk.StackProps {
