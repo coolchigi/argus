@@ -1,18 +1,35 @@
+import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
+import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createHash, randomUUID } from 'node:crypto';
 
 const s3 = new S3Client({});
 const eb = new EventBridgeClient({});
+const bedrock = new BedrockRuntimeClient({});
+const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+
 const BUCKET = requiredEnv('POLICY_CORPUS_BUCKET');
+const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
+const RULE_INDEX_TABLE = requiredEnv('RULE_INDEX_TABLE');
+const CLASSIFIER_MODEL = requiredEnv('BEDROCK_CLASSIFIER_MODEL');
 const SEED_URLS = JSON.parse(process.env.IRCC_SEED_URLS ?? '[]') as string[];
 const FETCH_TIMEOUT_MS = 15_000;
+const CLASSIFIER_MAX_INPUT_CHARS = 12_000;
 
-type Category =
-  | 'ministerial-instruction'
-  | 'news-release'
-  | 'rounds-of-invitations'
-  | 'policy-page-change';
+type Category = 'ministerial-instruction' | 'news-release' | 'rounds-of-invitations' | 'policy-page-change';
+type Severity = 'low' | 'medium' | 'high';
+type RuleKind = 'scoring' | 'interpretation' | 'procedural';
+
+type Classification = {
+  category: Category;
+  policyDomain: string;
+  severity: Severity;
+  summary: string;
+  topic: string;
+  ruleKind: RuleKind;
+};
 
 type PolicyDelta = {
   eventId: string;
@@ -20,6 +37,11 @@ type PolicyDelta = {
   policyDomain: string;
   sourceUrl: string;
   category: Category;
+  severity: Severity;
+  summary: string;
+  topic: string;
+  ruleKind: RuleKind;
+  ruleHash: string;
   previousHash: string | null;
   newHash: string;
   s3Key: string;
@@ -46,7 +68,8 @@ export const handler = async (): Promise<{ scanned: number; changed: number; err
 async function scanOne(url: string, runId: string): Promise<ScanResult> {
   try {
     const html = await fetchWithTimeout(url);
-    const newHash = sha256(normalize(html));
+    const normalized = normalize(html);
+    const newHash = sha256(normalized);
     const s3Key = keyForUrl(url);
     const previous = await readLatest(s3Key);
     const previousHash = previous ? sha256(normalize(previous)) : null;
@@ -58,12 +81,23 @@ async function scanOne(url: string, runId: string): Promise<ScanResult> {
 
     await writeSnapshot(s3Key, html);
 
+    const classification = await classifyWithBedrock(url, normalized, runId);
+    const ruleHash = newHash;
+
+    await writePolicyRule(ruleHash, classification, url, s3Key, normalized);
+    await writeRuleIndex(classification.topic, ruleHash);
+
     const delta: PolicyDelta = {
       eventId: `${Date.now()}-${newHash.slice(0, 8)}`,
       timestamp: new Date().toISOString(),
-      policyDomain: domainOf(url),
+      policyDomain: classification.policyDomain,
       sourceUrl: url,
-      category: classify(url),
+      category: classification.category,
+      severity: classification.severity,
+      summary: classification.summary,
+      topic: classification.topic,
+      ruleKind: classification.ruleKind,
+      ruleHash,
       previousHash,
       newHash,
       s3Key,
@@ -76,6 +110,10 @@ async function scanOne(url: string, runId: string): Promise<ScanResult> {
       url,
       category: delta.category,
       policyDomain: delta.policyDomain,
+      topic: delta.topic,
+      severity: delta.severity,
+      ruleKind: delta.ruleKind,
+      ruleHash,
       previousHash,
       newHash,
       contentLengthDelta: delta.contentLengthDelta,
@@ -105,6 +143,108 @@ async function fetchWithTimeout(url: string): Promise<string> {
   }
 }
 
+async function classifyWithBedrock(url: string, normalizedHtml: string, runId: string): Promise<Classification> {
+  const snippet = normalizedHtml.slice(0, CLASSIFIER_MAX_INPUT_CHARS);
+  const userText = [
+    'Classify this IRCC page change. Return valid JSON only, no prose.',
+    '',
+    `URL: ${url}`,
+    'Content (may be truncated):',
+    snippet,
+    '',
+    'Return this exact JSON shape:',
+    '{',
+    '  "category": "ministerial-instruction" | "news-release" | "rounds-of-invitations" | "policy-page-change",',
+    '  "policyDomain": "express-entry" | "pgwp" | "sowp" | "pgp" | "pnp" | "study-permit" | "general" | "other",',
+    '  "severity": "low" | "medium" | "high",',
+    '  "summary": "one sentence describing what changed or what this page is",',
+    '  "topic": "short kebab-case topic id, e.g. crs-scorecard or ee-category-list",',
+    '  "ruleKind": "scoring" | "interpretation" | "procedural"',
+    '}',
+    '',
+    'Severity rules:',
+    '- high: eligibility flip, program open or close, CRS scoring change affecting more than 30 points.',
+    '- medium: category-based-draw change, procedural rule change.',
+    '- low: news release, statistics, minor form-version bump.',
+  ].join('\n');
+
+  const res = await bedrock.send(
+    new ConverseCommand({
+      modelId: CLASSIFIER_MODEL,
+      system: [
+        {
+          text: 'You classify Canadian IRCC (Immigration, Refugees and Citizenship Canada) policy pages. Return valid JSON only. No preamble, no explanation.',
+        },
+      ],
+      messages: [{ role: 'user', content: [{ text: userText }] }],
+      inferenceConfig: { maxTokens: 512, temperature: 0.1 },
+    }),
+  );
+
+  const raw = res.output?.message?.content?.[0]?.text ?? '';
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) {
+    throw new Error(`classifier returned non-JSON: ${raw.slice(0, 200)}`);
+  }
+  const parsed = JSON.parse(match[0]) as Partial<Classification>;
+  return {
+    category: (parsed.category ?? 'policy-page-change') as Category,
+    policyDomain: parsed.policyDomain ?? 'other',
+    severity: (parsed.severity ?? 'low') as Severity,
+    summary: parsed.summary ?? '(no summary)',
+    topic: parsed.topic ?? 'unknown',
+    ruleKind: (parsed.ruleKind ?? 'procedural') as RuleKind,
+  };
+}
+
+async function writePolicyRule(
+  ruleHash: string,
+  cls: Classification,
+  sourceUrl: string,
+  sourceS3Key: string,
+  ruleContent: string,
+): Promise<void> {
+  try {
+    await ddb.send(
+      new PutCommand({
+        TableName: POLICY_RULES_TABLE,
+        Item: {
+          rule_hash: ruleHash,
+          rule_kind: cls.ruleKind,
+          policy_domain: cls.policyDomain,
+          topic: cls.topic,
+          category: cls.category,
+          severity: cls.severity,
+          summary: cls.summary,
+          rule_content: ruleContent,
+          source_url: sourceUrl,
+          source_s3_key: sourceS3Key,
+          captured_at: new Date().toISOString(),
+        },
+        ConditionExpression: 'attribute_not_exists(rule_hash)',
+      }),
+    );
+  } catch (err) {
+    if ((err as { name?: string }).name === 'ConditionalCheckFailedException') {
+      return;
+    }
+    throw err;
+  }
+}
+
+async function writeRuleIndex(topic: string, ruleHash: string): Promise<void> {
+  await ddb.send(
+    new PutCommand({
+      TableName: RULE_INDEX_TABLE,
+      Item: {
+        topic,
+        effective_from: new Date().toISOString(),
+        rule_hash: ruleHash,
+      },
+    }),
+  );
+}
+
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
 }
@@ -123,26 +263,6 @@ function keyForUrl(url: string): string {
   const u = new URL(url);
   const slug = u.pathname.replace(/^\/|\/$/g, '').replace(/[^a-zA-Z0-9._-]/g, '_') || 'root';
   return `ircc-pages/${u.hostname}/${slug}.html`;
-}
-
-function domainOf(url: string): string {
-  const u = url.toLowerCase();
-  if (u.includes('express-entry')) return 'express-entry';
-  if (u.includes('post-graduation') || u.includes('pgwp')) return 'pgwp';
-  if (u.includes('spousal') || u.includes('open-work-permit')) return 'sowp';
-  if (u.includes('parents-grandparents') || u.includes('pgp')) return 'pgp';
-  if (u.includes('provincial-nominee') || u.includes('pnp')) return 'pnp';
-  if (u.includes('study-permit')) return 'study-permit';
-  if (u.includes('news.html') || u.includes('/news/')) return 'general';
-  return 'other';
-}
-
-function classify(url: string): Category {
-  const u = url.toLowerCase();
-  if (u.includes('ministerial-instructions')) return 'ministerial-instruction';
-  if (u.includes('rounds-invitations') || u.includes('rounds-of-invitations')) return 'rounds-of-invitations';
-  if (u.includes('/news/')) return 'news-release';
-  return 'policy-page-change';
 }
 
 async function readLatest(key: string): Promise<string | null> {

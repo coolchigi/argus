@@ -25,6 +25,8 @@ export class ArgusStatefulStack extends cdk.Stack {
   public readonly alertsTable: dynamodb.Table;
   public readonly auditTrailTable: dynamodb.Table;
   public readonly trainingCorrectionTable: dynamodb.Table;
+  public readonly policyRulesTable: dynamodb.Table;
+  public readonly ruleIndexTable: dynamodb.Table;
 
   public readonly policyCorpusBucket: s3.Bucket;
   public readonly generatedArtifactsBucket: s3.Bucket;
@@ -154,6 +156,25 @@ export class ArgusStatefulStack extends cdk.Stack {
       tableName: 'argus-training-corrections',
       partitionKey: { name: 'rcicId', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'correctionKey', type: dynamodb.AttributeType.STRING }, // `${assessmentId}#${timestamp}`
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // Content-addressed IRCC rule versions (ADR-0001). Immutable once written.
+    this.policyRulesTable = new dynamodb.Table(this, 'PolicyRulesTable', {
+      tableName: 'argus-policy-rules',
+      partitionKey: { name: 'rule_hash', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
+    });
+
+    // "Which rule version was active on date X for topic Y" resolver (ADR-0001).
+    this.ruleIndexTable = new dynamodb.Table(this, 'RuleIndexTable', {
+      tableName: 'argus-rule-index',
+      partitionKey: { name: 'topic', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'effective_from', type: dynamodb.AttributeType.STRING },
       billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       removalPolicy: cdk.RemovalPolicy.RETAIN,

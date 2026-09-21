@@ -35,6 +35,8 @@ export interface ArgusApiStackProps extends cdk.StackProps {
   readonly alertsTable: dynamodb.Table;
   readonly auditTrailTable: dynamodb.Table;
   readonly trainingCorrectionTable: dynamodb.Table;
+  readonly policyRulesTable: dynamodb.Table;
+  readonly ruleIndexTable: dynamodb.Table;
 
   readonly policyCorpusBucket: s3.Bucket;
   readonly generatedArtifactsBucket: s3.Bucket;
@@ -102,6 +104,9 @@ export class ArgusApiStack extends cdk.Stack {
       memorySize: 512,
       environment: {
         POLICY_CORPUS_BUCKET: props.policyCorpusBucket.bucketName,
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        RULE_INDEX_TABLE: props.ruleIndexTable.tableName,
+        BEDROCK_CLASSIFIER_MODEL: 'us.amazon.nova-micro-v1:0',
         IRCC_SEED_URLS: JSON.stringify(IRCC_SEED_URLS),
         NODE_OPTIONS: '--enable-source-maps',
       },
@@ -121,6 +126,19 @@ export class ArgusApiStack extends cdk.Stack {
         resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
       }),
     );
+
+    sentinelHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [
+          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/us.amazon.nova-micro-v1:0`,
+          `arn:aws:bedrock:*::foundation-model/amazon.nova-micro-v1:0`,
+        ],
+      }),
+    );
+
+    props.policyRulesTable.grantWriteData(sentinelHandler);
+    props.ruleIndexTable.grantWriteData(sentinelHandler);
 
     const recallHandler = placeholder('RecallHandler', 'recall');
     const orchestratorHandler = placeholder('OrchestratorHandler', 'orchestrator');
