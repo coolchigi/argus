@@ -140,6 +140,62 @@ export class ArgusApiStack extends cdk.Stack {
     props.policyRulesTable.grantWriteData(sentinelHandler);
     props.ruleIndexTable.grantWriteData(sentinelHandler);
 
+    const analystLogGroup = new logs.LogGroup(this, 'AnalystHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-analyst',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const analystHandler = new nodejs.NodejsFunction(this, 'AnalystHandler', {
+      functionName: 'argus-analyst',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/analyst/package-lock.json'),
+      entry: path.join(__dirname, '../../services/analyst/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.minutes(5),
+      memorySize: 1024,
+      environment: {
+        CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        BEDROCK_REASONER_MODEL: 'us.amazon.nova-pro-v1:0',
+        SEEDED_RCIC_IDS: JSON.stringify(['demo-rcic-001']),
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: analystLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: {
+        minify: true,
+        target: 'es2022',
+        format: nodejs.OutputFormat.ESM,
+        sourceMap: true,
+      },
+    });
+
+    props.clientProfilesTable.grantReadData(analystHandler);
+    props.policyRulesTable.grantReadData(analystHandler);
+
+    analystHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['bedrock:InvokeModel'],
+        resources: [
+          `arn:aws:bedrock:${this.region}:${this.account}:inference-profile/us.amazon.nova-pro-v1:0`,
+          `arn:aws:bedrock:*::foundation-model/amazon.nova-pro-v1:0`,
+        ],
+      }),
+    );
+
+    new events.Rule(this, 'PolicyDeltaToAnalyst', {
+      ruleName: 'argus-policy-delta-to-analyst',
+      description: 'Route Sentinel PolicyDelta events to the Analyst Lambda',
+      eventPattern: {
+        source: ['argus.sentinel'],
+        detailType: ['PolicyDelta'],
+      },
+      targets: [new targets.LambdaFunction(analystHandler)],
+    });
+
     const recallHandler = placeholder('RecallHandler', 'recall');
     const orchestratorHandler = placeholder('OrchestratorHandler', 'orchestrator');
     const alertsStreamHandler = placeholder('AlertsStreamHandler', 'alerts-stream');
