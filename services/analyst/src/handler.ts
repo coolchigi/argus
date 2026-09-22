@@ -1,7 +1,7 @@
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 
 const bedrock = new BedrockRuntimeClient({});
@@ -10,8 +10,8 @@ const eb = new EventBridgeClient({});
 
 const CLIENT_PROFILES_TABLE = requiredEnv('CLIENT_PROFILES_TABLE');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
+const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const REASONER_MODEL = requiredEnv('BEDROCK_REASONER_MODEL');
-const RCIC_IDS = JSON.parse(process.env.SEEDED_RCIC_IDS ?? '["demo-rcic-001"]') as string[];
 const RULE_CONTENT_MAX_CHARS = 4000;
 
 type PolicyDelta = {
@@ -105,8 +105,15 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
     return { hypothesesEmitted: 0 };
   }
 
+  const rcicIds = await loadActiveRcicIds();
+  log('info', 'rcics-loaded', { runId, activeRcicCount: rcicIds.length });
+  if (rcicIds.length === 0) {
+    log('info', 'no-active-rcics', { runId });
+    return { hypothesesEmitted: 0 };
+  }
+
   let total = 0;
-  for (const rcicId of RCIC_IDS) {
+  for (const rcicId of rcicIds) {
     const clients = await queryCaseload(rcicId);
     const candidates = filterByPolicyDomain(clients, delta.policyDomain);
     log('info', 'caseload-loaded', {
@@ -150,6 +157,27 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
 async function loadRule(ruleHash: string): Promise<PolicyRule | null> {
   const res = await ddb.send(new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash } }));
   return (res.Item as PolicyRule | undefined) ?? null;
+}
+
+async function loadActiveRcicIds(): Promise<string[]> {
+  const out: string[] = [];
+  let ExclusiveStartKey: Record<string, unknown> | undefined = undefined;
+  do {
+    const res: { Items?: Record<string, unknown>[]; LastEvaluatedKey?: Record<string, unknown> } = await ddb.send(
+      new ScanCommand({
+        TableName: RCIC_USERS_TABLE,
+        ProjectionExpression: 'rcicId, active',
+        ExclusiveStartKey,
+      }),
+    );
+    for (const item of res.Items ?? []) {
+      if (typeof item.rcicId !== 'string') continue;
+      if (item.active === false) continue;
+      out.push(item.rcicId);
+    }
+    ExclusiveStartKey = res.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return out;
 }
 
 async function queryCaseload(rcicId: string): Promise<ClientProfile[]> {

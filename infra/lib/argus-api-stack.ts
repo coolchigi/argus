@@ -207,8 +207,8 @@ export class ArgusApiStack extends cdk.Stack {
       environment: {
         CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
         BEDROCK_REASONER_MODEL: 'us.amazon.nova-pro-v1:0',
-        SEEDED_RCIC_IDS: JSON.stringify(['demo-rcic-001']),
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: analystLogGroup,
@@ -223,6 +223,7 @@ export class ArgusApiStack extends cdk.Stack {
 
     props.clientProfilesTable.grantReadData(analystHandler);
     props.policyRulesTable.grantReadData(analystHandler);
+    props.rcicUsersTable.grantReadData(analystHandler);
 
     analystHandler.addToRolePolicy(
       new iam.PolicyStatement({
@@ -561,8 +562,8 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
         IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
         BEDROCK_TRIAGE_MODEL: 'us.amazon.nova-micro-v1:0',
-        SEEDED_RCIC_IDS: JSON.stringify(['demo-rcic-001']),
         RECALL_LOOKBACK_DAYS: '30',
         RECALL_MAX_PAIRS: '200',
         NODE_OPTIONS: '--enable-source-maps',
@@ -575,6 +576,7 @@ export class ArgusApiStack extends cdk.Stack {
     props.policyRulesTable.grantReadData(recallHandler);
     props.clientProfilesTable.grantReadData(recallHandler);
     props.impactAssessmentsTable.grantReadData(recallHandler);
+    props.rcicUsersTable.grantReadData(recallHandler);
 
     recallHandler.addToRolePolicy(
       new iam.PolicyStatement({

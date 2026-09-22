@@ -11,8 +11,8 @@ const eb = new EventBridgeClient({});
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const CLIENT_PROFILES_TABLE = requiredEnv('CLIENT_PROFILES_TABLE');
 const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
+const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const TRIAGE_MODEL = requiredEnv('BEDROCK_TRIAGE_MODEL');
-const RCIC_IDS = JSON.parse(process.env.SEEDED_RCIC_IDS ?? '["demo-rcic-001"]') as string[];
 const LOOKBACK_DAYS = Number(process.env.RECALL_LOOKBACK_DAYS ?? '30');
 const MAX_PAIRS_PER_RUN = Number(process.env.RECALL_MAX_PAIRS ?? '200');
 
@@ -54,7 +54,13 @@ export const handler = async (): Promise<{
   deltasEmitted: number;
 }> => {
   const runId = randomUUID();
-  log('info', 'recall-start', { runId, rcicCount: RCIC_IDS.length, lookbackDays: LOOKBACK_DAYS });
+  const rcicIds = await loadActiveRcicIds();
+  log('info', 'recall-start', { runId, rcicCount: rcicIds.length, lookbackDays: LOOKBACK_DAYS });
+
+  if (rcicIds.length === 0) {
+    log('info', 'recall-no-active-rcics', { runId });
+    return { rulesConsidered: 0, pairsTriaged: 0, pairsSkippedAlreadyAssessed: 0, deltasEmitted: 0 };
+  }
 
   const rules = await loadRecentRules();
   if (rules.length === 0) {
@@ -66,7 +72,7 @@ export const handler = async (): Promise<{
   let pairsSkippedAlreadyAssessed = 0;
   let deltasEmitted = 0;
 
-  for (const rcicId of RCIC_IDS) {
+  for (const rcicId of rcicIds) {
     const clients = await loadClients(rcicId);
     const existingKeys = await loadExistingAssessmentKeys(rcicId);
 
@@ -120,6 +126,27 @@ export const handler = async (): Promise<{
     deltasEmitted,
   };
 };
+
+async function loadActiveRcicIds(): Promise<string[]> {
+  const out: string[] = [];
+  let ExclusiveStartKey: Record<string, unknown> | undefined = undefined;
+  do {
+    const res: { Items?: Record<string, unknown>[]; LastEvaluatedKey?: Record<string, unknown> } = await ddb.send(
+      new ScanCommand({
+        TableName: RCIC_USERS_TABLE,
+        ProjectionExpression: 'rcicId, active',
+        ExclusiveStartKey,
+      }),
+    );
+    for (const item of res.Items ?? []) {
+      if (typeof item.rcicId !== 'string') continue;
+      if (item.active === false) continue;
+      out.push(item.rcicId);
+    }
+    ExclusiveStartKey = res.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return out;
+}
 
 async function loadRecentRules(): Promise<PolicyRule[]> {
   const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString();
