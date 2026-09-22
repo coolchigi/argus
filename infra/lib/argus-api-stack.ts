@@ -85,8 +85,54 @@ export class ArgusApiStack extends cdk.Stack {
     const meHandler = placeholder('MeHandler', 'me');
     const profilesHandler = placeholder('ProfilesHandler', 'profiles');
     const policyEventsHandler = placeholder('PolicyEventsHandler', 'policy-events');
-    const impactsHandler = placeholder('ImpactsHandler', 'impacts');
     const demoHandler = placeholder('DemoHandler', 'demo');
+
+    // Impacts service. Lists assessments, returns a single one, exports the
+    // KMS audit signature plus the public key so anyone can verify offline,
+    // and accepts consultant corrections. Corrections land in the
+    // TrainingCorrectionTable and feed the Auditor's few-shot examples on
+    // the next audit run, so the model measurably improves as the
+    // consultant uses it (ASET pattern, design doc section 12).
+    //
+    // Reuses the ImpactsHandler construct id so CloudFormation performs an
+    // in-place update over the earlier placeholder function, avoiding a
+    // delete+create that would collide on the physical function name.
+    const impactsServiceLogGroup = new logs.LogGroup(this, 'ImpactsHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-impacts',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const impactsHandler = new nodejs.NodejsFunction(this, 'ImpactsHandler', {
+      functionName: 'argus-impacts',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/impacts-service/package-lock.json'),
+      entry: path.join(__dirname, '../../services/impacts-service/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
+        SIGNING_KEY_ID: props.signingKey.keyId,
+        DEFAULT_RCIC_ID: 'demo-rcic-001',
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: impactsServiceLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.impactAssessmentsTable.grantReadData(impactsHandler);
+    props.trainingCorrectionTable.grantReadWriteData(impactsHandler);
+    impactsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['kms:GetPublicKey'],
+        resources: [props.signingKey.keyArn],
+      }),
+    );
 
     const sentinelLogGroup = new logs.LogGroup(this, 'SentinelHandlerLogs', {
       logGroupName: '/aws/lambda/argus-sentinel',
@@ -223,7 +269,10 @@ export class ArgusApiStack extends cdk.Stack {
       memorySize: 512,
       environment: {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
         BEDROCK_AUDITOR_MODEL: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        FEW_SHOT_MAX: '5',
+        FEW_SHOT_MAX_AGE_DAYS: '90',
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: auditorLogGroup,
@@ -232,6 +281,7 @@ export class ArgusApiStack extends cdk.Stack {
     });
 
     props.policyRulesTable.grantReadData(auditorHandler);
+    props.trainingCorrectionTable.grantReadData(auditorHandler);
 
     auditorHandler.addToRolePolicy(
       new iam.PolicyStatement({
@@ -555,12 +605,6 @@ export class ArgusApiStack extends cdk.Stack {
     props.clientProfilesTable.grantReadWriteData(profilesHandler);
     props.policyEventsTable.grantReadData(policyEventsHandler);
     props.impactAssessmentsTable.grantReadData(policyEventsHandler);
-    props.impactAssessmentsTable.grantReadData(impactsHandler);
-    props.auditTrailTable.grantReadData(impactsHandler);
-    props.trainingCorrectionTable.grantReadWriteData(impactsHandler); // consultant marks impact wrong
-
-    // Composer path uses generated-artifacts bucket for HeyGen output.
-    props.generatedArtifactsBucket.grantReadWrite(impactsHandler);
 
     // Demo lever needs write access to seed profiles and trigger a fake policy delta.
     props.clientProfilesTable.grantReadWriteData(demoHandler);
@@ -617,6 +661,7 @@ export class ArgusApiStack extends cdk.Stack {
       { path: '/impacts', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}/audit-signature', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      { path: '/impacts/{id}/correction', methods: [apigwv2.HttpMethod.POST], handler: impactsHandler },
       { path: '/briefs', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
       { path: '/briefs/batch-send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/briefs/{id}', methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH], handler: briefsServiceHandler },

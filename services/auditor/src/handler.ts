@@ -1,7 +1,7 @@
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
-import { DynamoDBDocumentClient, GetCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 
 const bedrock = new BedrockRuntimeClient({});
@@ -9,8 +9,11 @@ const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const eb = new EventBridgeClient({});
 
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
+const TRAINING_CORRECTIONS_TABLE = requiredEnv('TRAINING_CORRECTIONS_TABLE');
 const AUDITOR_MODEL = requiredEnv('BEDROCK_AUDITOR_MODEL');
 const RULE_CONTENT_MAX_CHARS = 4000;
+const FEW_SHOT_MAX = Number(process.env.FEW_SHOT_MAX ?? '5');
+const FEW_SHOT_MAX_AGE_DAYS = Number(process.env.FEW_SHOT_MAX_AGE_DAYS ?? '90');
 
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
@@ -74,9 +77,12 @@ export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promi
     originalNumericDelta: hyp.numericDelta,
   });
 
-  const ruleContent = await loadRuleContent(hyp.ruleHash);
+  const [ruleContent, fewShots] = await Promise.all([
+    loadRuleContent(hyp.ruleHash),
+    loadRecentCorrections(hyp.rcicId, hyp.policyDomain, hyp.topic),
+  ]);
 
-  const verdict = await audit(hyp, ruleContent, runId);
+  const verdict = await audit(hyp, ruleContent, fewShots, runId);
   await emitVerdict(verdict);
 
   log('info', 'audit-complete', {
@@ -87,6 +93,7 @@ export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promi
     issueCount: verdict.issues.length,
     correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta,
     correctedNumericDelta: verdict.correctedNumericDelta,
+    fewShotCount: fewShots.length,
   });
 
   return { passed: verdict.passed };
@@ -98,7 +105,41 @@ async function loadRuleContent(ruleHash: string): Promise<string> {
   return typeof content === 'string' ? content : '';
 }
 
-async function audit(hyp: ImpactHypothesis, ruleContent: string, runId: string): Promise<AuditVerdict> {
+type Correction = {
+  correctedAt: string;
+  policyDomain: string;
+  topic: string;
+  originalImpactType: string;
+  originalNumericDelta: number | null;
+  originalNarrative: string;
+  correctedImpactType: string;
+  correctedNumericDelta: number | null;
+  correctedNarrative: string | null;
+  correctorReasoning: string;
+};
+
+async function loadRecentCorrections(rcicId: string, policyDomain: string, topic: string): Promise<Correction[]> {
+  const cutoff = new Date(Date.now() - FEW_SHOT_MAX_AGE_DAYS * 24 * 60 * 60 * 1000).toISOString();
+  const res = await ddb.send(
+    new QueryCommand({
+      TableName: TRAINING_CORRECTIONS_TABLE,
+      KeyConditionExpression: 'rcicId = :r',
+      FilterExpression: 'correctedAt >= :cutoff',
+      ExpressionAttributeValues: { ':r': rcicId, ':cutoff': cutoff },
+    }),
+  );
+  const all = (res.Items ?? []) as Correction[];
+  // Score by topical proximity: same topic > same policyDomain > other. Same topic
+  // teaches most; other corrections still carry consultant priors worth showing.
+  const scored = all
+    .map((c) => ({ c, score: c.topic === topic ? 3 : c.policyDomain === policyDomain ? 2 : 1 }))
+    .sort((a, b) => b.score - a.score || b.c.correctedAt.localeCompare(a.c.correctedAt))
+    .slice(0, FEW_SHOT_MAX)
+    .map((x) => x.c);
+  return scored;
+}
+
+async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[], runId: string): Promise<AuditVerdict> {
   const snippet = ruleContent.slice(0, RULE_CONTENT_MAX_CHARS);
   const hypothesisJson = JSON.stringify(
     {
@@ -115,7 +156,7 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, runId: string):
   );
   const clientJson = JSON.stringify(hyp.clientProfile, null, 2);
 
-  const system = [
+  const systemLines = [
     'You are the Auditor agent in Argus, an IRCC policy-impact platform.',
     'You review ONE hypothesis produced by a separate Analyst agent and adversarially validate it against the source rule and the client profile.',
     'You come from a different model family than the Analyst on purpose. You are skeptical.',
@@ -124,7 +165,26 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, runId: string):
     'You know Canadian IRCC edge cases: TEER 0 jobs (Senior Management NOC 00) award 200 CRS points, all other job offers award 50 CRS points; the March 25 2025 change zeroed both.',
     'You know: LMIA-exempt vs LMIA-supported distinctions, French bonus stacks with English CLB 7 gate, PGWP field-of-study rules apply to non-degree only, PNP intent-to-reside is now a provincial call not federal.',
     'Return valid JSON only. No preamble.',
-  ].join('\n');
+  ];
+
+  if (fewShots.length > 0) {
+    systemLines.push(
+      '',
+      `PAST CORRECTIONS FROM THIS CONSULTANT (${fewShots.length} example${fewShots.length === 1 ? '' : 's'}). Treat them as ground-truth signal about what THIS consultant flagged as wrong. Match the pattern of correction, do not just quote the numbers.`,
+    );
+    for (let i = 0; i < fewShots.length; i += 1) {
+      const c = fewShots[i];
+      systemLines.push(
+        '',
+        `CORRECTION ${i + 1} (topic=${c.topic}, domain=${c.policyDomain}, at=${c.correctedAt}):`,
+        `- Original: impactType=${c.originalImpactType}, numericDelta=${c.originalNumericDelta ?? 'null'}, narrative="${c.originalNarrative}"`,
+        `- Corrected: impactType=${c.correctedImpactType}, numericDelta=${c.correctedNumericDelta ?? 'null'}, narrative="${c.correctedNarrative ?? '(none)'}"`,
+        `- Consultant reasoning: ${c.correctorReasoning}`,
+      );
+    }
+  }
+
+  const system = systemLines.join('\n');
 
   const user = [
     'RULE CONTENT (source of truth, may be truncated):',
@@ -149,8 +209,9 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, runId: string):
     '}',
     '',
     'Rules:',
-    '- passed=true means the hypothesis is acceptable as-is or with your corrections applied.',
-    '- passed=false means the hypothesis is fundamentally wrong (e.g. wrong client universe, wrong policy interpretation) and should be dropped.',
+    '- passed=true means the corrected hypothesis (after your corrections applied) is the final assessment to publish. Anchor will sign these corrected values. Use passed=true whenever the assessment is meaningful for the consultant, EVEN IF you rewrote the numeric delta or impact type via corrections or past-consultant-corrections.',
+    '- passed=false is reserved for hypotheses that cannot be salvaged: wrong client universe (rule does not apply to this client at all), missing rule content, or fundamentally malformed input. When passed=false, Anchor drops the assessment entirely and no record is published.',
+    '- If a past correction from this consultant contradicts the Analyst, override the Analyst using the correction pattern, set corrected* fields to the corrected values, and set passed=true so the corrected assessment is published.',
     '- If you correct any field, put the corrected value in the corresponding "corrected*" field. If no correction needed, echo the original value.',
     '- issues array is empty only when passed=true AND no corrections were needed.',
   ].join('\n');
