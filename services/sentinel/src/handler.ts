@@ -79,12 +79,12 @@ async function scanOne(url: string, runId: string): Promise<ScanResult> {
       return { url, changed: false, hash: newHash };
     }
 
-    await writeSnapshot(s3Key, html);
+    const versionId = await writeSnapshot(s3Key, html);
 
     const classification = await classifyWithBedrock(url, normalized, runId);
     const ruleHash = newHash;
 
-    await writePolicyRule(ruleHash, classification, url, s3Key, normalized);
+    await writePolicyRule(ruleHash, classification, url, s3Key, versionId, normalized);
     await writeRuleIndex(classification.topic, ruleHash);
 
     const delta: PolicyDelta = {
@@ -202,6 +202,7 @@ async function writePolicyRule(
   cls: Classification,
   sourceUrl: string,
   sourceS3Key: string,
+  sourceS3VersionId: string | null,
   ruleContent: string,
 ): Promise<void> {
   try {
@@ -219,6 +220,7 @@ async function writePolicyRule(
           rule_content: ruleContent,
           source_url: sourceUrl,
           source_s3_key: sourceS3Key,
+          source_s3_version_id: sourceS3VersionId,
           captured_at: new Date().toISOString(),
         },
         ConditionExpression: 'attribute_not_exists(rule_hash)',
@@ -284,8 +286,8 @@ function isNoSuchKey(err: unknown): boolean {
   );
 }
 
-async function writeSnapshot(key: string, body: string): Promise<void> {
-  await s3.send(
+async function writeSnapshot(key: string, body: string): Promise<string | null> {
+  const res = await s3.send(
     new PutObjectCommand({
       Bucket: BUCKET,
       Key: key,
@@ -293,6 +295,7 @@ async function writeSnapshot(key: string, body: string): Promise<void> {
       ContentType: 'text/html; charset=utf-8',
     }),
   );
+  return res.VersionId ?? null;
 }
 
 async function emitDelta(delta: PolicyDelta): Promise<void> {

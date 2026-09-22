@@ -454,10 +454,13 @@ export class ArgusApiStack extends cdk.Stack {
         BRIEFS_TABLE: props.briefsTable.tableName,
         ALERTS_TABLE: props.alertsTable.tableName,
         RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        POLICY_CORPUS_BUCKET: props.policyCorpusBucket.bucketName,
         SIGNING_KEY_ID: props.signingKey.keyId,
         DEFAULT_FROM_EMAIL: alertsFromEmail,
         DEFAULT_RCIC_ID: 'demo-rcic-001',
         BATCH_SEND_MAX: '25',
+        ARCHIVE_LINK_TTL_SECONDS: String(7 * 24 * 60 * 60),
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: briefsServiceLogGroup,
@@ -468,6 +471,8 @@ export class ArgusApiStack extends cdk.Stack {
     props.briefsTable.grantReadWriteData(briefsServiceHandler);
     props.alertsTable.grantWriteData(briefsServiceHandler);
     props.rcicUsersTable.grantReadData(briefsServiceHandler);
+    props.policyRulesTable.grantReadData(briefsServiceHandler);
+    props.policyCorpusBucket.grantRead(briefsServiceHandler);
     props.signingKey.grantSign(briefsServiceHandler);
 
     briefsServiceHandler.addToRolePolicy(
@@ -616,6 +621,7 @@ export class ArgusApiStack extends cdk.Stack {
       { path: '/briefs/batch-send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/briefs/{id}', methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH], handler: briefsServiceHandler },
       { path: '/briefs/{id}/send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
+      { path: '/briefs/{id}/archive-link', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
       { path: '/demo/trigger-policy-change', methods: [apigwv2.HttpMethod.POST], handler: demoHandler },
       { path: '/demo/seed', methods: [apigwv2.HttpMethod.POST], handler: demoHandler },
     ];

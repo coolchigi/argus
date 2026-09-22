@@ -1,5 +1,7 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { KMSClient, SignCommand } from '@aws-sdk/client-kms';
+import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
@@ -8,14 +10,31 @@ import { createHash, randomUUID } from 'node:crypto';
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
 const ses = new SESv2Client({});
+const s3 = new S3Client({});
 
 const BRIEFS_TABLE = requiredEnv('BRIEFS_TABLE');
 const ALERTS_TABLE = requiredEnv('ALERTS_TABLE');
 const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
+const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
+const POLICY_CORPUS_BUCKET = requiredEnv('POLICY_CORPUS_BUCKET');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
 const DEFAULT_FROM_EMAIL = requiredEnv('DEFAULT_FROM_EMAIL');
 const DEFAULT_RCIC_ID = process.env.DEFAULT_RCIC_ID ?? 'demo-rcic-001';
 const BATCH_SEND_MAX = Number(process.env.BATCH_SEND_MAX ?? '25');
+const ARCHIVE_LINK_TTL_SECONDS = Number(process.env.ARCHIVE_LINK_TTL_SECONDS ?? String(7 * 24 * 60 * 60));
+const HEAD_CHECK_TIMEOUT_MS = 3_000;
+
+type Citation = {
+  sourceUrl: string;
+  s3Key: string;
+  s3VersionId: string | null;
+};
+
+type CitationForEmail = {
+  sourceUrl: string;
+  sourceIsLive: boolean;
+  archiveUrl: string | null;
+};
 
 type SendResult = { briefId: string; ok: boolean; sesMessageId?: string; sentBodyHash?: string; error?: string };
 
@@ -29,6 +48,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   try {
     if (routeKey === 'GET /briefs') return json(200, await listBriefs(rcicId));
     if (routeKey === 'GET /briefs/{id}') return json(200, await getBrief(rcicId, requireParam(event, 'id')));
+    if (routeKey === 'GET /briefs/{id}/archive-link') return json(200, await getArchiveLink(rcicId, requireParam(event, 'id')));
     if (routeKey === 'PATCH /briefs/{id}') return json(200, await patchBrief(rcicId, requireParam(event, 'id'), parseBody(event)));
     if (routeKey === 'POST /briefs/{id}/send') return json(200, await sendOne(rcicId, requireParam(event, 'id'), parseBody(event)));
     if (routeKey === 'POST /briefs/batch-send') return json(200, await sendBatch(rcicId, parseBody(event)));
@@ -138,7 +158,9 @@ async function sendOneInternal(rcicId: string, briefId: string, recipient: strin
     : String(brief.bodyMarkdown ?? '');
   const finalSubject = String(brief.subject ?? '');
   const suggestedActions = Array.isArray(brief.suggestedActions) ? (brief.suggestedActions as string[]) : [];
-  const citation = typeof brief.citationSourceUrl === 'string' ? brief.citationSourceUrl : '';
+
+  const ruleHash = typeof brief.ruleHash === 'string' ? brief.ruleHash : '';
+  const emailCitation = await buildCitationForEmail(ruleHash, brief);
 
   const sender = await resolveSender(rcicId);
   const recipientHash = sha256(recipient);
@@ -158,7 +180,7 @@ async function sendOneInternal(rcicId: string, briefId: string, recipient: strin
   const sentBodyHash = sha256Canonical(canonical);
   const sentSignature = await signHash(sentBodyHash);
 
-  const textBody = renderEmailText(finalBody, suggestedActions, citation, {
+  const textBody = renderEmailText(finalBody, suggestedActions, emailCitation, {
     briefId,
     signatureAlgorithm: 'ECDSA_SHA_256',
     canonicalHash: sentBodyHash,
@@ -238,12 +260,108 @@ async function resolveSender(rcicId: string): Promise<string> {
   return DEFAULT_FROM_EMAIL;
 }
 
-function renderEmailText(body: string, actions: string[], citation: string, meta: { briefId: string; signatureAlgorithm: string; canonicalHash: string }): string {
+async function loadCitation(ruleHash: string, briefFallback: Record<string, unknown> | undefined): Promise<Citation | null> {
+  if (ruleHash) {
+    const res = await ddb.send(new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash } }));
+    const item = res.Item;
+    if (item && typeof item.source_url === 'string' && typeof item.source_s3_key === 'string') {
+      return {
+        sourceUrl: item.source_url,
+        s3Key: item.source_s3_key,
+        s3VersionId: typeof item.source_s3_version_id === 'string' ? item.source_s3_version_id : null,
+      };
+    }
+  }
+  const url = briefFallback && typeof briefFallback.citationSourceUrl === 'string' ? briefFallback.citationSourceUrl : '';
+  if (!url) return null;
+  return { sourceUrl: url, s3Key: '', s3VersionId: null };
+}
+
+async function checkUrlLive(url: string): Promise<boolean> {
+  if (!url) return false;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HEAD_CHECK_TIMEOUT_MS);
+  try {
+    // GET with a small Range instead of HEAD. canada.ca and other JS-rendered
+    // sites soft-serve HEAD with a 302 that points nowhere real, and report
+    // 2xx even when the underlying page 404s. GET with an explicit redirect
+    // follow forces the real terminal status, and the Range header keeps us
+    // from downloading the whole page.
+    const res = await fetch(url, {
+      method: 'GET',
+      redirect: 'follow',
+      signal: controller.signal,
+      headers: {
+        'User-Agent': 'Argus/0.1 (link-check)',
+        Range: 'bytes=0-127',
+      },
+    });
+    try {
+      await res.body?.cancel();
+    } catch {
+      // ignore cancel errors, we only care about the status
+    }
+    return res.status >= 200 && res.status < 400;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function presignArchive(s3Key: string, versionId: string | null): Promise<string | null> {
+  if (!s3Key) return null;
+  const url = await getSignedUrl(
+    s3,
+    new GetObjectCommand({
+      Bucket: POLICY_CORPUS_BUCKET,
+      Key: s3Key,
+      ...(versionId ? { VersionId: versionId } : {}),
+    }),
+    { expiresIn: ARCHIVE_LINK_TTL_SECONDS },
+  );
+  return url;
+}
+
+async function buildCitationForEmail(ruleHash: string, brief: Record<string, unknown>): Promise<CitationForEmail> {
+  const citation = await loadCitation(ruleHash, brief);
+  if (!citation) return { sourceUrl: '', sourceIsLive: false, archiveUrl: null };
+  const [live, archive] = await Promise.all([
+    checkUrlLive(citation.sourceUrl),
+    presignArchive(citation.s3Key, citation.s3VersionId),
+  ]);
+  return { sourceUrl: citation.sourceUrl, sourceIsLive: live, archiveUrl: archive };
+}
+
+async function getArchiveLink(rcicId: string, briefId: string): Promise<{ archiveUrl: string | null; expiresInSeconds: number; sourceUrl: string; sourceIsLive: boolean }> {
+  const briefRes = await ddb.send(new GetCommand({ TableName: BRIEFS_TABLE, Key: { rcicId, briefId } }));
+  if (!briefRes.Item) throw httpError(404, 'brief-not-found');
+  const brief = briefRes.Item;
+  const ruleHash = typeof brief.ruleHash === 'string' ? brief.ruleHash : '';
+  const c = await buildCitationForEmail(ruleHash, brief);
+  return {
+    archiveUrl: c.archiveUrl,
+    expiresInSeconds: ARCHIVE_LINK_TTL_SECONDS,
+    sourceUrl: c.sourceUrl,
+    sourceIsLive: c.sourceIsLive,
+  };
+}
+
+function renderEmailText(body: string, actions: string[], citation: CitationForEmail, meta: { briefId: string; signatureAlgorithm: string; canonicalHash: string }): string {
   const parts = [body];
   if (actions.length > 0) {
     parts.push('', 'Suggested actions:', ...actions.map((a) => `- ${a}`));
   }
-  if (citation) parts.push('', `Source: ${citation}`);
+  if (citation.sourceUrl || citation.archiveUrl) {
+    parts.push('');
+    if (citation.sourceUrl) {
+      const label = citation.sourceIsLive ? 'Source' : 'Source (page has moved)';
+      parts.push(`${label}: ${citation.sourceUrl}`);
+    }
+    if (citation.archiveUrl) {
+      parts.push(`Archived copy (verified snapshot, expires in 7 days): ${citation.archiveUrl}`);
+    }
+  }
   parts.push(
     '',
     '---',
