@@ -427,6 +427,59 @@ export class ArgusApiStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(alertsHandler)],
     });
 
+    // Briefs service. Handles the consultant-facing brief lifecycle:
+    // list, fetch, edit, single send, and batch send. Every send KMS-signs
+    // the canonicalized sent body (subject + edited body + suggested actions
+    // + recipient hash + sender + timestamp), stores the signature on the
+    // brief row, and appends an entry to AlertsTable with channel
+    // "consultant-manual". Recipient address is stored as SHA256 hash plus
+    // domain only, so client PII never lands in Argus.
+    const briefsServiceLogGroup = new logs.LogGroup(this, 'BriefsServiceHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-briefs-service',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const briefsServiceHandler = new nodejs.NodejsFunction(this, 'BriefsServiceHandler', {
+      functionName: 'argus-briefs-service',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/briefs-service/package-lock.json'),
+      entry: path.join(__dirname, '../../services/briefs-service/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        BRIEFS_TABLE: props.briefsTable.tableName,
+        ALERTS_TABLE: props.alertsTable.tableName,
+        RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
+        SIGNING_KEY_ID: props.signingKey.keyId,
+        DEFAULT_FROM_EMAIL: alertsFromEmail,
+        DEFAULT_RCIC_ID: 'demo-rcic-001',
+        BATCH_SEND_MAX: '25',
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: briefsServiceLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.briefsTable.grantReadWriteData(briefsServiceHandler);
+    props.alertsTable.grantWriteData(briefsServiceHandler);
+    props.rcicUsersTable.grantReadData(briefsServiceHandler);
+    props.signingKey.grantSign(briefsServiceHandler);
+
+    briefsServiceHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['ses:SendEmail'],
+        resources: [
+          `arn:aws:ses:${this.region}:${this.account}:identity/*`,
+          `arn:aws:ses:${this.region}:${this.account}:configuration-set/*`,
+        ],
+      }),
+    );
+
     // Recall. Nightly triage that backfills coverage: for every rule captured
     // in the last N days, decide (via Nova Micro) which clients in each RCIC's
     // caseload deserve deep analysis, then re-emit PolicyDelta with a
@@ -558,8 +611,11 @@ export class ArgusApiStack extends cdk.Stack {
       { path: '/policy-events/{id}/impacts', methods: [apigwv2.HttpMethod.GET], handler: policyEventsHandler },
       { path: '/impacts', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
-      { path: '/impacts/{id}/brief', methods: [apigwv2.HttpMethod.POST], handler: impactsHandler },
       { path: '/impacts/{id}/audit-signature', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      { path: '/briefs', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
+      { path: '/briefs/batch-send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
+      { path: '/briefs/{id}', methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH], handler: briefsServiceHandler },
+      { path: '/briefs/{id}/send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/demo/trigger-policy-change', methods: [apigwv2.HttpMethod.POST], handler: demoHandler },
       { path: '/demo/seed', methods: [apigwv2.HttpMethod.POST], handler: demoHandler },
     ];
