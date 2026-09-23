@@ -12,7 +12,18 @@ const CLIENT_PROFILES_TABLE = requiredEnv('CLIENT_PROFILES_TABLE');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const REASONER_MODEL = requiredEnv('BEDROCK_REASONER_MODEL');
+const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
+const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const RULE_CONTENT_MAX_CHARS = 4000;
+
+function guardrailConfig() {
+  if (!GUARDRAIL_ID) return undefined;
+  return {
+    guardrailIdentifier: GUARDRAIL_ID,
+    guardrailVersion: GUARDRAIL_VERSION,
+    trace: 'enabled' as const,
+  };
+}
 
 type PolicyDelta = {
   eventId: string;
@@ -237,12 +248,51 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     '}',
   ].join('\n');
 
+  // Mark the rule snippet as a grounding source and the assessment ask
+  // as a query so the guardrail's contextual-grounding filter can score
+  // the Analyst's output against the rule text. Both qualifiers are
+  // required for the grounding policy to evaluate; without either the
+  // Converse call fails with a validation error.
+  const groundedQuery = [
+    `POLICY CHANGE`,
+    `- Domain: ${delta.policyDomain}`,
+    `- Topic: ${delta.topic}`,
+    `- Summary: ${delta.summary}`,
+    ``,
+    `CLIENT PROFILE`,
+    clientJson,
+    ``,
+    `Produce ONE impact hypothesis for this client against the rule content in the grounding source. Return the JSON shape described in the system prompt.`,
+  ].join('\n');
+
   const res = await bedrock.send(
     new ConverseCommand({
       modelId: REASONER_MODEL,
       system: [{ text: system }],
-      messages: [{ role: 'user', content: [{ text: user }] }],
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            guardContent: {
+              text: {
+                text: `RULE CONTENT (source of truth):\n${ruleSnippet}`,
+                qualifiers: ['grounding_source'],
+              },
+            },
+          },
+          {
+            guardContent: {
+              text: {
+                text: groundedQuery,
+                qualifiers: ['query'],
+              },
+            },
+          },
+          { text: user },
+        ],
+      }],
       inferenceConfig: { maxTokens: 800, temperature: 0.1 },
+      guardrailConfig: guardrailConfig(),
     }),
   );
 

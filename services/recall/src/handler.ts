@@ -13,8 +13,19 @@ const CLIENT_PROFILES_TABLE = requiredEnv('CLIENT_PROFILES_TABLE');
 const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
 const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const TRIAGE_MODEL = requiredEnv('BEDROCK_TRIAGE_MODEL');
+const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
+const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const LOOKBACK_DAYS = Number(process.env.RECALL_LOOKBACK_DAYS ?? '30');
 const MAX_PAIRS_PER_RUN = Number(process.env.RECALL_MAX_PAIRS ?? '200');
+
+function guardrailConfig() {
+  if (!GUARDRAIL_ID) return undefined;
+  return {
+    guardrailIdentifier: GUARDRAIL_ID,
+    guardrailVersion: GUARDRAIL_VERSION,
+    trace: 'enabled' as const,
+  };
+}
 
 type PolicyRule = {
   rule_hash: string;
@@ -243,6 +254,7 @@ async function triage(rule: PolicyRule, client: ClientSummary, runId: string): P
       system: [{ text: system }],
       messages: [{ role: 'user', content: [{ text: user }] }],
       inferenceConfig: { maxTokens: 200, temperature: 0 },
+      guardrailConfig: guardrailConfig(),
     }),
   );
 

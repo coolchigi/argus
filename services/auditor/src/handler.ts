@@ -11,9 +11,20 @@ const eb = new EventBridgeClient({});
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const TRAINING_CORRECTIONS_TABLE = requiredEnv('TRAINING_CORRECTIONS_TABLE');
 const AUDITOR_MODEL = requiredEnv('BEDROCK_AUDITOR_MODEL');
+const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
+const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const RULE_CONTENT_MAX_CHARS = 4000;
 const FEW_SHOT_MAX = Number(process.env.FEW_SHOT_MAX ?? '5');
 const FEW_SHOT_MAX_AGE_DAYS = Number(process.env.FEW_SHOT_MAX_AGE_DAYS ?? '90');
+
+function guardrailConfig() {
+  if (!GUARDRAIL_ID) return undefined;
+  return {
+    guardrailIdentifier: GUARDRAIL_ID,
+    guardrailVersion: GUARDRAIL_VERSION,
+    trace: 'enabled' as const,
+  };
+}
 
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
@@ -222,6 +233,7 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
       system: [{ text: system }],
       messages: [{ role: 'user', content: [{ text: user }] }],
       inferenceConfig: { maxTokens: 800, temperature: 0.1 },
+      guardrailConfig: guardrailConfig(),
     }),
   );
 

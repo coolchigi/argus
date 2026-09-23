@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib';
+import * as bedrock from 'aws-cdk-lib/aws-bedrock';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as iam from 'aws-cdk-lib/aws-iam';
@@ -33,6 +34,8 @@ export class ArgusStatefulStack extends cdk.Stack {
   public readonly policyRulesTable: dynamodb.Table;
   public readonly ruleIndexTable: dynamodb.Table;
   public readonly briefsTable: dynamodb.Table;
+
+  public readonly guardrail: bedrock.CfnGuardrail;
 
   public readonly policyCorpusBucket: s3.Bucket;
   public readonly generatedArtifactsBucket: s3.Bucket;
@@ -253,6 +256,66 @@ export class ArgusStatefulStack extends cdk.Stack {
         },
       ],
     });
+
+    // Shared Bedrock Guardrail across every Argus model invocation.
+    //
+    // Two jobs: (1) belt-and-suspenders on the zero-PII promise. The
+    // architecture never stores or prompts with client names/emails/phones,
+    // but a bad CSV import or a schema mistake could still leak. This
+    // guardrail BLOCKs on personal identifiers at both input and output.
+    // (2) Prompt-attack defense on Sentinel and Auditor inputs. Sentinel
+    // eats scraped IRCC HTML. Auditor eats an Analyst hypothesis. Both
+    // are content we didn't write ourselves, so PROMPT_ATTACK is set to
+    // HIGH on the input side.
+    //
+    // Contextual grounding is enabled here but only enforced when the
+    // caller supplies a grounding source via guardContent (Analyst does
+    // this against the rule text). Other agents call the same guardrail
+    // without grounding sources and the check is a no-op for them.
+    this.guardrail = new bedrock.CfnGuardrail(this, 'ArgusGuardrail', {
+      name: 'argus-safety',
+      description: 'PII, prompt-attack, and grounding guardrail applied to every Argus Bedrock invocation.',
+      blockedInputMessaging: 'This request was blocked by Argus content policy. If this is unexpected, contact support.',
+      blockedOutputsMessaging: 'This response was blocked by Argus content policy. If this is unexpected, contact support.',
+      contentPolicyConfig: {
+        filtersConfig: [
+          { type: 'PROMPT_ATTACK', inputStrength: 'HIGH', outputStrength: 'NONE' },
+          { type: 'MISCONDUCT', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
+          { type: 'INSULTS', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
+          { type: 'HATE', inputStrength: 'HIGH', outputStrength: 'HIGH' },
+          { type: 'SEXUAL', inputStrength: 'HIGH', outputStrength: 'HIGH' },
+          { type: 'VIOLENCE', inputStrength: 'HIGH', outputStrength: 'HIGH' },
+        ],
+      },
+      sensitiveInformationPolicyConfig: {
+        piiEntitiesConfig: [
+          { type: 'NAME', action: 'BLOCK' },
+          { type: 'EMAIL', action: 'BLOCK' },
+          { type: 'PHONE', action: 'BLOCK' },
+          { type: 'ADDRESS', action: 'BLOCK' },
+          { type: 'US_SOCIAL_SECURITY_NUMBER', action: 'BLOCK' },
+          { type: 'CA_SOCIAL_INSURANCE_NUMBER', action: 'BLOCK' },
+          { type: 'DRIVER_ID', action: 'BLOCK' },
+          { type: 'CA_HEALTH_NUMBER', action: 'BLOCK' },
+          { type: 'CREDIT_DEBIT_CARD_NUMBER', action: 'BLOCK' },
+          { type: 'PASSWORD', action: 'BLOCK' },
+          { type: 'IP_ADDRESS', action: 'ANONYMIZE' },
+          { type: 'AGE', action: 'ANONYMIZE' },
+        ],
+      },
+      contextualGroundingPolicyConfig: {
+        filtersConfig: [
+          // Threshold is a minimum acceptable score. 0.65 gives Analyst
+          // enough latitude to reason from rule text into per-client
+          // conclusions without every wording variation being rejected.
+          { type: 'GROUNDING', threshold: 0.65 },
+          { type: 'RELEVANCE', threshold: 0.5 },
+        ],
+      },
+    });
+
+    new cdk.CfnOutput(this, 'GuardrailId', { value: this.guardrail.attrGuardrailId });
+    new cdk.CfnOutput(this, 'GuardrailArn', { value: this.guardrail.attrGuardrailArn });
 
     // Cognito PostConfirmation trigger. Provisions the RcicUsers row after
     // signup email verification and writes rcic_id back onto the Cognito

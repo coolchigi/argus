@@ -3,6 +3,7 @@ import * as cdk from 'aws-cdk-lib';
 import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigwv2auth from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import * as apigwv2int from 'aws-cdk-lib/aws-apigatewayv2-integrations';
+import * as bedrock from 'aws-cdk-lib/aws-bedrock';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as events from 'aws-cdk-lib/aws-events';
@@ -39,6 +40,8 @@ export interface ArgusApiStackProps extends cdk.StackProps {
   readonly policyRulesTable: dynamodb.Table;
   readonly ruleIndexTable: dynamodb.Table;
   readonly briefsTable: dynamodb.Table;
+
+  readonly guardrail: bedrock.CfnGuardrail;
 
   readonly policyCorpusBucket: s3.Bucket;
   readonly generatedArtifactsBucket: s3.Bucket;
@@ -156,6 +159,8 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         RULE_INDEX_TABLE: props.ruleIndexTable.tableName,
         BEDROCK_CLASSIFIER_MODEL: 'us.amazon.nova-micro-v1:0',
+        BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
+        BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         IRCC_SEED_URLS: JSON.stringify(IRCC_SEED_URLS),
         NODE_OPTIONS: '--enable-source-maps',
       },
@@ -210,6 +215,8 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
         BEDROCK_REASONER_MODEL: 'us.amazon.nova-pro-v1:0',
+        BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
+        BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: analystLogGroup,
@@ -273,6 +280,8 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
         BEDROCK_AUDITOR_MODEL: 'us.anthropic.claude-haiku-4-5-20251001-v1:0',
+        BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
+        BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         FEW_SHOT_MAX: '5',
         FEW_SHOT_MAX_AGE_DAYS: '90',
         NODE_OPTIONS: '--enable-source-maps',
@@ -377,6 +386,8 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         BRIEFS_TABLE: props.briefsTable.tableName,
         BEDROCK_COMPOSER_MODEL: 'us.amazon.nova-lite-v1:0',
+        BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
+        BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: composerLogGroup,
@@ -565,6 +576,8 @@ export class ArgusApiStack extends cdk.Stack {
         IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
         RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
         BEDROCK_TRIAGE_MODEL: 'us.amazon.nova-micro-v1:0',
+        BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
+        BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         RECALL_LOOKBACK_DAYS: '30',
         RECALL_MAX_PAIRS: '200',
         NODE_OPTIONS: '--enable-source-maps',
@@ -608,6 +621,18 @@ export class ArgusApiStack extends cdk.Stack {
     props.clientProfilesTable.grantReadWriteData(profilesHandler);
     props.policyEventsTable.grantReadData(policyEventsHandler);
     props.impactAssessmentsTable.grantReadData(policyEventsHandler);
+
+    // Bedrock guardrail: every Lambda that invokes a foundation model also
+    // gets ApplyGuardrail on the shared Argus guardrail. Same guardrail id
+    // is exported as an env var to each handler above so the Converse call
+    // can attach guardrailConfig.
+    const guardrailApply = new iam.PolicyStatement({
+      actions: ['bedrock:ApplyGuardrail'],
+      resources: [props.guardrail.attrGuardrailArn],
+    });
+    for (const h of [sentinelHandler, analystHandler, auditorHandler, composerHandler, recallHandler]) {
+      h.addToRolePolicy(guardrailApply);
+    }
 
     // Demo lever needs write access to seed profiles and trigger a fake policy delta.
     props.clientProfilesTable.grantReadWriteData(demoHandler);

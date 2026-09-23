@@ -13,7 +13,18 @@ const eb = new EventBridgeClient({});
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const BRIEFS_TABLE = requiredEnv('BRIEFS_TABLE');
 const COMPOSER_MODEL = requiredEnv('BEDROCK_COMPOSER_MODEL');
+const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
+const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const RULE_CONTENT_MAX_CHARS = 3000;
+
+function guardrailConfig() {
+  if (!GUARDRAIL_ID) return undefined;
+  return {
+    guardrailIdentifier: GUARDRAIL_ID,
+    guardrailVersion: GUARDRAIL_VERSION,
+    trace: 'enabled' as const,
+  };
+}
 
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
@@ -194,6 +205,7 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
       system: [{ text: system }],
       messages: [{ role: 'user', content: [{ text: user }] }],
       inferenceConfig: { maxTokens: 900, temperature: 0.2 },
+      guardrailConfig: guardrailConfig(),
     }),
   );
 

@@ -14,9 +14,20 @@ const BUCKET = requiredEnv('POLICY_CORPUS_BUCKET');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const RULE_INDEX_TABLE = requiredEnv('RULE_INDEX_TABLE');
 const CLASSIFIER_MODEL = requiredEnv('BEDROCK_CLASSIFIER_MODEL');
+const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
+const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const SEED_URLS = JSON.parse(process.env.IRCC_SEED_URLS ?? '[]') as string[];
 const FETCH_TIMEOUT_MS = 15_000;
 const CLASSIFIER_MAX_INPUT_CHARS = 12_000;
+
+function guardrailConfig() {
+  if (!GUARDRAIL_ID) return undefined;
+  return {
+    guardrailIdentifier: GUARDRAIL_ID,
+    guardrailVersion: GUARDRAIL_VERSION,
+    trace: 'enabled' as const,
+  };
+}
 
 type Category = 'ministerial-instruction' | 'news-release' | 'rounds-of-invitations' | 'policy-page-change';
 type Severity = 'low' | 'medium' | 'high';
@@ -178,6 +189,7 @@ async function classifyWithBedrock(url: string, normalizedHtml: string, runId: s
       ],
       messages: [{ role: 'user', content: [{ text: userText }] }],
       inferenceConfig: { maxTokens: 512, temperature: 0.1 },
+      guardrailConfig: guardrailConfig(),
     }),
   );
 
