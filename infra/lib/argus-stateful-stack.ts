@@ -142,6 +142,15 @@ export class ArgusStatefulStack extends cdk.Stack {
       stream: dynamodb.StreamViewType.NEW_AND_OLD_IMAGES, // Feeds the alerting Lambda.
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
+    // GSI for the public /verify/[hash] page. Look up a signed assessment by
+    // its canonical hash so anyone with the fingerprint can retrieve the
+    // signature material (no client-identifying data is returned by the
+    // public route).
+    this.impactAssessmentsTable.addGlobalSecondaryIndex({
+      indexName: 'byCanonicalHash',
+      partitionKey: { name: 'canonicalHash', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.KEYS_ONLY,
+    });
 
     this.alertsTable = new dynamodb.Table(this, 'AlertsTable', {
       tableName: 'argus-alerts',

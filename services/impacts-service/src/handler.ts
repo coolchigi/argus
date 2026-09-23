@@ -24,6 +24,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   log('info', 'impacts-request', { routeKey, rcicId, path: event.rawPath });
 
   try {
+    if (routeKey === 'GET /public/verify/{hash}') return json(200, await publicVerify(decodePathParam(event, 'hash')));
     if (routeKey === 'GET /impacts') return json(200, await listImpacts(rcicId));
     if (routeKey === 'GET /impacts/{id}') return json(200, await getImpact(rcicId, decodePathParam(event, 'id')));
     if (routeKey === 'GET /impacts/{id}/audit-signature') return json(200, await getAuditSignature(rcicId, decodePathParam(event, 'id')));
@@ -122,6 +123,62 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
     correctedDelta: correctedNumericDelta,
   });
   return { correction: item };
+}
+
+/**
+ * Public verify endpoint. No auth. Returns everything needed for a browser
+ * to verify the ECDSA signature, plus minimal display metadata. Does NOT
+ * return the narrative, recommended action, or clientId — the public
+ * receipt page shows proof of signing, not the underlying assessment
+ * content, so a shared link doesn't leak anything the RCIC didn't intend.
+ */
+async function publicVerify(canonicalHash: string): Promise<Record<string, unknown>> {
+  const cleanHash = canonicalHash.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(cleanHash)) throw httpError(400, 'invalid-hash-format');
+
+  const gsi = await ddb.send(
+    new QueryCommand({
+      TableName: IMPACT_ASSESSMENTS_TABLE,
+      IndexName: 'byCanonicalHash',
+      KeyConditionExpression: 'canonicalHash = :h',
+      ExpressionAttributeValues: { ':h': cleanHash },
+      Limit: 1,
+    }),
+  );
+  const gsiHit = (gsi.Items ?? [])[0];
+  if (!gsiHit || typeof gsiHit.rcicId !== 'string' || typeof gsiHit.assessmentKey !== 'string') {
+    throw httpError(404, 'assessment-not-found');
+  }
+
+  const full = await ddb.send(
+    new GetCommand({
+      TableName: IMPACT_ASSESSMENTS_TABLE,
+      Key: { rcicId: gsiHit.rcicId, assessmentKey: gsiHit.assessmentKey },
+    }),
+  );
+  const item = full.Item;
+  if (!item) throw httpError(404, 'assessment-not-found');
+
+  const publicKey = await loadPublicKey();
+  return {
+    fingerprint: cleanHash,
+    topic: String(item.topic ?? ''),
+    signedAt: String(item.timestamp ?? ''),
+    signatureAlgorithm: String(item.signatureAlgorithm ?? 'ECDSA_SHA_256'),
+    canonicalHash: cleanHash,
+    signatureBase64: String(item.signatureBase64 ?? ''),
+    signingKeyId: String(item.signingKeyId ?? ''),
+    publicKeyPem: publicKey.pem,
+    verification: {
+      algorithm: 'ECDSA_SHA_256',
+      curve: 'P-256',
+      messageIsHex: true,
+      messageIsHash: true,
+      how: 'Decode signatureBase64 from base64; decode canonicalHash from hex; verify with the P-256 public key.',
+    },
+    // Deliberately omitted: rcicId, clientId, assessmentKey, narrative,
+    // recommendedAction, ruleHash. This endpoint is for signature proof only.
+  };
 }
 
 async function loadPublicKey(): Promise<{ pem: string; keyId: string }> {

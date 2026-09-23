@@ -690,6 +690,15 @@ export class ArgusApiStack extends cdk.Stack {
       });
     }
 
+    // Public routes. No Cognito authorizer. The /verify/[hash] receipt page
+    // and the marketing hero fetch signature material without a login,
+    // exactly like a Stripe hosted receipt.
+    this.httpApi.addRoutes({
+      path: '/public/verify/{hash}',
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2int.HttpLambdaIntegration('Integration-public-verify', impactsHandler),
+    });
+
     // -----------------------------------------------------------------
     // Step Functions Express Workflow for the multi-agent pipeline.
     // Placeholder Pass state today. Real Analyst -> Auditor -> Anchor ->

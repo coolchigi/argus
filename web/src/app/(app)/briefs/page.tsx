@@ -9,6 +9,7 @@ import type { Brief } from "@/lib/argus-types";
 import { Input } from "@/components/ui/input";
 import { formatDelta, formatRelative } from "@/lib/format";
 import { Seal } from "@/components/seal";
+import { EmptyState } from "@/components/empty-state";
 import { Send, Search } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -129,6 +130,14 @@ export default function BriefsPage() {
         </div>
       )}
 
+      {(q.data?.briefs.length ?? 0) === 0 && !q.isLoading ? (
+        <div className="rounded-md border border-border bg-surface">
+          <EmptyState
+            headline="No briefs drafted yet."
+            body="Composer writes one for every affected client after a policy change. When Sentinel catches something, drafts appear here for you to edit and send."
+          />
+        </div>
+      ) : (
       <div className="rounded-md border border-border bg-surface overflow-hidden">
         <table className="w-full">
           <thead>
@@ -211,6 +220,7 @@ export default function BriefsPage() {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }

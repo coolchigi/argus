@@ -1,66 +1,141 @@
 "use client";
 
-import { useState } from "react";
-import { CheckCircle2, ChevronDown, ChevronRight, XCircle } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, ChevronDown, ChevronRight, Copy, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Seal } from "@/components/seal";
 import { api } from "@/lib/api";
 import type { AuditSignature } from "@/lib/argus-types";
 import { verifyAssessmentSignature } from "@/lib/signature-verify";
+import { VERIFY_TIMELINE, prefersReducedMotion } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 
 type Props = {
   assessmentKey: string;
   fingerprintPreview?: string;
   signedAt: string;
+  /**
+   * When true, the receipt fetches and verifies on mount instead of waiting
+   * for a click. Used on the public /verify page and the marketing hero.
+   */
+  autoVerify?: boolean;
+  /** Called with the fetched signature material once loaded. */
+  onLoaded?: (sig: AuditSignature) => void;
 };
 
-type State =
-  | { kind: "idle" }
-  | { kind: "verifying" }
-  | { kind: "verified"; at: Date; sig: AuditSignature }
-  | { kind: "invalid"; sig: AuditSignature; message: string }
-  | { kind: "error"; message: string };
+type Stage =
+  | "idle"
+  | "verifying"
+  | "sealBar"
+  | "headerFlip"
+  | "buttonFlip"
+  | "fingerprintUnderline"
+  | "settled"
+  | "invalid"
+  | "error";
+
+type LoadedState = {
+  sig: AuditSignature | null;
+  verifiedAt: Date | null;
+  message: string | null;
+};
+
+const REDUCED_STAGE_TIMING = {
+  sealBar: 60,
+  headerFlip: 120,
+  buttonFlip: 180,
+  underline: 240,
+  settled: 300,
+};
 
 /**
- * The Argus signature receipt. Section 8b of the design brief.
- * Plain-English state on the primary surface. Crypto details behind
- * a Signature details disclosure. WebCrypto verifies against the
- * exported KMS public key with no server round-trip.
+ * Signature receipt. Section 8b + 3a of the design brief.
+ *
+ * Plain-English primary state, crypto details behind a disclosure. On verify,
+ * runs the choreographed 1160ms sequence per PERFORMATIVE.md Section 3a
+ * (bar sweep, header cross-fade with 60ms follow-through, button transition
+ * at 140ms overlap-lag, fingerprint underline sweep at 960ms).
  */
-export function SignatureReceipt({ assessmentKey, fingerprintPreview, signedAt }: Props) {
-  const [state, setState] = useState<State>({ kind: "idle" });
+export function SignatureReceipt({
+  assessmentKey,
+  fingerprintPreview,
+  signedAt,
+  autoVerify = false,
+  onLoaded,
+}: Props) {
+  const [stage, setStage] = useState<Stage>("idle");
+  const [loaded, setLoaded] = useState<LoadedState>({ sig: null, verifiedAt: null, message: null });
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [verifiedFlash, setVerifiedFlash] = useState(false);
+  const timers = useRef<number[]>([]);
+  const autoStarted = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      timers.current.forEach((t) => window.clearTimeout(t));
+      timers.current = [];
+    };
+  }, []);
+
+  useEffect(() => {
+    if (autoVerify && !autoStarted.current) {
+      autoStarted.current = true;
+      void onVerify();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoVerify]);
+
+  function schedule(fn: () => void, delay: number) {
+    const id = window.setTimeout(fn, delay);
+    timers.current.push(id);
+  }
 
   async function onVerify() {
-    setState({ kind: "verifying" });
+    timers.current.forEach((t) => window.clearTimeout(t));
+    timers.current = [];
+    setStage("verifying");
     try {
       const sig = await api<AuditSignature>(
         `/impacts/${encodeURIComponent(assessmentKey)}/audit-signature`,
       );
+      onLoaded?.(sig);
       const ok = await verifyAssessmentSignature({
         canonicalHashHex: sig.canonicalHash,
         signatureBase64: sig.signatureBase64,
         publicKeyPem: sig.publicKeyPem,
       });
-      if (ok) {
-        setState({ kind: "verified", at: new Date(), sig });
-        setVerifiedFlash(true);
-        setTimeout(() => setVerifiedFlash(false), 1200);
-      } else {
-        setState({
-          kind: "invalid",
+      if (!ok) {
+        setLoaded({
           sig,
+          verifiedAt: null,
           message:
             "This signature couldn't be verified. Something is wrong here. Please contact Argus support before relying on this assessment.",
         });
+        setStage("invalid");
+        return;
       }
+
+      const now = new Date();
+      setLoaded({ sig, verifiedAt: now, message: null });
+
+      const t = prefersReducedMotion() ? REDUCED_STAGE_TIMING : {
+        sealBar: VERIFY_TIMELINE.sealBarStart,
+        headerFlip: VERIFY_TIMELINE.headerRewriteStart,
+        buttonFlip: VERIFY_TIMELINE.buttonRewriteStart,
+        underline: VERIFY_TIMELINE.fingerprintUnderlineStart,
+        settled: VERIFY_TIMELINE.totalDuration,
+      };
+      schedule(() => setStage("sealBar"), t.sealBar);
+      schedule(() => setStage("headerFlip"), t.headerFlip);
+      schedule(() => setStage("buttonFlip"), t.buttonFlip);
+      schedule(() => setStage("fingerprintUnderline"), t.underline);
+      schedule(() => setStage("settled"), t.settled);
     } catch (err) {
-      setState({
-        kind: "error",
+      setLoaded({
+        sig: null,
+        verifiedAt: null,
         message: err instanceof Error ? err.message : "verification-failed",
       });
+      setStage("error");
     }
   }
 
@@ -73,9 +148,16 @@ export function SignatureReceipt({ assessmentKey, fingerprintPreview, signedAt }
     }
   }
 
-  const verified = state.kind === "verified";
-  const invalid = state.kind === "invalid";
-  const sig = state.kind === "verified" || state.kind === "invalid" ? state.sig : null;
+  const isVerified = stage === "settled" || stage === "fingerprintUnderline" || stage === "buttonFlip" || stage === "headerFlip" || stage === "sealBar";
+  const isInvalid = stage === "invalid";
+  const isError = stage === "error";
+  const isVerifying = stage === "verifying";
+  const showHeaderVerified = stage === "headerFlip" || stage === "buttonFlip" || stage === "fingerprintUnderline" || stage === "settled";
+  const showButtonVerified = stage === "buttonFlip" || stage === "fingerprintUnderline" || stage === "settled";
+  const showUnderline = stage === "fingerprintUnderline" || stage === "settled";
+  const showBarSweep = stage === "sealBar" || stage === "headerFlip" || stage === "buttonFlip" || stage === "fingerprintUnderline" || stage === "settled";
+  const sig = loaded.sig;
+
   const shownFingerprint = sig?.canonicalHash
     ? formatFingerprint(sig.canonicalHash)
     : fingerprintPreview
@@ -85,35 +167,51 @@ export function SignatureReceipt({ assessmentKey, fingerprintPreview, signedAt }
   return (
     <div
       className={cn(
-        "relative rounded-lg border border-border bg-surface overflow-hidden",
-        verified && "ring-1 ring-seal-ring",
+        "relative rounded-lg border border-border bg-surface overflow-hidden transition-shadow",
+        isVerified && "ring-1 ring-seal-ring",
       )}
     >
-      {/* Seal-bar sweep on success. Section 8d motion. */}
-      {verifiedFlash && (
-        <span className="absolute inset-x-0 top-0 h-[2px] bg-seal animate-[sealsweep_260ms_ease-out]" />
-      )}
+      {/* Seal bar sweep. Persists after the moment as a 2px accent on top of the card. */}
+      <span
+        aria-hidden
+        className={cn(
+          "absolute inset-x-0 top-0 h-[2px] origin-left bg-seal transition-transform duration-[260ms] ease-[cubic-bezier(0.2,0.9,0.3,1)]",
+          showBarSweep ? "scale-x-100" : "scale-x-0",
+        )}
+      />
 
       <div className="px-6 pt-6 pb-4">
-        <div className="flex items-center gap-2">
-          <Seal className={cn("h-3.5 w-3.5", verified ? "text-seal" : invalid ? "text-red" : "text-ink-tertiary")} />
-          <span className="label text-ink-primary">
-            {verified ? "Signature verified" : invalid ? "Signature invalid" : "Signature receipt"}
+        <div className="flex items-center gap-2 h-4">
+          <Seal
+            className={cn(
+              "h-3.5 w-3.5 transition-colors duration-[140ms]",
+              showHeaderVerified ? "text-seal" : isInvalid ? "text-red" : "text-ink-tertiary",
+            )}
+          />
+          <span
+            className={cn(
+              "label transition-opacity duration-[140ms]",
+              showHeaderVerified ? "text-seal" : isInvalid ? "text-red" : "text-ink-secondary",
+            )}
+          >
+            {showHeaderVerified ? "Signature verified" : isInvalid ? "Signature invalid" : "Signature receipt"}
           </span>
         </div>
 
         <div className="mt-6 space-y-4">
           <ReceiptRow label="Status">
-            {verified ? (
+            {showHeaderVerified ? (
               <span className="inline-flex items-center gap-1.5 text-seal">
                 <CheckCircle2 className="h-3.5 w-3.5" strokeWidth={2} />
                 <span className="text-[13px] font-medium">Signed, verified in your browser</span>
               </span>
-            ) : invalid ? (
+            ) : isInvalid ? (
               <span className="inline-flex items-center gap-1.5 text-red">
                 <XCircle className="h-3.5 w-3.5" strokeWidth={2} />
                 <span className="text-[13px] font-medium">Verification failed</span>
               </span>
+            ) : isVerifying ? (
+              <VerifyingCaret />
             ) : (
               <span className="text-[13px] text-ink-primary">Signed by Argus</span>
             )}
@@ -128,19 +226,28 @@ export function SignatureReceipt({ assessmentKey, fingerprintPreview, signedAt }
               <button
                 type="button"
                 onClick={() => copyFingerprint(sig?.canonicalHash ?? fingerprintPreview ?? "")}
-                className="fingerprint-lg text-left hover:text-ink-primary transition-colors"
+                className="group relative text-left"
                 title="Copy full hash"
               >
-                {shownFingerprint}
+                <span className="fingerprint-lg text-ink-primary">{shownFingerprint}</span>
+                <span
+                  aria-hidden
+                  className={cn(
+                    "absolute -bottom-0.5 left-0 h-px origin-left bg-seal transition-transform duration-[200ms] ease-[cubic-bezier(0.2,0.9,0.3,1)]",
+                    showUnderline ? "scale-x-100" : "scale-x-0",
+                  )}
+                  style={{ width: "100%" }}
+                />
+                <Copy className="ml-2 inline-block h-3 w-3 text-ink-tertiary opacity-0 transition-opacity group-hover:opacity-100" strokeWidth={1.5} />
               </button>
             </ReceiptRow>
           )}
         </div>
 
-        {invalid && (
-          <p className="mt-4 text-[12px] leading-relaxed text-red">{state.message}</p>
+        {isInvalid && loaded.message && (
+          <p className="mt-4 text-[12px] leading-relaxed text-red">{loaded.message}</p>
         )}
-        {state.kind === "error" && (
+        {isError && (
           <p className="mt-4 text-[12px] leading-relaxed text-red">
             Couldn&rsquo;t reach the signature service. Try again in a moment.
           </p>
@@ -151,18 +258,18 @@ export function SignatureReceipt({ assessmentKey, fingerprintPreview, signedAt }
         <button
           type="button"
           onClick={onVerify}
-          disabled={state.kind === "verifying"}
+          disabled={isVerifying}
           className={cn(
-            "w-full h-9 rounded-sm text-[13px] font-medium transition-colors",
-            verified
+            "w-full h-9 rounded-sm text-[13px] font-medium transition-all duration-[120ms]",
+            showButtonVerified
               ? "border border-border bg-surface text-ink-secondary hover:text-ink-primary"
               : "bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50",
           )}
         >
-          {state.kind === "verifying"
+          {isVerifying
             ? "Verifying"
-            : verified
-              ? `Re-verify (last checked ${formatTime(state.at)})`
+            : showButtonVerified && loaded.verifiedAt
+              ? `Verified locally at ${formatTime(loaded.verifiedAt)}`
               : "Verify in your browser"}
         </button>
       </div>
@@ -190,23 +297,28 @@ export function SignatureReceipt({ assessmentKey, fingerprintPreview, signedAt }
               label="Public key"
               value={sig?.publicKeyPem ? "PEM available in this session" : "loaded on verify"}
             />
-            {state.kind === "invalid" && (
-              <TechRow label="Raw" value={state.message} wrap />
-            )}
-            {state.kind === "error" && (
-              <TechRow label="Error" value={state.message} wrap />
-            )}
+            {isInvalid && loaded.message && <TechRow label="Raw" value={loaded.message} wrap />}
+            {isError && loaded.message && <TechRow label="Error" value={loaded.message} wrap />}
           </div>
         )}
       </div>
-
-      <style>{`
-        @keyframes sealsweep {
-          from { transform: scaleX(0); transform-origin: left; }
-          to { transform: scaleX(1); transform-origin: left; }
-        }
-      `}</style>
     </div>
+  );
+}
+
+function VerifyingCaret() {
+  const [dots, setDots] = useState(1);
+  useEffect(() => {
+    const id = window.setInterval(() => setDots((d) => (d % 3) + 1), 200);
+    return () => window.clearInterval(id);
+  }, []);
+  return (
+    <span className="inline-flex items-center gap-1.5 text-ink-secondary">
+      <span className="text-[13px] font-medium">Verifying</span>
+      <span className="fingerprint text-ink-tertiary w-4 inline-block">
+        {".".repeat(dots)}
+      </span>
+    </span>
   );
 }
 

@@ -7,6 +7,7 @@ import { api } from "@/lib/api";
 import type { Impact } from "@/lib/argus-types";
 import { Input } from "@/components/ui/input";
 import { Seal } from "@/components/seal";
+import { EmptyState } from "@/components/empty-state";
 import { formatDelta, formatRelative } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Search } from "lucide-react";
@@ -66,6 +67,14 @@ export default function ImpactsPage() {
         </div>
       </div>
 
+      {all.length === 0 && !q.isLoading ? (
+        <div className="rounded-md border border-border bg-surface">
+          <EmptyState
+            headline="Nothing to review yet."
+            body="Argus starts watching IRCC the moment your first client is imported. Assessments land here as soon as Sentinel sees a change."
+          />
+        </div>
+      ) : (
       <div className="rounded-md border border-border bg-surface overflow-hidden">
         <table className="w-full">
           <thead>
@@ -126,6 +135,7 @@ export default function ImpactsPage() {
           </tbody>
         </table>
       </div>
+      )}
     </div>
   );
 }
