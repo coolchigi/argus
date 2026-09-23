@@ -14,7 +14,7 @@
 
 March 25 2025. IRCC removed CRS points for arranged employment. Overnight, tens of thousands of Express Entry profiles were re-scored. If you're a Regulated Canadian Immigration Consultant (RCIC) with 60 active files, you had to figure out that week who was affected, by how many points, and what to tell each one, individually.
 
-About 11,000 RCICs work in Canada, licensed by the College of Immigration and Citizenship Consultants (CICC). Their tools are 2010-era case-management software plus Gmail. When IRCC changes a rule, they read the notice, calculate the client-by-client impact by hand, and email clients from templates. Every step is on them, and CICC Client File Management Regulation s. 7.2 requires 6 years of retention on file records they produce.
+About 11,000 RCICs work in Canada, licensed by the College of Immigration and Citizenship Consultants (CICC). The daily workflow leans on tools like Officio or INSZoom for case management, spreadsheets for tracking, and Gmail for client comms. There's no purpose-built tool for cross-caseload policy-impact analysis. When IRCC changes a rule, they read the notice, calculate the client-by-client impact by hand, and email clients from templates. Every step is on them, and CICC Client File Management Regulation s. 7.2 requires 6 years of retention on file records they produce.
 
 Argus does the impact analysis and drafting for them, and hands back a receipt.
 
@@ -57,7 +57,7 @@ Cost model at demo scale: $1.67 per month. Cost model at working-RCIC scale (100
 
 ## How the coding agent shipped it
 
-I built this with Claude Code as my pair programmer, connected to AWS through the AWS Toolkit MCP server and my personal `aws-agent` named profile. The [`.claude/settings.json`](https://github.com/coolchigi/argus/blob/main/.claude/settings.json) in the repo wires the tool surface. Every commit on `main` carries a `Co-Authored-By: Claude Opus 4.7` trailer. Running `git log --grep "Co-Authored"` in the repo returns the full record of who did what.
+I built this with Claude Code as my pair programmer, connected to AWS through the [AWS Agent Toolkit](https://github.com/aws/agent-toolkit-for-aws) and my personal `aws-agent` named profile. The Agent Toolkit installs the AWS MCP servers Claude Code needs to talk to AWS directly (CloudFormation, DynamoDB, Bedrock, KMS, S3, SES, and more), and the same `aws login` session covers every subsequent CDK deploy. The [`.claude/settings.json`](https://github.com/coolchigi/argus/blob/main/.claude/settings.json) in the repo wires that tool surface. Every commit on `main` carries a `Co-Authored-By: Claude Opus 4.7` trailer. Running `git log --grep "Co-Authored"` in the repo returns the full record of who did what.
 
 The build ran across seven phases across roughly two weeks:
 
@@ -87,7 +87,7 @@ The public receipt page at `/verify/[hash]` is the surface Argus is most sharabl
 - **Sample public receipt:** https://main.d270cjhakw6y7j.amplifyapp.com/verify/1cbb498541676b14a34b357c325a05c54b6c01bc3ce899c2a00acf9944f86191 (click Verify in the browser)
 - **API:** https://yfc324axld.execute-api.us-east-1.amazonaws.com (Cognito-authorized routes plus one public `/public/verify/{hash}` route)
 - **Full source:** https://github.com/coolchigi/argus (public)
-- **Coding agent proof:** [`.claude/settings.json`](https://github.com/coolchigi/argus/blob/main/.claude/settings.json) shows the AWS MCP wiring. Every commit trailer on `main` carries `Co-Authored-By: Claude Opus 4.7`. Running `git log --grep "Co-Authored"` in the repo returns the full record of who did what.
+- **Coding agent proof:** Claude Code was connected to AWS via the [AWS Agent Toolkit](https://github.com/aws/agent-toolkit-for-aws) from day one of the build. [`.claude/settings.json`](https://github.com/coolchigi/argus/blob/main/.claude/settings.json) in the repo shows the Agent Toolkit MCP servers wired in. Every commit on `main` carries a `Co-Authored-By: Claude Opus 4.7` trailer, so `git log --grep "Co-Authored"` returns the full record of what shipped through the coding agent.
 
 ## What's next
 
