@@ -649,7 +649,11 @@ export class ArgusApiStack extends cdk.Stack {
           apigwv2.CorsHttpMethod.DELETE,
           apigwv2.CorsHttpMethod.OPTIONS,
         ],
-        allowOrigins: ['https://tryargus.ca', 'http://localhost:3000'],
+        allowOrigins: [
+          'https://tryargus.ca',
+          'https://main.d270cjhakw6y7j.amplifyapp.com',
+          'http://localhost:3000',
+        ],
       },
     });
 
