@@ -372,6 +372,8 @@ function renderEmailText(body: string, actions: string[], citation: CitationForE
 
 function resolveRcicId(event: APIGatewayProxyEventV2): string {
   const claims = (event.requestContext as { authorizer?: { jwt?: { claims?: Record<string, string> } } }).authorizer?.jwt?.claims;
+  const idClaim = claims?.['custom:rcic_id'];
+  if (typeof idClaim === 'string' && idClaim.length > 0) return idClaim;
   const licenseClaim = claims?.['custom:rcic_license'];
   if (typeof licenseClaim === 'string' && licenseClaim.length > 0) return licenseClaim;
   return DEFAULT_RCIC_ID;

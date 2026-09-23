@@ -1,7 +1,12 @@
+import * as path from 'node:path';
 import * as cdk from 'aws-cdk-lib';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
+import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
+import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
+import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
 
@@ -60,6 +65,11 @@ export class ArgusStatefulStack extends cdk.Stack {
       customAttributes: {
         // R-license number issued by the College of Immigration and Citizenship Consultants (CICC).
         rcic_license: new cognito.StringAttribute({ minLen: 7, maxLen: 8, mutable: false }),
+        // Internal Argus rcicId (partition key across every table). Usually equals
+        // the R-license for real users. Split out here because the demo user's
+        // rcicId "demo-rcic-001" does not fit the 7-8 char R-license shape, and
+        // Cognito custom attribute constraints cannot be modified after create.
+        rcic_id: new cognito.StringAttribute({ minLen: 3, maxLen: 40, mutable: true }),
       },
       passwordPolicy: {
         minLength: 12,
@@ -234,6 +244,52 @@ export class ArgusStatefulStack extends cdk.Stack {
         },
       ],
     });
+
+    // Cognito PostConfirmation trigger. Provisions the RcicUsers row after
+    // signup email verification and writes rcic_id back onto the Cognito
+    // user so every subsequent JWT carries the claim. Lives in this stack
+    // (not the api stack) to avoid a cyclic dependency: the trigger attaches
+    // to userPool, which api-stack imports; hosting the Lambda here keeps
+    // stateful -> api one-directional.
+    const userProvisioningLogGroup = new logs.LogGroup(this, 'UserProvisioningHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-user-provisioning',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const userProvisioningHandler = new nodejs.NodejsFunction(this, 'UserProvisioningHandler', {
+      functionName: 'argus-user-provisioning',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/user-provisioning/package-lock.json'),
+      entry: path.join(__dirname, '../../services/user-provisioning/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 256,
+      environment: {
+        RCIC_USERS_TABLE: this.rcicUsersTable.tableName,
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: userProvisioningLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    this.rcicUsersTable.grantWriteData(userProvisioningHandler);
+    // Wildcard resource (not `this.userPool.userPoolArn`) because referencing
+    // the UserPool ARN here creates a UserPool -> Lambda -> Role -> Policy ->
+    // UserPool cycle at CFN validation time. The Lambda is invoked only by
+    // Cognito post-confirmation, and event.userPoolId is the only pool it
+    // ever touches, so scoping to a specific pool ARN adds no security.
+    userProvisioningHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['cognito-idp:AdminUpdateUserAttributes'],
+        resources: [`arn:aws:cognito-idp:${this.region}:${this.account}:userpool/*`],
+      }),
+    );
+
+    this.userPool.addTrigger(cognito.UserPoolOperation.POST_CONFIRMATION, userProvisioningHandler);
 
     // Tag everything for cost attribution. Bedrock cost tracking uses a
     // separate inference-profile tagging path (see docs/argus-design.md).

@@ -1,0 +1,128 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-inter);
+  --font-mono: var(--font-plex-mono);
+  --font-heading: var(--font-inter);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-accent: var(--accent);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-muted: var(--muted);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+}
+
+/* Argus palette. Warm off-white background, near-black warm foreground,
+   deep teal primary. Restraint over decoration. Meant to read as a
+   compliance-adjacent audit product, not a dashboard toy. */
+:root {
+  --background: oklch(0.99 0.003 90);
+  --foreground: oklch(0.17 0.012 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.17 0.012 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.17 0.012 260);
+  --primary: oklch(0.5 0.09 180);
+  --primary-foreground: oklch(0.99 0.003 90);
+  --secondary: oklch(0.97 0.004 90);
+  --secondary-foreground: oklch(0.22 0.012 260);
+  --muted: oklch(0.97 0.004 90);
+  --muted-foreground: oklch(0.5 0.012 260);
+  --accent: oklch(0.94 0.02 180);
+  --accent-foreground: oklch(0.3 0.06 180);
+  --destructive: oklch(0.55 0.22 27);
+  --border: oklch(0.92 0.005 90);
+  --input: oklch(0.92 0.005 90);
+  --ring: oklch(0.5 0.09 180);
+  --radius: 0.5rem;
+  --sidebar: oklch(0.985 0.003 90);
+  --sidebar-foreground: oklch(0.17 0.012 260);
+  --sidebar-primary: oklch(0.5 0.09 180);
+  --sidebar-primary-foreground: oklch(0.99 0.003 90);
+  --sidebar-accent: oklch(0.94 0.02 180);
+  --sidebar-accent-foreground: oklch(0.3 0.06 180);
+  --sidebar-border: oklch(0.92 0.005 90);
+  --sidebar-ring: oklch(0.5 0.09 180);
+}
+
+.dark {
+  --background: oklch(0.14 0.008 260);
+  --foreground: oklch(0.97 0.003 90);
+  --card: oklch(0.18 0.008 260);
+  --card-foreground: oklch(0.97 0.003 90);
+  --popover: oklch(0.18 0.008 260);
+  --popover-foreground: oklch(0.97 0.003 90);
+  --primary: oklch(0.7 0.13 180);
+  --primary-foreground: oklch(0.14 0.008 260);
+  --secondary: oklch(0.22 0.008 260);
+  --secondary-foreground: oklch(0.97 0.003 90);
+  --muted: oklch(0.22 0.008 260);
+  --muted-foreground: oklch(0.68 0.008 260);
+  --accent: oklch(0.25 0.03 180);
+  --accent-foreground: oklch(0.85 0.08 180);
+  --destructive: oklch(0.7 0.18 22);
+  --border: oklch(1 0 0 / 8%);
+  --input: oklch(1 0 0 / 12%);
+  --ring: oklch(0.7 0.13 180);
+  --sidebar: oklch(0.16 0.008 260);
+  --sidebar-foreground: oklch(0.97 0.003 90);
+  --sidebar-primary: oklch(0.7 0.13 180);
+  --sidebar-primary-foreground: oklch(0.14 0.008 260);
+  --sidebar-accent: oklch(0.25 0.03 180);
+  --sidebar-accent-foreground: oklch(0.85 0.08 180);
+  --sidebar-border: oklch(1 0 0 / 8%);
+  --sidebar-ring: oklch(0.7 0.13 180);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-feature-settings: "cv11", "ss01", "ss03";
+  }
+  html {
+    @apply font-sans;
+  }
+  /* Tabular numerals for CRS deltas, timestamps, hashes. Keeps columns aligned. */
+  .tabular {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Signature-flavored monospace class. Slightly tighter tracking for hex strings. */
+  .hash {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: -0.01em;
+    color: var(--muted-foreground);
+    word-break: break-all;
+  }
+}
