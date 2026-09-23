@@ -4,9 +4,7 @@ import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Impact } from "@/lib/argus-types";
-import { Card } from "@/components/ui/card";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { formatDelta, formatRelative, truncateHash } from "@/lib/format";
+import { formatDelta, formatRelative } from "@/lib/format";
 import { ShieldCheck } from "lucide-react";
 
 export default function ImpactsPage() {
@@ -14,77 +12,107 @@ export default function ImpactsPage() {
     queryKey: ["impacts"],
     queryFn: () => api<{ impacts: Impact[] }>("/impacts"),
   });
+  const rows = q.data?.impacts ?? [];
 
   return (
-    <div className="space-y-6">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-tight">Impact assessments</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Every assessment is cross-family verified (Nova Pro analyst + Claude auditor) and KMS-signed.
+    <div className="space-y-8">
+      <header className="space-y-1">
+        <div className="label">Assessments</div>
+        <h1 className="text-xl font-semibold tracking-tight">Impact assessments</h1>
+        <p className="text-[12px] text-muted-foreground">
+          Cross-family verified (Nova Pro analyst, Claude auditor) and KMS-signed. Every row is receipt-worthy.
         </p>
       </header>
 
-      <Card className="p-0 overflow-hidden">
-        {q.isLoading ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">Loading assessments...</div>
-        ) : (q.data?.impacts.length ?? 0) === 0 ? (
-          <div className="p-8 text-center text-sm text-muted-foreground">
-            No assessments yet. When Sentinel detects a policy change, cascaded impact rows land here.
-          </div>
-        ) : (
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Client</TableHead>
-                <TableHead>Topic</TableHead>
-                <TableHead>Impact</TableHead>
-                <TableHead className="text-right">Delta</TableHead>
-                <TableHead>Confidence</TableHead>
-                <TableHead>Signed</TableHead>
-                <TableHead className="text-right">When</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {q.data!.impacts.map((i) => (
-                <TableRow key={i.assessmentKey} className="cursor-pointer">
-                  <TableCell>
+      <div className="border border-border bg-card rounded-md overflow-hidden">
+        <table className="w-full text-[13px]">
+          <thead>
+            <tr className="border-b border-border bg-muted/40">
+              <Th>Client</Th>
+              <Th>Topic</Th>
+              <Th>Impact</Th>
+              <Th align="right">Delta</Th>
+              <Th>Confidence</Th>
+              <Th>Signed</Th>
+              <Th align="right">Time</Th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border">
+            {q.isLoading ? (
+              <tr>
+                <td colSpan={7} className="py-10 text-center text-[11px] text-muted-foreground">
+                  Loading…
+                </td>
+              </tr>
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="py-10 text-center text-[11px] text-muted-foreground">
+                  No assessments yet. When Sentinel catches a policy change, rows land here.
+                </td>
+              </tr>
+            ) : (
+              rows.map((i) => (
+                <tr key={i.assessmentKey} className="row group hover:bg-accent/40 transition-colors">
+                  <Td>
                     <Link
                       href={`/impacts/${encodeURIComponent(i.assessmentKey)}`}
-                      className="font-medium text-foreground hover:underline"
+                      className="font-medium tabular hover:underline"
                     >
                       {i.clientId}
                     </Link>
-                    <div className="mt-0.5 text-[11px] text-muted-foreground truncate max-w-[200px]">
-                      {truncateHash(i.assessmentKey, 24)}
-                    </div>
-                  </TableCell>
-                  <TableCell className="text-xs">{i.topic}</TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{i.impactType}</TableCell>
-                  <TableCell className="text-right tabular">
+                  </Td>
+                  <Td>
+                    <span className="text-muted-foreground">{i.topic}</span>
+                  </Td>
+                  <Td>
+                    <span className="text-muted-foreground">{i.impactType}</span>
+                  </Td>
+                  <Td align="right">
                     <DeltaChip delta={i.numericDelta} type={i.impactType} />
-                  </TableCell>
-                  <TableCell>
+                  </Td>
+                  <Td>
                     <ConfidenceDot confidence={i.confidence} />
-                  </TableCell>
-                  <TableCell>
+                  </Td>
+                  <Td>
                     {i.signatureAlgorithm ? (
-                      <span className="inline-flex items-center gap-1 text-[11px] text-primary">
-                        <ShieldCheck className="h-3 w-3" /> ECDSA
+                      <span className="inline-flex items-center gap-1 text-[11px] text-brand">
+                        <ShieldCheck className="h-3 w-3" strokeWidth={1.75} /> ECDSA
                       </span>
                     ) : (
                       <span className="text-[11px] text-muted-foreground">—</span>
                     )}
-                  </TableCell>
-                  <TableCell className="text-right text-[11px] text-muted-foreground">
-                    {formatRelative(i.timestamp)}
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
-        )}
-      </Card>
+                  </Td>
+                  <Td align="right">
+                    <span className="text-[11px] text-muted-foreground tabular">
+                      {formatRelative(i.timestamp)}
+                    </span>
+                  </Td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
+  );
+}
+
+function Th({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" }) {
+  return (
+    <th
+      className={
+        "h-8 px-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground " +
+        (align === "right" ? "text-right" : "text-left")
+      }
+    >
+      {children}
+    </th>
+  );
+}
+
+function Td({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" }) {
+  return (
+    <td className={"px-3 " + (align === "right" ? "text-right" : "text-left")}>{children}</td>
   );
 }
 
@@ -96,8 +124,8 @@ function DeltaChip({ delta, type }: { delta: number | null; type: string }) {
   return (
     <span
       className={
-        "rounded-md px-2 py-0.5 text-xs tabular font-medium " +
-        (negative ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary")
+        "inline-block rounded-sm px-1.5 py-0.5 text-[11px] font-medium tabular " +
+        (negative ? "bg-destructive/10 text-destructive" : "bg-brand-subtle text-brand")
       }
     >
       {formatDelta(delta)}
@@ -107,7 +135,7 @@ function DeltaChip({ delta, type }: { delta: number | null; type: string }) {
 
 function ConfidenceDot({ confidence }: { confidence: string }) {
   const color =
-    confidence === "high" ? "bg-primary" : confidence === "medium" ? "bg-amber-500" : "bg-muted-foreground";
+    confidence === "high" ? "bg-brand" : confidence === "medium" ? "bg-amber-500" : "bg-muted-foreground";
   return (
     <span className="inline-flex items-center gap-1.5 text-[11px] text-muted-foreground">
       <span className={"h-1.5 w-1.5 rounded-full " + color} />

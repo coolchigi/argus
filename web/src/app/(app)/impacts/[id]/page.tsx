@@ -6,14 +6,12 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { AuditSignature, Impact, ImpactType, Confidence } from "@/lib/argus-types";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Separator } from "@/components/ui/separator";
 import { formatDelta, formatRelative } from "@/lib/format";
-import { ArrowLeft, CheckCircle2, ShieldCheck, XCircle } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ShieldCheck, XCircle, ExternalLink } from "lucide-react";
 import { verifyAssessmentSignature } from "@/lib/signature-verify";
 
 const IMPACT_TYPES: ImpactType[] = [
@@ -37,18 +35,18 @@ export default function ImpactDetailPage({ params }: { params: Promise<{ id: str
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-8">
       <Link
         href="/impacts"
-        className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+        className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
       >
-        <ArrowLeft className="h-3 w-3" /> Back to impacts
+        <ArrowLeft className="h-3 w-3" strokeWidth={1.75} /> Back to assessments
       </Link>
 
       {impact.isLoading ? (
-        <div className="py-16 text-center text-sm text-muted-foreground">Loading assessment...</div>
+        <div className="py-16 text-center text-[11px] text-muted-foreground">Loading…</div>
       ) : !impact.data ? (
-        <div className="py-16 text-center text-sm text-destructive">Assessment not found.</div>
+        <div className="py-16 text-center text-[11px] text-destructive">Assessment not found.</div>
       ) : (
         <ImpactBody impact={impact.data} assessmentKey={assessmentKey} />
       )}
@@ -58,55 +56,81 @@ export default function ImpactDetailPage({ params }: { params: Promise<{ id: str
 
 function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: string }) {
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_360px]">
+    <div className="grid grid-cols-[1fr_320px] gap-8">
       <div className="space-y-6 min-w-0">
-        <header>
+        <header className="space-y-1">
+          <div className="label">{impact.topic}</div>
           <div className="flex items-baseline gap-3">
-            <h1 className="text-2xl font-semibold tracking-tight">{impact.clientId}</h1>
-            <span className="text-sm text-muted-foreground">·</span>
-            <span className="text-sm text-muted-foreground">{impact.topic}</span>
+            <h1 className="text-xl font-semibold tracking-tight tabular">{impact.clientId}</h1>
+            <span className="text-[11px] text-muted-foreground tabular">
+              {formatRelative(impact.timestamp)}
+            </span>
           </div>
-          <p className="mt-1 text-xs text-muted-foreground tabular">{formatRelative(impact.timestamp)}</p>
         </header>
 
-        <Card className="p-5">
-          <div className="flex items-center justify-between">
+        <div className="border border-border bg-card rounded-md p-6">
+          <div className="flex items-start justify-between">
             <div>
-              <div className="text-xs uppercase tracking-wider text-muted-foreground">Assessment</div>
-              <div className="mt-1 text-sm font-medium">{impact.impactType}</div>
+              <div className="label">Assessment</div>
+              <div className="mt-1 text-[13px] text-muted-foreground">{impact.impactType}</div>
             </div>
-            <DeltaChip delta={impact.numericDelta} type={impact.impactType} />
+            <HeroDelta delta={impact.numericDelta} type={impact.impactType} />
           </div>
-          <Separator className="my-4" />
-          <p className="text-sm leading-relaxed">{impact.narrative}</p>
-          <div className="mt-4 rounded-md bg-muted/50 p-3">
-            <div className="text-[11px] uppercase tracking-wider text-muted-foreground">Recommended action</div>
-            <p className="mt-1 text-sm">{impact.recommendedAction}</p>
+          <div className="mt-6 border-t border-border pt-4">
+            <p className="text-[13px] leading-relaxed">{impact.narrative}</p>
+          </div>
+          <div className="mt-4 border-t border-border pt-4">
+            <div className="label">Recommended action</div>
+            <p className="mt-1 text-[13px]">{impact.recommendedAction}</p>
           </div>
           {impact.citationSourceUrl && (
-            <div className="mt-4 text-xs">
-              <span className="text-muted-foreground">Source: </span>
+            <div className="mt-4 border-t border-border pt-4">
+              <div className="label">Source</div>
               <a
                 href={impact.citationSourceUrl}
                 target="_blank"
                 rel="noreferrer"
-                className="text-primary underline underline-offset-2"
+                className="mt-1 inline-flex items-center gap-1 text-[12px] text-foreground hover:underline break-all"
               >
                 {impact.citationSourceUrl}
+                <ExternalLink className="h-3 w-3 flex-shrink-0 text-muted-foreground" strokeWidth={1.75} />
               </a>
             </div>
           )}
-        </Card>
+        </div>
 
         <CorrectionForm assessmentKey={assessmentKey} original={impact} />
       </div>
 
-      <div className="space-y-6">
+      <div className="space-y-4">
         <SignaturePanel assessmentKey={assessmentKey} />
-        <Card className="p-4">
-          <div className="text-xs uppercase tracking-wider text-muted-foreground">Rule hash</div>
-          <div className="hash mt-1">{impact.ruleHash}</div>
-        </Card>
+        <div className="border border-border bg-card rounded-md p-4">
+          <div className="label">Rule hash</div>
+          <div className="hash mt-2">{impact.ruleHash}</div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function HeroDelta({ delta, type }: { delta: number | null; type: string }) {
+  if (delta === null || type === "none") {
+    return (
+      <span className="rounded-sm bg-muted px-2 py-1 text-[11px] uppercase tracking-wider text-muted-foreground">
+        no delta
+      </span>
+    );
+  }
+  const negative = delta < 0;
+  return (
+    <div className="text-right">
+      <div
+        className={
+          "text-3xl font-semibold tabular tracking-tight " +
+          (negative ? "text-destructive" : "text-brand")
+        }
+      >
+        {formatDelta(delta)}
       </div>
     </div>
   );
@@ -136,68 +160,54 @@ function SignaturePanel({ assessmentKey }: { assessmentKey: string }) {
   }
 
   return (
-    <Card className="p-5">
-      <div className="flex items-center gap-2">
-        <ShieldCheck className="h-4 w-4 text-primary" />
-        <h3 className="text-sm font-semibold">Audit signature</h3>
+    <div className="border border-border bg-card rounded-md p-4">
+      <div className="flex items-center gap-1.5">
+        <ShieldCheck className="h-3.5 w-3.5 text-brand" strokeWidth={1.75} />
+        <span className="label">Audit signature</span>
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">
-        ECDSA P-256 over SHA-256 of the canonicalized assessment. Verifiable offline against the KMS public key.
+      <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+        ECDSA P-256 over SHA-256 of the canonicalized payload. Verifiable offline.
       </p>
 
       {details && (
-        <div className="mt-4 space-y-2 text-xs">
+        <div className="mt-3 space-y-1.5">
           <Row label="Algorithm" value={details.signatureAlgorithm} />
-          <Row label="Signing key" value={details.signingKeyId} mono />
-          <Row label="Canonical hash" value={details.canonicalHash} mono truncate />
+          <Row label="Key" value={details.signingKeyId} mono />
+          <Row label="Hash" value={details.canonicalHash} mono />
         </div>
       )}
 
-      <div className="mt-4 flex items-center gap-2">
-        <Button size="sm" variant={state === "valid" ? "secondary" : "default"} onClick={onVerify} disabled={state === "verifying"}>
-          {state === "verifying" ? "Verifying..." : state === "valid" ? "Verified" : "Verify signature"}
-        </Button>
+      <div className="mt-3 flex items-center gap-2">
+        <button
+          type="button"
+          onClick={onVerify}
+          disabled={state === "verifying"}
+          className="h-7 rounded-sm border border-border bg-background px-2.5 text-[11px] font-medium hover:bg-accent disabled:opacity-50"
+        >
+          {state === "verifying" ? "Verifying…" : state === "valid" ? "Re-verify" : "Verify"}
+        </button>
         {state === "valid" && (
-          <span className="inline-flex items-center gap-1 text-xs text-primary">
-            <CheckCircle2 className="h-3.5 w-3.5" /> Valid
+          <span className="inline-flex items-center gap-1 text-[11px] text-brand">
+            <CheckCircle2 className="h-3 w-3" strokeWidth={2} /> Valid
           </span>
         )}
         {state === "invalid" && (
-          <span className="inline-flex items-center gap-1 text-xs text-destructive">
-            <XCircle className="h-3.5 w-3.5" /> Invalid
+          <span className="inline-flex items-center gap-1 text-[11px] text-destructive">
+            <XCircle className="h-3 w-3" strokeWidth={2} /> Invalid
           </span>
         )}
       </div>
-      {state === "error" && (
-        <p className="mt-2 text-xs text-destructive">{errorMessage}</p>
-      )}
-    </Card>
-  );
-}
-
-function Row({ label, value, mono, truncate }: { label: string; value: string; mono?: boolean; truncate?: boolean }) {
-  return (
-    <div className="grid grid-cols-[100px_1fr] gap-2">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={(mono ? "hash " : "") + (truncate ? "truncate" : "")}>{value}</span>
+      {state === "error" && <p className="mt-2 text-[11px] text-destructive">{errorMessage}</p>}
     </div>
   );
 }
 
-function DeltaChip({ delta, type }: { delta: number | null; type: string }) {
-  if (delta === null || type === "none") {
-    return <span className="text-xs text-muted-foreground">no numeric delta</span>;
-  }
-  const negative = delta < 0;
+function Row({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
   return (
-    <span
-      className={
-        "rounded-md px-3 py-1 text-lg tabular font-semibold " +
-        (negative ? "bg-destructive/10 text-destructive" : "bg-primary/10 text-primary")
-      }
-    >
-      {formatDelta(delta)}
-    </span>
+    <div className="grid grid-cols-[60px_1fr] gap-2 text-[11px]">
+      <span className="text-muted-foreground">{label}</span>
+      <span className={mono ? "hash" : ""}>{value}</span>
+    </div>
   );
 }
 
@@ -231,7 +241,7 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
           correctedConfidence: confidence,
         },
       });
-      toast.success("Correction saved. Auditor will use it as a few-shot on the next run.");
+      toast.success("Correction saved. Auditor will use it as a few-shot next run.");
       qc.invalidateQueries({ queryKey: ["impact", assessmentKey] });
       setOpen(false);
       setReasoning("");
@@ -244,36 +254,40 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
 
   if (!open) {
     return (
-      <Card className="p-4">
-        <div className="flex items-center justify-between">
+      <div className="border border-border bg-card rounded-md p-4">
+        <div className="flex items-center justify-between gap-4">
           <div>
-            <h3 className="text-sm font-semibold">This assessment is wrong?</h3>
-            <p className="mt-0.5 text-xs text-muted-foreground">
-              File a correction. Future assessments in the same domain will apply your reasoning.
+            <div className="label">Correct this</div>
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              File a correction and the Auditor learns from your reasoning on the next run.
             </p>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-            Correct this
-          </Button>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="h-7 rounded-sm border border-border bg-background px-2.5 text-[11px] font-medium hover:bg-accent"
+          >
+            File correction
+          </button>
         </div>
-      </Card>
+      </div>
     );
   }
 
   return (
-    <Card className="p-5">
-      <h3 className="text-sm font-semibold">Correct this assessment</h3>
-      <p className="mt-0.5 text-xs text-muted-foreground">
-        Explain WHY. The Auditor learns from your reasoning, not just the corrected number.
+    <div className="border border-border bg-card rounded-md p-6">
+      <div className="label">File correction</div>
+      <p className="mt-1 text-[12px] text-muted-foreground">
+        Explain WHY. The Auditor learns from your reasoning, not just the number.
       </p>
 
-      <form onSubmit={onSubmit} className="mt-4 space-y-4">
+      <form onSubmit={onSubmit} className="mt-5 space-y-4">
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
-            <Label htmlFor="impactType" className="text-xs">Impact type</Label>
+            <Label htmlFor="impactType" className="label">Impact type</Label>
             <select
               id="impactType"
-              className="w-full h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+              className="w-full h-8 rounded-sm border border-input bg-transparent px-2 text-[12px]"
               value={impactType}
               onChange={(e) => setImpactType(e.target.value as ImpactType)}
             >
@@ -281,49 +295,52 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
             </select>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="delta" className="text-xs">Numeric delta (leave blank for none)</Label>
+            <Label htmlFor="delta" className="label">Numeric delta</Label>
             <Input
               id="delta"
               type="number"
+              className="h-8 text-[12px]"
               value={numericDelta}
               onChange={(e) => setNumericDelta(e.target.value)}
-              placeholder="e.g. -50"
+              placeholder="blank for none"
             />
           </div>
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="reasoning" className="text-xs">Your reasoning (required)</Label>
+          <Label htmlFor="reasoning" className="label">Your reasoning (required)</Label>
           <Textarea
             id="reasoning"
             required
             rows={3}
+            className="text-[12px]"
             value={reasoning}
             onChange={(e) => setReasoning(e.target.value)}
-            placeholder="e.g. IRCC transitional guidance exempts profiles active before March 24 2025 for 90 days."
+            placeholder="e.g. IRCC transitional guidance exempts profiles active before March 24 2025."
           />
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="narrative" className="text-xs">Corrected narrative</Label>
+          <Label htmlFor="narrative" className="label">Corrected narrative</Label>
           <Textarea
             id="narrative"
             rows={2}
+            className="text-[12px]"
             value={narrative}
             onChange={(e) => setNarrative(e.target.value)}
           />
         </div>
 
-        <div className="grid grid-cols-[1fr_auto] gap-3 items-end">
+        <div className="grid grid-cols-[1fr_120px] gap-3 items-end">
           <div className="space-y-1.5">
-            <Label htmlFor="action" className="text-xs">Recommended action</Label>
-            <Input id="action" value={action} onChange={(e) => setAction(e.target.value)} />
+            <Label htmlFor="action" className="label">Recommended action</Label>
+            <Input id="action" className="h-8 text-[12px]" value={action} onChange={(e) => setAction(e.target.value)} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="conf" className="text-xs">Confidence</Label>
+            <Label htmlFor="conf" className="label">Confidence</Label>
             <select
               id="conf"
-              className="w-24 h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+              className="w-full h-8 rounded-sm border border-input bg-transparent px-2 text-[12px]"
               value={confidence}
               onChange={(e) => setConfidence(e.target.value as Confidence)}
             >
@@ -337,10 +354,10 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
             Cancel
           </Button>
           <Button type="submit" size="sm" disabled={busy}>
-            {busy ? "Saving..." : "Save correction"}
+            {busy ? "Saving…" : "Save correction"}
           </Button>
         </div>
       </form>
-    </Card>
+    </div>
   );
 }

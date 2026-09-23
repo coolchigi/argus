@@ -6,12 +6,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { Brief } from "@/lib/argus-types";
-import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { ArrowLeft, ExternalLink, Send, ShieldCheck } from "lucide-react";
 import { formatRelative } from "@/lib/format";
 
@@ -33,15 +31,15 @@ export default function BriefDetailPage({ params }: { params: Promise<{ id: stri
   });
 
   return (
-    <div className="space-y-6">
-      <Link href="/briefs" className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-3 w-3" /> Back to briefs
+    <div className="space-y-8">
+      <Link href="/briefs" className="inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-3 w-3" strokeWidth={1.75} /> Back to briefs
       </Link>
 
       {brief.isLoading ? (
-        <div className="py-16 text-center text-sm text-muted-foreground">Loading brief...</div>
+        <div className="py-16 text-center text-[11px] text-muted-foreground">Loading…</div>
       ) : !brief.data ? (
-        <div className="py-16 text-center text-sm text-destructive">Brief not found.</div>
+        <div className="py-16 text-center text-[11px] text-destructive">Brief not found.</div>
       ) : (
         <BriefBody brief={brief.data} archive={archive.data} onSaved={() => qc.invalidateQueries({ queryKey: ["brief", briefId] })} />
       )}
@@ -105,7 +103,7 @@ function BriefBody({ brief, archive, onSaved }: { brief: Brief; archive: Archive
         { method: "POST", body: { recipientEmail: recipient.trim() } },
       );
       if (r.result.ok) {
-        toast.success("Brief sent. SES message id " + r.result.sesMessageId);
+        toast.success("Brief sent");
         onSaved();
       } else {
         toast.error(r.result.error ?? "send-failed");
@@ -118,146 +116,166 @@ function BriefBody({ brief, archive, onSaved }: { brief: Brief; archive: Archive
   }
 
   return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1fr_320px]">
-      <div className="space-y-4 min-w-0">
+    <div className="grid grid-cols-[1fr_300px] gap-8">
+      <div className="space-y-6 min-w-0">
         <header className="space-y-1">
-          <div className="flex items-center gap-2">
-            <BriefStatusBadge status={brief.status} />
-            <span className="text-xs text-muted-foreground">·</span>
-            <span className="text-xs text-muted-foreground">Client {brief.clientId}</span>
-            <span className="text-xs text-muted-foreground">·</span>
-            <span className="text-xs text-muted-foreground">{formatRelative(brief.createdAt)}</span>
+          <div className="flex items-center gap-2 text-[11px]">
+            <StatusPill status={brief.status} />
+            <span className="text-muted-foreground tabular">Client {brief.clientId}</span>
+            <span className="text-muted-foreground">·</span>
+            <span className="text-muted-foreground tabular">{formatRelative(brief.createdAt)}</span>
           </div>
         </header>
 
-        <Card className="p-5 space-y-4">
+        <div className="border border-border bg-card rounded-md p-6 space-y-5">
           <div className="space-y-1.5">
-            <Label htmlFor="subject" className="text-xs">Subject</Label>
-            <Input id="subject" value={subject} onChange={(e) => setSubject(e.target.value)} disabled={readOnly} />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="body" className="text-xs">Body (Markdown)</Label>
-            <Textarea
-              id="body"
-              rows={14}
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
+            <Label htmlFor="subject" className="label">Subject</Label>
+            <Input
+              id="subject"
+              className="h-9 text-[13px] font-medium"
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
               disabled={readOnly}
-              className="font-mono text-xs"
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="actions" className="text-xs">Suggested actions (one per line, up to 5)</Label>
+            <Label htmlFor="body" className="label">Body</Label>
+            <Textarea
+              id="body"
+              rows={16}
+              value={body}
+              onChange={(e) => setBody(e.target.value)}
+              disabled={readOnly}
+              className="font-mono text-[12px] leading-relaxed"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="actions" className="label">Suggested actions (one per line)</Label>
             <Textarea
               id="actions"
               rows={4}
               value={actionsText}
               onChange={(e) => setActionsText(e.target.value)}
               disabled={readOnly}
+              className="text-[12px]"
             />
           </div>
           {!readOnly && (
             <div className="flex justify-end">
               <Button size="sm" onClick={onSave} disabled={savingBusy || !dirty}>
-                {savingBusy ? "Saving..." : dirty ? "Save draft" : "Saved"}
+                {savingBusy ? "Saving…" : dirty ? "Save draft" : "Saved"}
               </Button>
             </div>
           )}
-        </Card>
+        </div>
 
         {!readOnly && (
-          <Card className="p-5">
-            <div className="flex items-center gap-2 mb-3">
-              <Send className="h-4 w-4 text-primary" />
-              <h3 className="text-sm font-semibold">Send to client</h3>
+          <div className="border border-border bg-card rounded-md p-6">
+            <div className="flex items-center gap-1.5">
+              <Send className="h-3.5 w-3.5 text-brand" strokeWidth={1.75} />
+              <span className="label">Send to client</span>
             </div>
-            <p className="text-xs text-muted-foreground mb-3">
-              KMS-signs the final body before dispatch. Recipient email is hashed on our side, not stored plaintext.
+            <p className="mt-1 text-[12px] text-muted-foreground">
+              KMS-signed before dispatch. Recipient hashed, never stored plaintext.
             </p>
-            <div className="flex items-center gap-2">
+            <div className="mt-4 flex items-center gap-2">
               <Input
                 type="email"
                 placeholder="client@example.com"
                 value={recipient}
                 onChange={(e) => setRecipient(e.target.value)}
+                className="h-9 text-[13px]"
               />
-              <Button onClick={onSend} disabled={sendingBusy}>
-                {sendingBusy ? "Sending..." : "Send"}
+              <Button onClick={onSend} disabled={sendingBusy} size="sm">
+                {sendingBusy ? "Sending…" : "Send"}
               </Button>
             </div>
-          </Card>
+          </div>
         )}
       </div>
 
       <div className="space-y-4">
-        <Card className="p-4">
-          <div className="text-xs uppercase tracking-wider text-muted-foreground">Citation</div>
+        <div className="border border-border bg-card rounded-md p-4">
+          <div className="label">Citation</div>
           {archive ? (
-            <div className="mt-2 space-y-2 text-xs">
-              <div>
+            <div className="mt-3 space-y-3">
+              <div className="text-[11px]">
                 <div className="text-muted-foreground">Live source</div>
-                <div className="mt-0.5 flex items-start gap-1">
-                  <a href={archive.sourceUrl} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2 break-all">
-                    {archive.sourceUrl}
-                  </a>
-                  <ExternalLink className="h-3 w-3 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                </div>
+                <a
+                  href={archive.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex items-start gap-1 text-foreground hover:underline break-all"
+                >
+                  {archive.sourceUrl}
+                  <ExternalLink className="h-3 w-3 mt-0.5 flex-shrink-0 text-muted-foreground" strokeWidth={1.75} />
+                </a>
                 <div className="mt-1">
                   {archive.sourceIsLive ? (
-                    <span className="text-primary">Live URL is reachable.</span>
+                    <span className="text-brand">Reachable</span>
                   ) : (
-                    <span className="text-destructive">Live URL is dead. Use archive.</span>
+                    <span className="text-destructive">Dead. Use archive.</span>
                   )}
                 </div>
               </div>
               {archive.archiveUrl && (
-                <div className="pt-2 border-t border-border">
-                  <div className="text-muted-foreground">Argus archive (verified snapshot)</div>
-                  <div className="mt-0.5 flex items-start gap-1">
-                    <a href={archive.archiveUrl} target="_blank" rel="noreferrer" className="text-primary underline underline-offset-2 break-all">
-                      Open archive
-                    </a>
-                    <ExternalLink className="h-3 w-3 mt-0.5 flex-shrink-0 text-muted-foreground" />
-                  </div>
-                  <div className="mt-1 text-muted-foreground">Presigned URL, expires in 7 days.</div>
+                <div className="border-t border-border pt-3 text-[11px]">
+                  <div className="text-muted-foreground">Argus archive</div>
+                  <a
+                    href={archive.archiveUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-1 inline-flex items-center gap-1 text-foreground hover:underline"
+                  >
+                    Open verified snapshot
+                    <ExternalLink className="h-3 w-3 text-muted-foreground" strokeWidth={1.75} />
+                  </a>
+                  <div className="mt-1 text-muted-foreground">Presigned, 7-day TTL.</div>
                 </div>
               )}
             </div>
           ) : (
-            <div className="mt-2 text-xs text-muted-foreground">Checking citation...</div>
+            <div className="mt-2 text-[11px] text-muted-foreground">Checking…</div>
           )}
-        </Card>
+        </div>
 
         {readOnly && brief.sentBodyMarkdown && (
-          <Card className="p-4">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-primary" />
-              <div className="text-xs uppercase tracking-wider text-muted-foreground">Sent + signed</div>
+          <div className="border border-border bg-card rounded-md p-4">
+            <div className="flex items-center gap-1.5">
+              <ShieldCheck className="h-3.5 w-3.5 text-brand" strokeWidth={1.75} />
+              <span className="label">Sent + signed</span>
             </div>
-            <div className="mt-2 text-xs">
-              <div className="text-muted-foreground">Sent at</div>
-              <div className="tabular">{brief.sentAt}</div>
+            <div className="mt-3 space-y-1.5 text-[11px]">
+              <div>
+                <div className="text-muted-foreground">Sent</div>
+                <div className="tabular">{formatRelative(brief.sentAt)}</div>
+              </div>
+              <div>
+                <div className="text-muted-foreground">Recipient domain</div>
+                <div>{brief.sentRecipientDomain}</div>
+              </div>
             </div>
-            <div className="mt-2 text-xs">
-              <div className="text-muted-foreground">Recipient domain</div>
-              <div>{brief.sentRecipientDomain}</div>
-            </div>
-          </Card>
+          </div>
         )}
       </div>
     </div>
   );
 }
 
-function BriefStatusBadge({ status }: { status: string }) {
+function StatusPill({ status }: { status: string }) {
   const map: Record<string, string> = {
     draft: "bg-muted text-muted-foreground",
     edited: "bg-accent text-accent-foreground",
-    sent: "bg-primary/10 text-primary",
+    sent: "bg-brand-subtle text-brand",
   };
   return (
-    <Badge className={"h-5 border-0 " + (map[status] ?? "bg-muted text-muted-foreground")}>
+    <span
+      className={
+        "inline-block rounded-sm px-1.5 py-0.5 text-[10px] uppercase tracking-wider " +
+        (map[status] ?? "bg-muted text-muted-foreground")
+      }
+    >
       {status}
-    </Badge>
+    </span>
   );
 }

@@ -34,72 +34,84 @@
   --color-popover: var(--popover);
   --color-card-foreground: var(--card-foreground);
   --color-card: var(--card);
-  --radius-sm: calc(var(--radius) * 0.6);
-  --radius-md: calc(var(--radius) * 0.8);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) * 1.4);
+  --color-brand: var(--brand);
+  --color-brand-foreground: var(--brand-foreground);
+  --color-brand-subtle: var(--brand-subtle);
+  --radius-sm: 0.1875rem;
+  --radius-md: 0.25rem;
+  --radius-lg: 0.375rem;
+  --radius-xl: 0.5rem;
 }
 
-/* Argus palette. Warm off-white background, near-black warm foreground,
-   deep teal primary. Restraint over decoration. Meant to read as a
-   compliance-adjacent audit product, not a dashboard toy. */
+/* Mercury/Ramp: warm off-white background, near-black primary for
+   buttons and headings, deep teal reserved for status/accent chips only.
+   Small radii, thin borders, no shadows. Numerals tabular. */
 :root {
-  --background: oklch(0.99 0.003 90);
-  --foreground: oklch(0.17 0.012 260);
+  --background: oklch(0.985 0.004 90);
+  --foreground: oklch(0.16 0.006 260);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.17 0.012 260);
+  --card-foreground: oklch(0.16 0.006 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.17 0.012 260);
-  --primary: oklch(0.5 0.09 180);
-  --primary-foreground: oklch(0.99 0.003 90);
-  --secondary: oklch(0.97 0.004 90);
-  --secondary-foreground: oklch(0.22 0.012 260);
-  --muted: oklch(0.97 0.004 90);
-  --muted-foreground: oklch(0.5 0.012 260);
-  --accent: oklch(0.94 0.02 180);
-  --accent-foreground: oklch(0.3 0.06 180);
-  --destructive: oklch(0.55 0.22 27);
-  --border: oklch(0.92 0.005 90);
-  --input: oklch(0.92 0.005 90);
-  --ring: oklch(0.5 0.09 180);
-  --radius: 0.5rem;
-  --sidebar: oklch(0.985 0.003 90);
-  --sidebar-foreground: oklch(0.17 0.012 260);
-  --sidebar-primary: oklch(0.5 0.09 180);
-  --sidebar-primary-foreground: oklch(0.99 0.003 90);
-  --sidebar-accent: oklch(0.94 0.02 180);
-  --sidebar-accent-foreground: oklch(0.3 0.06 180);
-  --sidebar-border: oklch(0.92 0.005 90);
-  --sidebar-ring: oklch(0.5 0.09 180);
+  --popover-foreground: oklch(0.16 0.006 260);
+  /* Primary is near-black (buttons, strong CTAs). Not the teal. */
+  --primary: oklch(0.2 0.008 260);
+  --primary-foreground: oklch(0.985 0.004 90);
+  --secondary: oklch(0.965 0.004 90);
+  --secondary-foreground: oklch(0.22 0.008 260);
+  --muted: oklch(0.96 0.004 90);
+  --muted-foreground: oklch(0.48 0.008 260);
+  --accent: oklch(0.955 0.006 90);
+  --accent-foreground: oklch(0.22 0.008 260);
+  --destructive: oklch(0.52 0.2 27);
+  --border: oklch(0.905 0.005 90);
+  --input: oklch(0.905 0.005 90);
+  --ring: oklch(0.2 0.008 260);
+  --radius: 0.25rem;
+  /* Brand teal reserved for status: signed, verified, positive delta pills */
+  --brand: oklch(0.48 0.09 180);
+  --brand-foreground: oklch(0.99 0.004 90);
+  --brand-subtle: oklch(0.94 0.03 180);
+
+  --sidebar: oklch(0.975 0.004 90);
+  --sidebar-foreground: oklch(0.16 0.006 260);
+  --sidebar-primary: oklch(0.2 0.008 260);
+  --sidebar-primary-foreground: oklch(0.985 0.004 90);
+  --sidebar-accent: oklch(0.94 0.006 90);
+  --sidebar-accent-foreground: oklch(0.16 0.006 260);
+  --sidebar-border: oklch(0.9 0.005 90);
+  --sidebar-ring: oklch(0.2 0.008 260);
 }
 
 .dark {
   --background: oklch(0.14 0.008 260);
   --foreground: oklch(0.97 0.003 90);
-  --card: oklch(0.18 0.008 260);
+  --card: oklch(0.17 0.008 260);
   --card-foreground: oklch(0.97 0.003 90);
-  --popover: oklch(0.18 0.008 260);
+  --popover: oklch(0.17 0.008 260);
   --popover-foreground: oklch(0.97 0.003 90);
-  --primary: oklch(0.7 0.13 180);
+  --primary: oklch(0.97 0.003 90);
   --primary-foreground: oklch(0.14 0.008 260);
-  --secondary: oklch(0.22 0.008 260);
+  --secondary: oklch(0.2 0.008 260);
   --secondary-foreground: oklch(0.97 0.003 90);
-  --muted: oklch(0.22 0.008 260);
-  --muted-foreground: oklch(0.68 0.008 260);
-  --accent: oklch(0.25 0.03 180);
-  --accent-foreground: oklch(0.85 0.08 180);
-  --destructive: oklch(0.7 0.18 22);
+  --muted: oklch(0.2 0.008 260);
+  --muted-foreground: oklch(0.65 0.008 260);
+  --accent: oklch(0.22 0.008 260);
+  --accent-foreground: oklch(0.97 0.003 90);
+  --destructive: oklch(0.65 0.18 22);
   --border: oklch(1 0 0 / 8%);
   --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.7 0.13 180);
+  --ring: oklch(0.97 0.003 90);
+  --brand: oklch(0.7 0.13 180);
+  --brand-foreground: oklch(0.14 0.008 260);
+  --brand-subtle: oklch(0.25 0.04 180);
   --sidebar: oklch(0.16 0.008 260);
   --sidebar-foreground: oklch(0.97 0.003 90);
-  --sidebar-primary: oklch(0.7 0.13 180);
+  --sidebar-primary: oklch(0.97 0.003 90);
   --sidebar-primary-foreground: oklch(0.14 0.008 260);
-  --sidebar-accent: oklch(0.25 0.03 180);
-  --sidebar-accent-foreground: oklch(0.85 0.08 180);
+  --sidebar-accent: oklch(0.22 0.008 260);
+  --sidebar-accent-foreground: oklch(0.97 0.003 90);
   --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.7 0.13 180);
+  --sidebar-ring: oklch(0.97 0.003 90);
 }
 
 @layer base {
@@ -108,21 +120,33 @@
   }
   body {
     @apply bg-background text-foreground antialiased;
-    font-feature-settings: "cv11", "ss01", "ss03";
+    font-feature-settings: "cv11", "ss01", "ss03", "tnum" 1;
+    font-size: 13px;
+    line-height: 1.5;
   }
   html {
     @apply font-sans;
   }
-  /* Tabular numerals for CRS deltas, timestamps, hashes. Keeps columns aligned. */
+  /* Section labels: tiny, uppercase, tracked. The Mercury tell. */
+  .label {
+    font-size: 10px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted-foreground);
+  }
   .tabular {
     font-variant-numeric: tabular-nums;
   }
-  /* Signature-flavored monospace class. Slightly tighter tracking for hex strings. */
   .hash {
     font-family: var(--font-mono);
-    font-size: 0.75rem;
+    font-size: 11px;
     letter-spacing: -0.01em;
     color: var(--muted-foreground);
     word-break: break-all;
+  }
+  /* Data-heavy row baseline: slightly tighter, snap alignment. */
+  .row {
+    height: 36px;
   }
 }
