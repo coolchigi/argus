@@ -2,151 +2,207 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:is(.dark, .dark *));
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--canvas);
+  --color-foreground: var(--ink-primary);
+
   --font-sans: var(--font-inter);
-  --font-mono: var(--font-plex-mono);
-  --font-heading: var(--font-inter);
-  --color-sidebar-ring: var(--sidebar-ring);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar: var(--sidebar);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
+  --font-serif: var(--font-newsreader);
+  --font-mono: var(--font-jetbrains);
+
+  --color-card: var(--surface);
+  --color-card-foreground: var(--ink-primary);
+  --color-popover: var(--surface);
+  --color-popover-foreground: var(--ink-primary);
   --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --color-brand: var(--brand);
-  --color-brand-foreground: var(--brand-foreground);
-  --color-brand-subtle: var(--brand-subtle);
+  --color-primary-foreground: var(--ink-inverse);
+  --color-secondary: var(--surface-alt);
+  --color-secondary-foreground: var(--ink-primary);
+  --color-muted: var(--surface-alt);
+  --color-muted-foreground: var(--ink-secondary);
+  --color-accent: var(--surface-alt);
+  --color-accent-foreground: var(--ink-primary);
+  --color-destructive: var(--red);
+  --color-border: var(--border);
+  --color-input: var(--border);
+  --color-ring: var(--border-strong);
+
+  --color-seal: var(--seal);
+  --color-seal-ink: var(--seal-ink);
+  --color-seal-subtle: var(--seal-subtle);
+  --color-seal-ring: var(--seal-ring);
+  --color-amber: var(--amber);
+  --color-amber-subtle: var(--amber-subtle);
+  --color-red-subtle: var(--red-subtle);
+  --color-violet: var(--violet);
+
+  --color-ink-primary: var(--ink-primary);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-tertiary: var(--ink-tertiary);
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-alt: var(--surface-alt);
+  --color-surface-sunk: var(--surface-sunk);
+  --color-divider: var(--divider);
+
+  --color-sidebar: var(--surface);
+  --color-sidebar-foreground: var(--ink-primary);
+  --color-sidebar-primary: var(--primary);
+  --color-sidebar-primary-foreground: var(--ink-inverse);
+  --color-sidebar-accent: var(--surface-alt);
+  --color-sidebar-accent-foreground: var(--ink-primary);
+  --color-sidebar-border: var(--border);
+  --color-sidebar-ring: var(--border-strong);
+
   --radius-sm: 0.1875rem;
   --radius-md: 0.25rem;
   --radius-lg: 0.375rem;
   --radius-xl: 0.5rem;
 }
 
-/* Mercury/Ramp: warm off-white background, near-black primary for
-   buttons and headings, deep teal reserved for status/accent chips only.
-   Small radii, thin borders, no shadows. Numerals tabular. */
+/* Argus palette. See web/design/BRIEF.md Section 6 for justification.
+   Seal-green reserved for verified state. Never a brand color. */
 :root {
-  --background: oklch(0.985 0.004 90);
-  --foreground: oklch(0.16 0.006 260);
-  --card: oklch(1 0 0);
-  --card-foreground: oklch(0.16 0.006 260);
-  --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.16 0.006 260);
-  /* Primary is near-black (buttons, strong CTAs). Not the teal. */
-  --primary: oklch(0.2 0.008 260);
-  --primary-foreground: oklch(0.985 0.004 90);
-  --secondary: oklch(0.965 0.004 90);
-  --secondary-foreground: oklch(0.22 0.008 260);
-  --muted: oklch(0.96 0.004 90);
-  --muted-foreground: oklch(0.48 0.008 260);
-  --accent: oklch(0.955 0.006 90);
-  --accent-foreground: oklch(0.22 0.008 260);
-  --destructive: oklch(0.52 0.2 27);
-  --border: oklch(0.905 0.005 90);
-  --input: oklch(0.905 0.005 90);
-  --ring: oklch(0.2 0.008 260);
-  --radius: 0.25rem;
-  /* Brand teal reserved for status: signed, verified, positive delta pills */
-  --brand: oklch(0.48 0.09 180);
-  --brand-foreground: oklch(0.99 0.004 90);
-  --brand-subtle: oklch(0.94 0.03 180);
+  --canvas: oklch(0.985 0.004 85);
+  --surface: oklch(1 0 0);
+  --surface-alt: oklch(0.965 0.004 85);
+  --surface-sunk: oklch(0.955 0.004 85);
 
-  --sidebar: oklch(0.975 0.004 90);
-  --sidebar-foreground: oklch(0.16 0.006 260);
-  --sidebar-primary: oklch(0.2 0.008 260);
-  --sidebar-primary-foreground: oklch(0.985 0.004 90);
-  --sidebar-accent: oklch(0.94 0.006 90);
-  --sidebar-accent-foreground: oklch(0.16 0.006 260);
-  --sidebar-border: oklch(0.9 0.005 90);
-  --sidebar-ring: oklch(0.2 0.008 260);
+  --ink-primary: oklch(0.16 0.005 260);
+  --ink-secondary: oklch(0.42 0.006 260);
+  --ink-tertiary: oklch(0.58 0.006 260);
+  --ink-inverse: oklch(0.985 0.004 85);
+
+  --border: oklch(0.905 0.005 90);
+  --border-strong: oklch(0.85 0.005 90);
+  --divider: oklch(0.93 0.004 90);
+
+  --seal: oklch(0.42 0.10 175);
+  --seal-ink: oklch(0.985 0.004 85);
+  --seal-subtle: oklch(0.94 0.03 175);
+  --seal-ring: oklch(0.55 0.09 175);
+
+  --amber: oklch(0.62 0.13 75);
+  --amber-subtle: oklch(0.95 0.04 80);
+  --red: oklch(0.5 0.19 27);
+  --red-subtle: oklch(0.955 0.04 27);
+  --violet: oklch(0.52 0.14 285);
+
+  --primary: oklch(0.18 0.008 260);
+  --primary-hover: oklch(0.1 0.008 260);
+
+  --radius: 0.25rem;
 }
 
 .dark {
-  --background: oklch(0.14 0.008 260);
-  --foreground: oklch(0.97 0.003 90);
-  --card: oklch(0.17 0.008 260);
-  --card-foreground: oklch(0.97 0.003 90);
-  --popover: oklch(0.17 0.008 260);
-  --popover-foreground: oklch(0.97 0.003 90);
-  --primary: oklch(0.97 0.003 90);
-  --primary-foreground: oklch(0.14 0.008 260);
-  --secondary: oklch(0.2 0.008 260);
-  --secondary-foreground: oklch(0.97 0.003 90);
-  --muted: oklch(0.2 0.008 260);
-  --muted-foreground: oklch(0.65 0.008 260);
-  --accent: oklch(0.22 0.008 260);
-  --accent-foreground: oklch(0.97 0.003 90);
-  --destructive: oklch(0.65 0.18 22);
-  --border: oklch(1 0 0 / 8%);
-  --input: oklch(1 0 0 / 12%);
-  --ring: oklch(0.97 0.003 90);
-  --brand: oklch(0.7 0.13 180);
-  --brand-foreground: oklch(0.14 0.008 260);
-  --brand-subtle: oklch(0.25 0.04 180);
-  --sidebar: oklch(0.16 0.008 260);
-  --sidebar-foreground: oklch(0.97 0.003 90);
-  --sidebar-primary: oklch(0.97 0.003 90);
-  --sidebar-primary-foreground: oklch(0.14 0.008 260);
-  --sidebar-accent: oklch(0.22 0.008 260);
-  --sidebar-accent-foreground: oklch(0.97 0.003 90);
-  --sidebar-border: oklch(1 0 0 / 8%);
-  --sidebar-ring: oklch(0.97 0.003 90);
+  --canvas: oklch(0.145 0.006 260);
+  --surface: oklch(0.19 0.006 260);
+  --surface-alt: oklch(0.22 0.006 260);
+  --surface-sunk: oklch(0.17 0.006 260);
+
+  --ink-primary: oklch(0.965 0.005 85);
+  --ink-secondary: oklch(0.72 0.005 85);
+  --ink-tertiary: oklch(0.55 0.005 85);
+  --ink-inverse: oklch(0.145 0.006 260);
+
+  --border: oklch(0.28 0.006 260);
+  --border-strong: oklch(0.38 0.006 260);
+  --divider: oklch(0.24 0.006 260);
+
+  --seal: oklch(0.62 0.11 175);
+  --seal-ink: oklch(0.145 0.006 260);
+  --seal-subtle: oklch(0.26 0.05 175);
+  --seal-ring: oklch(0.67 0.10 175);
+
+  --amber: oklch(0.75 0.13 75);
+  --amber-subtle: oklch(0.28 0.05 75);
+  --red: oklch(0.65 0.18 22);
+  --red-subtle: oklch(0.28 0.06 22);
+  --violet: oklch(0.68 0.14 285);
+
+  --primary: oklch(0.965 0.005 85);
+  --primary-hover: oklch(1 0 0);
 }
 
 @layer base {
   * {
-    @apply border-border outline-ring/50;
+    @apply border-border;
   }
   body {
-    @apply bg-background text-foreground antialiased;
-    font-feature-settings: "cv11", "ss01", "ss03", "tnum" 1;
-    font-size: 13px;
-    line-height: 1.5;
+    background: var(--canvas);
+    color: var(--ink-primary);
+    font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: "cv11", "ss01", "ss03";
+    font-variant-numeric: proportional-nums;
+    font-size: 14px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
-  html {
-    @apply font-sans;
+
+  /* Anything content-addressed. Hashes, ids, model strings, timestamps in the receipt. */
+  code,
+  .mono,
+  [data-tabular] {
+    font-family: var(--font-jetbrains), ui-monospace, monospace;
+    font-variant-numeric: tabular-nums;
   }
-  /* Section labels: tiny, uppercase, tracked. The Mercury tell. */
-  .label {
-    font-size: 10px;
-    font-weight: 500;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--muted-foreground);
-  }
+
+  /* Utility to mark inline numerals as tabular even inside Inter body copy. */
   .tabular {
     font-variant-numeric: tabular-nums;
   }
-  .hash {
-    font-family: var(--font-mono);
+
+  /* Section labels: uppercase, tracked, tiny. The Mercury/Ramp tell. */
+  .label {
     font-size: 11px;
-    letter-spacing: -0.01em;
-    color: var(--muted-foreground);
-    word-break: break-all;
+    font-weight: 510;
+    line-height: 1.3;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-secondary);
   }
-  /* Data-heavy row baseline: slightly tighter, snap alignment. */
-  .row {
-    height: 36px;
+
+  /* Fingerprints, hashes, key ids. Present but tertiary by default. */
+  .fingerprint {
+    font-family: var(--font-jetbrains), ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.4;
+    letter-spacing: -0.005em;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-secondary);
+  }
+
+  .fingerprint-lg {
+    font-family: var(--font-jetbrains), ui-monospace, monospace;
+    font-size: 15px;
+    line-height: 1.4;
+    letter-spacing: -0.005em;
+    font-variant-numeric: tabular-nums;
+    color: var(--ink-primary);
+  }
+
+  /* Client-id chip: opaque monospace on muted background. Zero-PII made visible. */
+  .client-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.375rem;
+    padding: 2px 8px;
+    border-radius: 0.1875rem;
+    background: var(--surface-alt);
+    color: var(--ink-primary);
+    font-family: var(--font-jetbrains), ui-monospace, monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    font-variant-numeric: tabular-nums;
+  }
+  .client-chip::before {
+    content: "client";
+    color: var(--ink-tertiary);
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
   }
 }

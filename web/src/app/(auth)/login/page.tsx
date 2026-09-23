@@ -4,12 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/components/auth-context";
 import { signIn } from "@/lib/auth";
-import { Shield } from "lucide-react";
+import { Seal } from "@/components/seal";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -39,18 +38,24 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <Shield className="h-5 w-5" />
+    <div className="space-y-8">
+      <div className="flex flex-col items-center gap-3">
+        <Seal className="h-8 w-8 text-seal" />
+        <div className="flex flex-col items-center gap-1">
+          <h1 className="text-[24px] font-medium tracking-tight text-ink-primary" style={{ fontFamily: "var(--font-newsreader), serif" }}>
+            argus
+          </h1>
+          <p className="text-[13px] text-ink-secondary text-center leading-relaxed">
+            Impact assessments,<br />signed and archived.
+          </p>
         </div>
-        <h1 className="text-lg font-semibold tracking-tight">Sign in to Argus</h1>
-        <p className="text-xs text-muted-foreground">Policy-impact assessments for RCICs.</p>
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
+      <div className="h-px bg-border" />
+
+      <form onSubmit={onSubmit} className="space-y-5">
+        <div className="space-y-1.5">
+          <Label htmlFor="email" className="label">Email</Label>
           <Input
             id="email"
             type="email"
@@ -58,10 +63,11 @@ export default function LoginPage() {
             required
             value={email}
             onChange={(e) => setEmail(e.target.value)}
+            className="h-10"
           />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="password">Password</Label>
+        <div className="space-y-1.5">
+          <Label htmlFor="password" className="label">Password</Label>
           <Input
             id="password"
             type="password"
@@ -69,16 +75,21 @@ export default function LoginPage() {
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            className="h-10"
           />
         </div>
-        <Button type="submit" className="w-full" disabled={busy}>
-          {busy ? "Signing in..." : "Sign in"}
-        </Button>
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full h-10 rounded-sm bg-primary text-primary-foreground text-[13px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        >
+          {busy ? "Signing in" : "Sign in"}
+        </button>
       </form>
 
-      <div className="text-center text-xs text-muted-foreground">
+      <div className="text-center text-[12px] text-ink-secondary">
         New to Argus?{" "}
-        <Link href="/signup" className="font-medium text-foreground underline underline-offset-2">
+        <Link href="/signup" className="text-ink-primary underline underline-offset-4 decoration-border">
           Create an account
         </Link>
       </div>

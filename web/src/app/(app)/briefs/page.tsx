@@ -8,7 +8,9 @@ import { api } from "@/lib/api";
 import type { Brief } from "@/lib/argus-types";
 import { Input } from "@/components/ui/input";
 import { formatDelta, formatRelative } from "@/lib/format";
-import { Send } from "lucide-react";
+import { Seal } from "@/components/seal";
+import { Send, Search } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export default function BriefsPage() {
   const qc = useQueryClient();
@@ -16,83 +18,110 @@ export default function BriefsPage() {
     queryKey: ["briefs"],
     queryFn: () => api<{ briefs: Brief[] }>("/briefs"),
   });
+  const [search, setSearch] = useState("");
 
-  const draftBriefs = useMemo(
-    () => (q.data?.briefs ?? []).filter((b) => b.status !== "sent"),
-    [q.data],
-  );
+  const rows = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    const all = q.data?.briefs ?? [];
+    if (!term) return all;
+    return all.filter(
+      (b) =>
+        b.subject.toLowerCase().includes(term) ||
+        b.clientId.toLowerCase().includes(term) ||
+        (b.topic ?? "").toLowerCase().includes(term),
+    );
+  }, [q.data, search]);
+  const draftIds = useMemo(() => rows.filter((b) => b.status !== "sent").map((b) => b.briefId), [rows]);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchRecipient, setBatchRecipient] = useState("");
-
-  const toggle = (id: string) => {
+  const toggle = (id: string) =>
     setSelected((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-  };
-  const allSelected = draftBriefs.length > 0 && draftBriefs.every((b) => selected.has(b.briefId));
-  const toggleAll = () => {
-    setSelected(allSelected ? new Set() : new Set(draftBriefs.map((b) => b.briefId)));
-  };
+  const allSelected = draftIds.length > 0 && draftIds.every((id) => selected.has(id));
+  const toggleAll = () => setSelected(allSelected ? new Set() : new Set(draftIds));
 
   const batchSend = useMutation({
     mutationFn: async () => {
-      if (!batchRecipient.trim()) throw new Error("Enter a recipient email.");
-      const sends = Array.from(selected).map((briefId) => ({ briefId, recipientEmail: batchRecipient.trim() }));
+      if (!batchRecipient.trim()) throw new Error("Enter a recipient email for the batch.");
+      const sends = Array.from(selected).map((briefId) => ({
+        briefId,
+        recipientEmail: batchRecipient.trim(),
+      }));
       return api<{ total: number; succeeded: number; failed: number }>("/briefs/batch-send", {
         method: "POST",
         body: { sends },
       });
     },
     onSuccess: (r) => {
-      toast.success(`Batch: ${r.succeeded}/${r.total} sent`);
+      toast.success(`Sent ${r.succeeded} of ${r.total}`);
       qc.invalidateQueries({ queryKey: ["briefs"] });
       setSelected(new Set());
     },
     onError: (err) => toast.error(err instanceof Error ? err.message : "batch-send-failed"),
   });
 
-  const rows = q.data?.briefs ?? [];
-
   return (
     <div className="space-y-8">
       <header className="space-y-1">
         <div className="label">Briefs</div>
-        <h1 className="text-xl font-semibold tracking-tight">Client briefs</h1>
-        <p className="text-[12px] text-muted-foreground">
-          Auto-drafted by Composer. Edit inline, sign, send. Batch supported.
+        <h1
+          className="text-[24px] font-medium tracking-tight text-ink-primary leading-tight"
+          style={{ fontFamily: "var(--font-newsreader), serif" }}
+        >
+          Client update drafts
+        </h1>
+        <p className="text-[13px] text-ink-secondary">
+          Composer drafts one per affected client. Edit and send from here.
         </p>
       </header>
 
+      <div className="flex items-center gap-3">
+        <span className="label">{q.data?.briefs.length ?? 0} total</span>
+        <div className="ml-auto relative w-[280px]">
+          <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink-tertiary" strokeWidth={1.75} />
+          <Input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search subject, client, topic"
+            className="h-8 pl-8 text-[13px]"
+          />
+        </div>
+      </div>
+
       {selected.size > 0 && (
-        <div className="border border-foreground/20 bg-accent/50 rounded-md px-4 py-3 flex items-center gap-3">
-          <span className="text-[12px] font-medium">
+        <div className="rounded-md border border-seal-ring bg-seal-subtle/60 px-4 py-3 flex items-center gap-3">
+          <span className="text-[13px] font-medium text-ink-primary">
             {selected.size} selected
           </span>
-          <div className="flex-1 flex items-center gap-2">
+          <span className="text-[12px] text-ink-secondary">
+            Sends to a single recipient email for demo purposes.
+          </span>
+          <div className="ml-auto flex items-center gap-2">
             <Input
               type="email"
-              placeholder="Batch recipient email"
+              placeholder="Recipient email"
               value={batchRecipient}
               onChange={(e) => setBatchRecipient(e.target.value)}
-              className="max-w-xs h-8 text-[12px]"
+              className="h-8 w-[240px] text-[13px]"
             />
             <button
               type="button"
               onClick={() => batchSend.mutate()}
               disabled={batchSend.isPending}
-              className="inline-flex h-8 items-center gap-1.5 rounded-sm bg-primary px-3 text-[12px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              className="inline-flex h-8 items-center gap-1.5 rounded-sm bg-primary px-3 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
             >
               <Send className="h-3 w-3" strokeWidth={1.75} />
-              {batchSend.isPending ? "Sending…" : `Send ${selected.size}`}
+              {batchSend.isPending ? "Sending" : `Send ${selected.size}`}
             </button>
             <button
               type="button"
               onClick={() => setSelected(new Set())}
-              className="text-[12px] text-muted-foreground hover:text-foreground"
+              className="text-[12px] text-ink-secondary hover:text-ink-primary"
             >
               Clear
             </button>
@@ -100,73 +129,78 @@ export default function BriefsPage() {
         </div>
       )}
 
-      <div className="border border-border bg-card rounded-md overflow-hidden">
-        <table className="w-full text-[13px]">
+      <div className="rounded-md border border-border bg-surface overflow-hidden">
+        <table className="w-full">
           <thead>
-            <tr className="border-b border-border bg-muted/40">
-              <Th align="left" className="w-8 pl-3">
+            <tr className="border-b border-border">
+              <Th className="w-10 pl-4">
                 <input
                   type="checkbox"
                   checked={allSelected}
                   onChange={toggleAll}
-                  className="h-3 w-3 rounded-sm border-input cursor-pointer"
+                  className="h-3.5 w-3.5 accent-primary cursor-pointer"
                 />
               </Th>
               <Th>Subject</Th>
               <Th>Client</Th>
               <Th>Impact</Th>
-              <Th>Status</Th>
-              <Th align="right">Time</Th>
+              <Th className="w-[110px]">Status</Th>
+              <Th align="right" className="w-[120px]">When</Th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-border">
+          <tbody className="divide-y divide-divider">
             {q.isLoading ? (
               <tr>
-                <td colSpan={6} className="py-10 text-center text-[11px] text-muted-foreground">Loading…</td>
+                <td colSpan={6} className="py-16 text-center label">Loading</td>
               </tr>
             ) : rows.length === 0 ? (
               <tr>
-                <td colSpan={6} className="py-10 text-center text-[11px] text-muted-foreground">
-                  No briefs yet. Composer drafts one per affected client after a policy change.
+                <td colSpan={6} className="py-16 text-center">
+                  <div className="label">Nothing yet</div>
+                  <p className="mt-2 text-[12px] text-ink-tertiary">
+                    Composer drafts a brief for every affected client after a policy change.
+                  </p>
                 </td>
               </tr>
             ) : (
               rows.map((b) => {
                 const selectable = b.status !== "sent";
                 return (
-                  <tr key={b.briefId} className="row group hover:bg-accent/40 transition-colors">
-                    <td className="pl-3">
+                  <tr key={b.briefId} className="h-11 hover:bg-surface-alt/50 transition-colors">
+                    <td className="pl-4">
                       {selectable && (
                         <input
                           type="checkbox"
                           checked={selected.has(b.briefId)}
                           onChange={() => toggle(b.briefId)}
-                          className="h-3 w-3 rounded-sm border-input cursor-pointer"
+                          className="h-3.5 w-3.5 accent-primary cursor-pointer"
                         />
                       )}
                     </td>
                     <Td>
                       <Link
                         href={`/briefs/${b.briefId}`}
-                        className="font-medium hover:underline truncate"
+                        className="text-[13px] font-medium text-ink-primary hover:underline underline-offset-4 decoration-border"
                       >
                         {b.subject}
                       </Link>
                     </Td>
                     <Td>
-                      <span className="text-muted-foreground tabular">{b.clientId}</span>
+                      <span className="client-chip">{b.clientId}</span>
                     </Td>
                     <Td>
-                      <span className="text-muted-foreground">{b.impactType}</span>
+                      <span className="text-[12px] text-ink-secondary">{b.impactType}</span>
                       {b.numericDelta !== null && (
-                        <span className="ml-1.5 tabular text-foreground">{formatDelta(b.numericDelta)}</span>
+                        <span className="ml-1.5 fingerprint text-ink-primary">
+                          {formatDelta(b.numericDelta)}
+                        </span>
                       )}
                     </Td>
                     <Td>
                       <StatusPill status={b.status} />
                     </Td>
                     <Td align="right">
-                      <span className="text-[11px] text-muted-foreground tabular">
+                      <span className="text-[11px] text-ink-tertiary tabular">
                         {formatRelative(b.createdAt)}
                       </span>
                     </Td>
@@ -192,11 +226,11 @@ function Th({
 }) {
   return (
     <th
-      className={
-        "h-8 px-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground " +
-        (align === "right" ? "text-right " : "text-left ") +
-        className
-      }
+      className={cn(
+        "px-4 py-2.5 label",
+        align === "right" ? "text-right" : "text-left",
+        className,
+      )}
     >
       {children}
     </th>
@@ -204,23 +238,32 @@ function Th({
 }
 
 function Td({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" }) {
-  return <td className={"px-3 " + (align === "right" ? "text-right" : "text-left")}>{children}</td>;
+  return (
+    <td className={cn("px-4", align === "right" ? "text-right" : "text-left")}>{children}</td>
+  );
 }
 
 function StatusPill({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    draft: "bg-muted text-muted-foreground",
-    edited: "bg-accent text-accent-foreground",
-    sent: "bg-brand-subtle text-brand",
-  };
+  if (status === "sent") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-seal">
+        <Seal className="h-3 w-3" />
+        Sent
+      </span>
+    );
+  }
+  if (status === "edited") {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-[12px] text-amber">
+        <span className="h-2 w-2 rounded-full bg-amber" />
+        Edited
+      </span>
+    );
+  }
   return (
-    <span
-      className={
-        "inline-block rounded-sm px-1.5 py-0.5 text-[10px] uppercase tracking-wider " +
-        (map[status] ?? "bg-muted text-muted-foreground")
-      }
-    >
-      {status}
+    <span className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
+      <span className="h-2 w-2 rounded-full border border-ink-tertiary" />
+      Draft
     </span>
   );
 }

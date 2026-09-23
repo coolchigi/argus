@@ -4,11 +4,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { signUp } from "@/lib/auth";
-import { Shield } from "lucide-react";
+import { Seal } from "@/components/seal";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -23,7 +22,7 @@ export default function SignupPage() {
     e.preventDefault();
     const license = rcicLicense.trim().toUpperCase();
     if (!/^[A-Z]\d{6,7}$/.test(license)) {
-      toast.error("R-license should be one letter followed by 6-7 digits, e.g. R527888.");
+      toast.error("R-license should be a letter and 6 to 7 digits (e.g. R527888).");
       return;
     }
     setBusy(true);
@@ -45,38 +44,42 @@ export default function SignupPage() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <Shield className="h-5 w-5" />
+    <div className="space-y-8">
+      <div className="flex flex-col items-center gap-3">
+        <Seal className="h-8 w-8 text-seal" />
+        <div className="flex flex-col items-center gap-1">
+          <h1 className="text-[24px] font-medium tracking-tight text-ink-primary" style={{ fontFamily: "var(--font-newsreader), serif" }}>
+            Create your account
+          </h1>
+          <p className="text-[12px] text-ink-secondary text-center">
+            For CICC-licensed consultants.
+          </p>
         </div>
-        <h1 className="text-lg font-semibold tracking-tight">Create your Argus account</h1>
-        <p className="text-center text-xs text-muted-foreground">
-          For Regulated Canadian Immigration Consultants. R-license required.
-        </p>
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-4">
+      <div className="h-px bg-border" />
+
+      <form onSubmit={onSubmit} className="space-y-5">
         <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <Label htmlFor="given">First name</Label>
-            <Input id="given" required value={givenName} onChange={(e) => setGivenName(e.target.value)} />
+          <div className="space-y-1.5">
+            <Label htmlFor="given" className="label">First name</Label>
+            <Input id="given" required value={givenName} onChange={(e) => setGivenName(e.target.value)} className="h-10" />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="family">Last name</Label>
-            <Input id="family" required value={familyName} onChange={(e) => setFamilyName(e.target.value)} />
+          <div className="space-y-1.5">
+            <Label htmlFor="family" className="label">Last name</Label>
+            <Input id="family" required value={familyName} onChange={(e) => setFamilyName(e.target.value)} className="h-10" />
           </div>
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+        <div className="space-y-1.5">
+          <Label htmlFor="email" className="label">Email</Label>
+          <Input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="h-10" />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="rcic">CICC R-license</Label>
-          <Input id="rcic" required placeholder="R527888" value={rcicLicense} onChange={(e) => setRcicLicense(e.target.value)} />
+        <div className="space-y-1.5">
+          <Label htmlFor="rcic" className="label">CICC R-license</Label>
+          <Input id="rcic" required placeholder="R527888" value={rcicLicense} onChange={(e) => setRcicLicense(e.target.value)} className="h-10 font-mono" />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="password">Password</Label>
+        <div className="space-y-1.5">
+          <Label htmlFor="password" className="label">Password</Label>
           <Input
             id="password"
             type="password"
@@ -85,19 +88,22 @@ export default function SignupPage() {
             minLength={12}
             value={password}
             onChange={(e) => setPassword(e.target.value)}
+            className="h-10"
           />
-          <p className="text-[11px] text-muted-foreground">
-            12+ characters, upper, lower, digit, symbol.
-          </p>
+          <p className="text-[11px] text-ink-tertiary">12+ characters, upper, lower, digit, symbol.</p>
         </div>
-        <Button type="submit" className="w-full" disabled={busy}>
-          {busy ? "Creating account..." : "Create account"}
-        </Button>
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full h-10 rounded-sm bg-primary text-primary-foreground text-[13px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        >
+          {busy ? "Creating" : "Create account"}
+        </button>
       </form>
 
-      <div className="text-center text-xs text-muted-foreground">
+      <div className="text-center text-[12px] text-ink-secondary">
         Already have an account?{" "}
-        <Link href="/login" className="font-medium text-foreground underline underline-offset-2">
+        <Link href="/login" className="text-ink-primary underline underline-offset-4 decoration-border">
           Sign in
         </Link>
       </div>

@@ -3,11 +3,10 @@
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { toast } from "sonner";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { confirmSignUp, resendConfirmationCode } from "@/lib/auth";
-import { Shield } from "lucide-react";
+import { Seal } from "@/components/seal";
 
 function VerifyForm() {
   const router = useRouter();
@@ -41,24 +40,28 @@ function VerifyForm() {
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col items-center gap-2">
-        <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
-          <Shield className="h-5 w-5" />
+    <div className="space-y-8">
+      <div className="flex flex-col items-center gap-3">
+        <Seal className="h-8 w-8 text-seal" />
+        <div className="flex flex-col items-center gap-1">
+          <h1 className="text-[24px] font-medium tracking-tight text-ink-primary" style={{ fontFamily: "var(--font-newsreader), serif" }}>
+            Confirm your email
+          </h1>
+          <p className="text-[12px] text-ink-secondary text-center">
+            Enter the 6-digit code we emailed you.
+          </p>
         </div>
-        <h1 className="text-lg font-semibold tracking-tight">Confirm your email</h1>
-        <p className="text-center text-xs text-muted-foreground">
-          Enter the 6-digit code we emailed you.
-        </p>
       </div>
 
-      <form onSubmit={onSubmit} className="space-y-4">
-        <div className="space-y-2">
-          <Label htmlFor="email">Email</Label>
-          <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} />
+      <div className="h-px bg-border" />
+
+      <form onSubmit={onSubmit} className="space-y-5">
+        <div className="space-y-1.5">
+          <Label htmlFor="email" className="label">Email</Label>
+          <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="h-10" />
         </div>
-        <div className="space-y-2">
-          <Label htmlFor="code">Confirmation code</Label>
+        <div className="space-y-1.5">
+          <Label htmlFor="code" className="label">Confirmation code</Label>
           <Input
             id="code"
             inputMode="numeric"
@@ -67,18 +70,23 @@ function VerifyForm() {
             maxLength={10}
             value={code}
             onChange={(e) => setCode(e.target.value)}
+            className="h-10 font-mono tabular tracking-widest"
           />
         </div>
-        <Button type="submit" className="w-full" disabled={busy}>
-          {busy ? "Confirming..." : "Confirm"}
-        </Button>
+        <button
+          type="submit"
+          disabled={busy}
+          className="w-full h-10 rounded-sm bg-primary text-primary-foreground text-[13px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+        >
+          {busy ? "Confirming" : "Confirm"}
+        </button>
       </form>
 
       <div className="text-center">
         <button
           type="button"
           onClick={onResend}
-          className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          className="text-[12px] text-ink-secondary underline underline-offset-4 decoration-border hover:text-ink-primary"
         >
           Resend confirmation code
         </button>
@@ -89,7 +97,7 @@ function VerifyForm() {
 
 export default function VerifyPage() {
   return (
-    <Suspense fallback={<div className="text-center text-sm text-muted-foreground">Loading...</div>}>
+    <Suspense fallback={<div className="text-center label">Loading</div>}>
       <VerifyForm />
     </Suspense>
   );
