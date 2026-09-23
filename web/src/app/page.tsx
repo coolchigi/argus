@@ -109,38 +109,41 @@ function Hero() {
 }
 
 function SampleReceipt() {
+  const SAMPLE_HASH = "1cbb498541676b14a34b357c325a05c54b6c01bc3ce899c2a00acf9944f86191";
   return (
     <div className="rounded-lg border border-border bg-surface p-6 space-y-5">
       <div className="flex items-center gap-2">
         <Seal className="h-3.5 w-3.5 text-seal" />
-        <span className="label text-seal">Sample receipt</span>
+        <span className="label text-seal">Live sample receipt</span>
       </div>
       <div className="space-y-3">
         <div>
           <div className="label">Topic</div>
           <div className="mt-1 text-[13px] text-ink-primary">
-            Arranged employment CRS points removal
+            CRS scorecard rule change
           </div>
         </div>
         <div>
           <div className="label">Fingerprint</div>
-          <div className="mt-1 fingerprint-lg text-ink-primary">2804 a421 765e 7302</div>
-        </div>
-        <div>
-          <div className="label">Signed at</div>
-          <div className="mt-1 text-[13px] text-ink-primary tabular">Mar 25 2025, 09:14 EST</div>
+          <div className="mt-1 fingerprint-lg text-ink-primary">
+            {SAMPLE_HASH.slice(0, 4)} {SAMPLE_HASH.slice(4, 8)} {SAMPLE_HASH.slice(8, 12)} {SAMPLE_HASH.slice(12, 16)}
+          </div>
         </div>
         <div>
           <div className="label">Algorithm</div>
           <div className="mt-1 text-[13px] text-ink-primary">ECDSA P-256 · SHA-256</div>
         </div>
+        <div>
+          <div className="label">Signed by</div>
+          <div className="mt-1 text-[13px] text-ink-primary">AWS KMS key <span className="fingerprint text-ink-secondary">8b3b43ef…</span></div>
+        </div>
       </div>
       <div className="border-t border-border pt-4">
         <Link
-          href="/verify/2804a421765e730240fbe776f0dca770e6d566efd60a6b728d7e9e75b741580d"
-          className="inline-flex items-center gap-1.5 text-[12px] text-ink-primary hover:underline underline-offset-4 decoration-border"
+          href={`/verify/${SAMPLE_HASH}`}
+          className="inline-flex items-center gap-1.5 text-[12px] font-medium text-ink-primary hover:underline underline-offset-4 decoration-border"
         >
-          Open sample receipt
+          Open and verify in your browser
           <ArrowUpRight className="h-3 w-3 text-ink-tertiary" strokeWidth={1.75} />
         </Link>
       </div>
