@@ -14,7 +14,7 @@
 
 March 25 2025. IRCC removed CRS points for arranged employment. Overnight, tens of thousands of Express Entry profiles were re-scored. If you're a Regulated Canadian Immigration Consultant (RCIC) with 60 active files, you had to figure out that week who was affected, by how many points, and what to tell each one, individually.
 
-About 11,000 RCICs work in Canada, licensed by the College of Immigration and Citizenship Consultants (CICC). The daily workflow leans on tools like Officio or INSZoom for case management, spreadsheets for tracking, and Gmail for client comms. There's no purpose-built tool for cross-caseload policy-impact analysis. When IRCC changes a rule, they read the notice, calculate the client-by-client impact by hand, and email clients from templates. Every step is on them, and CICC Client File Management Regulation s. 7.2 requires 6 years of retention on file records they produce.
+About 11,000 RCICs work in Canada, licensed by the College of Immigration and Citizenship Consultants (CICC). The daily workflow leans on tools like Officio or INSZoom for case management, spreadsheets for tracking, and Gmail for client comms. There's no purpose-built tool for cross-caseload policy-impact analysis. When IRCC changes a rule, they read the notice, calculate the client-by-client impact by hand, and email clients from templates. Every step is on them.
 
 Argus does the impact analysis and drafting for them, and hands back a receipt.
 
@@ -39,7 +39,7 @@ Each agent is a separate Bedrock invocation with its own model, prompt, and scop
 
 **Cross-family adversarial verification.** Analyst is Amazon Nova Pro, Auditor is Anthropic Claude Haiku 4.5. Different tokenizers, different training corpora, different failure modes. When they agree, that's meaningful signal. When they disagree, the Auditor's corrected values flow to Anchor and the corrected assessment is what gets signed. The Auditor also loads recent consultant corrections as few-shot examples on the next run, so the model measurably improves per-consultant.
 
-**KMS-signed audit trail, verifiable offline.** Every assessment gets an ECDSA P-256 signature over a canonicalized JSON payload. The public key is exported as PEM. A public `/verify/[hash]` page runs the signature check in the visitor's browser via WebCrypto, no server round-trip. Any consultant can send the receipt link to a client or a CICC auditor, and they can confirm the record is genuine 6 years from now, with zero dependency on Argus staying alive.
+**KMS-signed audit trail, verifiable offline.** Every assessment gets an ECDSA P-256 signature over a canonicalized JSON payload. The public key is exported as PEM. A public `/verify/[hash]` page runs the signature check in the visitor's browser via WebCrypto, no server round-trip. This matters because CICC Client File Management Regulation s. 7.2 requires 6 years of retention on the records RCICs produce. Any consultant can hand a CICC auditor a link years from now, and the auditor can confirm the record is genuine with zero dependency on Argus staying alive.
 
 **Content-addressed rule versioning.** The PolicyRules table uses `sha256(rule_content)` as the primary key. A RuleIndex table maps `(topic, effective_from)` to the current hash. When an assessment is signed, it records which rule hash it was scored against. If IRCC changes the same page next year, historical replay still works. We look up the hash the RCIC signed against, verify the assessment against the actual bytes captured, and everything is provable.
 
