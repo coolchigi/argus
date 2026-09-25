@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, DM_Serif_Display, JetBrains_Mono } from "next/font/google";
+import { Inter, Newsreader, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { QueryProvider } from "@/components/query-provider";
@@ -13,11 +13,12 @@ const inter = Inter({
   axes: ["opsz"],
 });
 
-const dmSerif = DM_Serif_Display({
-  variable: "--font-dm-serif",
+const newsreader = Newsreader({
+  variable: "--font-newsreader",
   subsets: ["latin"],
   display: "swap",
-  weight: ["400"],
+  weight: ["400", "500"],
+  style: ["normal"],
 });
 
 const jetbrains = JetBrains_Mono({
@@ -32,13 +33,24 @@ export const metadata: Metadata = {
   description: "Signed policy-impact assessments for Regulated Canadian Immigration Consultants.",
 };
 
+const themeInit = `
+try {
+  var t = localStorage.getItem('argus-theme') || 'system';
+  var d = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  if (d) document.documentElement.classList.add('dark');
+} catch (e) {}
+`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${dmSerif.variable} ${jetbrains.variable} h-full`}
+      className={`${inter.variable} ${newsreader.variable} ${jetbrains.variable} h-full`}
       suppressHydrationWarning
     >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInit }} />
+      </head>
       <body className="min-h-full flex flex-col">
         <ThemeProvider>
           <QueryProvider>

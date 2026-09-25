@@ -65,7 +65,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="border-t border-border p-3 space-y-3">
-          <ThemeToggle variant="segmented" />
+          <ThemeToggle />
           <div className="px-1">
             <div className="text-[13px] text-ink-primary leading-tight">
               {auth.claims.givenName} {auth.claims.familyName}
