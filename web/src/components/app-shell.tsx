@@ -4,10 +4,10 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "@/components/auth-context";
-import { useTheme } from "@/components/theme-provider";
 import { Seal } from "@/components/seal";
+import { ThemeToggle } from "@/components/theme-toggle";
 import { cn } from "@/lib/utils";
-import { LayoutDashboard, FileSignature, Mail, LogOut, Sun, Moon, Monitor } from "lucide-react";
+import { LayoutDashboard, FileSignature, Mail, LogOut } from "lucide-react";
 
 type NavItem = { href: string; label: string; icon: React.ComponentType<{ className?: string; strokeWidth?: number }> };
 
@@ -95,34 +95,3 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ThemeToggle() {
-  const { theme, setTheme } = useTheme();
-  const options: Array<{ value: "light" | "dark" | "system"; icon: React.ComponentType<{ className?: string; strokeWidth?: number }>; label: string }> = [
-    { value: "light", icon: Sun, label: "Light" },
-    { value: "dark", icon: Moon, label: "Dark" },
-    { value: "system", icon: Monitor, label: "System" },
-  ];
-  return (
-    <div className="grid grid-cols-3 gap-0.5 rounded-sm border border-border p-0.5">
-      {options.map((o) => {
-        const Icon = o.icon;
-        const active = theme === o.value;
-        return (
-          <button
-            key={o.value}
-            type="button"
-            title={o.label}
-            aria-label={o.label}
-            onClick={() => setTheme(o.value)}
-            className={cn(
-              "flex h-6 items-center justify-center rounded-[3px] transition-colors",
-              active ? "bg-surface-alt text-ink-primary" : "text-ink-tertiary hover:text-ink-primary",
-            )}
-          >
-            <Icon className="h-3 w-3" strokeWidth={1.75} />
-          </button>
-        );
-      })}
-    </div>
-  );
-}

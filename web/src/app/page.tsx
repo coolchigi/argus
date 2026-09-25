@@ -5,6 +5,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-context";
 import { Seal } from "@/components/seal";
+import { SiteHeader } from "@/components/site-header";
+import { SiteFooter } from "@/components/site-footer";
 import { cn } from "@/lib/utils";
 import { ArrowUpRight } from "lucide-react";
 
@@ -30,39 +32,29 @@ export default function LandingPage() {
 
   return (
     <div className="min-h-screen bg-canvas text-ink-primary">
-      <TopBar />
+      <SiteHeader
+        nav={
+          <>
+            <Link href="/login" className="text-ink-secondary hover:text-ink-primary transition-colors">
+              Sign in
+            </Link>
+            <Link
+              href="/signup"
+              className="inline-flex h-8 items-center rounded-sm bg-primary px-3 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+            >
+              Create account
+            </Link>
+          </>
+        }
+      />
       <main>
         <Hero />
         <PipelineSection />
         <TrustSection />
         <FooterCta />
       </main>
-      <Footer />
+      <SiteFooter />
     </div>
-  );
-}
-
-function TopBar() {
-  return (
-    <header className="border-b border-border">
-      <div className="mx-auto max-w-[1080px] px-6 h-14 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2">
-          <Seal className="h-4 w-4 text-seal" />
-          <span className="text-[14px] font-medium tracking-tight">argus</span>
-        </Link>
-        <nav className="flex items-center gap-6 text-[13px]">
-          <Link href="/login" className="text-ink-secondary hover:text-ink-primary transition-colors">
-            Sign in
-          </Link>
-          <Link
-            href="/signup"
-            className="inline-flex h-8 items-center rounded-sm bg-primary px-3 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
-          >
-            Create account
-          </Link>
-        </nav>
-      </div>
-    </header>
   );
 }
 
@@ -285,18 +277,3 @@ function FooterCta() {
   );
 }
 
-function Footer() {
-  return (
-    <footer className="border-t border-border">
-      <div className="mx-auto max-w-[1080px] px-6 py-6 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[11px] text-ink-tertiary">
-          <Seal className="h-3 w-3 text-ink-tertiary" filled={false} />
-          <span>argus · signed and archived</span>
-        </div>
-        <div className="text-[11px] text-ink-tertiary tabular">
-          Built for CICC-licensed consultants
-        </div>
-      </div>
-    </footer>
-  );
-}

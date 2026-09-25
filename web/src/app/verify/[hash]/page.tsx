@@ -3,7 +3,8 @@
 import { use, useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import { Seal } from "@/components/seal";
+import { SiteHeader } from "@/components/site-header";
+import { SiteFooter } from "@/components/site-footer";
 import { verifyAssessmentSignature } from "@/lib/signature-verify";
 import { VERIFY_TIMELINE, prefersReducedMotion } from "@/lib/motion";
 import { CheckCircle2, XCircle, Copy } from "lucide-react";
@@ -77,11 +78,7 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
   const verifiedGlow = stage === "sealBar" || stage === "settled";
 
   return (
-    <div
-      className={cn(
-        "relative min-h-screen bg-canvas transition-colors",
-      )}
-    >
+    <div className="relative min-h-screen flex flex-col bg-canvas">
       <span
         aria-hidden
         className={cn(
@@ -89,18 +86,9 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
           verifiedGlow ? "scale-x-100" : "scale-x-0",
         )}
       />
+      <SiteHeader />
 
-      <div className="mx-auto max-w-[560px] px-6 pt-24 pb-16">
-        <header className="flex flex-col items-center gap-2 mb-10">
-          <Seal className={cn("h-8 w-8 transition-colors", verifiedGlow ? "text-seal" : "text-ink-tertiary")} />
-          <h1
-            className="text-[20px] font-medium tracking-tight text-ink-primary"
-            style={{ fontFamily: "var(--font-newsreader), serif" }}
-          >
-            argus
-          </h1>
-        </header>
-
+      <main className="flex-1 mx-auto w-full max-w-[560px] px-6 pt-16 pb-16">
         {stage === "loading" && (
           <div className="py-16 text-center label">Loading receipt</div>
         )}
@@ -202,7 +190,8 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
             </div>
           </div>
         )}
-      </div>
+      </main>
+      <SiteFooter />
     </div>
   );
 }
