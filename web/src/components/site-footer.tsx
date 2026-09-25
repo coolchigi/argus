@@ -1,9 +1,10 @@
 import { Seal } from "@/components/seal";
 
+// 56px footer, symmetric with the site header.
 export function SiteFooter() {
   return (
     <footer className="border-t border-border bg-canvas">
-      <div className="mx-auto max-w-[1080px] px-6 py-6 flex items-center justify-between">
+      <div className="mx-auto flex h-14 max-w-[1080px] items-center justify-between px-6">
         <div className="flex items-center gap-2 text-[11px] text-ink-tertiary">
           <Seal className="h-3 w-3 text-ink-tertiary" filled={false} />
           <span>argus, signed and archived</span>
