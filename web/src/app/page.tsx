@@ -47,7 +47,7 @@ export default function LandingPage() {
           </>
         }
       />
-      <main>
+      <main id="main">
         <Hero />
         <PipelineSection />
         <TrustSection />

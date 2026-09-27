@@ -1,13 +1,13 @@
 export function formatDelta(delta: number | null | undefined): string {
-  if (delta === null || delta === undefined) return "—";
+  if (delta === null || delta === undefined) return "n/a";
   const sign = delta > 0 ? "+" : "";
   return `${sign}${delta} pts`;
 }
 
 export function formatRelative(iso: string | null | undefined): string {
-  if (!iso) return "—";
+  if (!iso) return "Not set";
   const then = new Date(iso).getTime();
-  if (!Number.isFinite(then)) return "—";
+  if (!Number.isFinite(then)) return "Not set";
   const diff = Date.now() - then;
   const minutes = Math.floor(diff / 60000);
   if (minutes < 1) return "just now";

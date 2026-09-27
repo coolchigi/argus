@@ -88,7 +88,7 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
       />
       <SiteHeader />
 
-      <main className="flex-1 mx-auto w-full max-w-[560px] px-6 pt-16 pb-16">
+      <main id="main" className="flex-1 mx-auto w-full max-w-[560px] px-6 pt-16 pb-16">
         {stage === "loading" && (
           <div className="py-16 text-center label">Loading receipt</div>
         )}
