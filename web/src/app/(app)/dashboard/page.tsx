@@ -1,163 +1,137 @@
 "use client";
 
 import Link from "next/link";
-import { useQuery } from "@tanstack/react-query";
-import { api } from "@/lib/api";
-import type { Impact, Brief } from "@/lib/argus-types";
+import { useMemo } from "react";
 import { useAuth } from "@/components/auth-context";
-import { Seal } from "@/components/seal";
-import { ChevronRight } from "lucide-react";
-import { formatDelta, formatRelative } from "@/lib/format";
+import { EmptyState } from "@/components/empty-state";
+import { InlineError } from "@/components/argus/inline-error";
+import { ProgressLine } from "@/components/argus/progress-line";
+import { ActivityFeed, ACTIVITY_LIMIT } from "@/components/dashboard/activity-feed";
+import { AlertBanner } from "@/components/dashboard/alert-banner";
+import { dashboardStats } from "@/components/dashboard/derive";
+import { RecentEventsTable } from "@/components/dashboard/recent-events-table";
+import { StatRail } from "@/components/dashboard/stat-rail";
+import { POLICY_EVENTS_MAX_LIMIT, useActivity, useBriefs, useImpacts, usePolicyEvents } from "@/lib/queries";
+
+function errorDetail(err: unknown): string | null {
+  return err instanceof Error ? err.message : null;
+}
 
 export default function DashboardPage() {
   const auth = useAuth();
-  const impacts = useQuery({
-    queryKey: ["impacts"],
-    queryFn: () => api<{ impacts: Impact[] }>("/impacts"),
-  });
-  const briefs = useQuery({
-    queryKey: ["briefs"],
-    queryFn: () => api<{ briefs: Brief[] }>("/briefs"),
-  });
+  const givenName = auth.status === "authed" ? auth.claims.givenName?.trim() : undefined;
 
-  const affectedCount = impacts.data?.impacts.filter((i) => i.isAffected).length ?? 0;
-  const signedCount = impacts.data?.impacts.filter((i) => i.signatureAlgorithm).length ?? 0;
-  const pendingBriefs = briefs.data?.briefs.filter((b) => b.status !== "sent").length ?? 0;
-  const sentBriefs = briefs.data?.briefs.filter((b) => b.status === "sent").length ?? 0;
+  // Same params as the sidebar badge, so this is one request for both.
+  const events = usePolicyEvents({ limit: POLICY_EVENTS_MAX_LIMIT });
+  const impacts = useImpacts();
+  const briefs = useBriefs();
+  const activity = useActivity({ limit: ACTIVITY_LIMIT });
 
-  const recent = (impacts.data?.impacts ?? []).slice(0, 8);
+  const now = useMemo(() => new Date(), []);
+  const dateLine = now.toLocaleDateString("en-CA", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+  const monthLabel = now.toLocaleDateString("en-CA", { month: "long", year: "numeric" });
 
-  return (
-    <div className="space-y-10">
-      <header className="space-y-1">
-        <div className="label">Overview</div>
-        <h1
-          className="text-[28px] font-medium tracking-tight text-ink-primary leading-tight"
-          style={{ fontFamily: "var(--font-newsreader), serif" }}
-        >
-          Good to see you, {auth.claims?.givenName ?? "Consultant"}.
-        </h1>
-        <p className="text-[13px] text-ink-secondary">
-          Argus watched IRCC while you were away. Everything below is signed and archived.
-        </p>
-      </header>
+  const stats = useMemo(() => {
+    if (!events.data || !impacts.data || !briefs.data) return null;
+    return dashboardStats({
+      events: events.data.events ?? [],
+      detectedThisMonth: events.data.totals.detectedThisMonth,
+      impacts: impacts.data.impacts ?? [],
+      briefs: briefs.data.briefs ?? [],
+    });
+  }, [events.data, impacts.data, briefs.data]);
 
-      <div className="grid grid-cols-[1fr_280px] gap-10">
-        <section className="space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="label">Recent assessments</div>
-            <Link
-              href="/impacts"
-              className="flex items-center gap-0.5 text-[11px] text-ink-secondary hover:text-ink-primary"
-            >
-              View all
-              <ChevronRight className="h-3 w-3" strokeWidth={1.75} />
-            </Link>
-          </div>
-          <div className="rounded-md border border-border bg-surface overflow-hidden">
-            {impacts.isLoading ? (
-              <div className="py-16 text-center label">Loading</div>
-            ) : recent.length === 0 ? (
-              <div className="py-16 text-center">
-                <div className="label">Nothing yet</div>
-                <p className="mt-2 text-[12px] text-ink-tertiary">Sentinel will surface changes as they land.</p>
-              </div>
-            ) : (
-              <ul className="divide-y divide-divider">
-                {recent.map((i) => {
-                  const signed = !!i.signatureAlgorithm;
-                  return (
-                    <li key={i.assessmentKey}>
-                      <Link
-                        href={`/impacts/${encodeURIComponent(i.assessmentKey)}`}
-                        className="grid grid-cols-[16px_1fr_auto] items-center gap-4 px-4 py-3 hover:bg-surface-alt/50 transition-colors"
-                      >
-                        <StateDot signed={signed} isAffected={i.isAffected} />
-                        <div className="min-w-0">
-                          <div className="flex items-center gap-3">
-                            <span className="text-[13px] font-medium text-ink-primary truncate">{i.topic}</span>
-                            <ClientChip id={i.clientId} />
-                          </div>
-                          <div className="mt-0.5 text-[11px] text-ink-tertiary tabular truncate">
-                            {formatRelative(i.timestamp)}
-                            {signed && i.canonicalHash && (
-                              <>
-                                {" · "}
-                                <span className="fingerprint">
-                                  sig {i.canonicalHash.slice(0, 8)}
-                                </span>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                        <DeltaChip delta={i.numericDelta} type={i.impactType} />
-                      </Link>
-                    </li>
-                  );
-                })}
-              </ul>
-            )}
-          </div>
-        </section>
+  const loading = events.isPending || impacts.isPending || briefs.isPending || activity.isPending;
+  const statsError = events.error ?? impacts.error ?? briefs.error;
+  // Events are derived from assessments, so an empty unfiltered list means no assessments yet.
+  const noAssessments = events.data !== undefined && events.data.events.length === 0;
 
-        <aside className="space-y-6">
-          <StatBlock label="Affected clients" value={affectedCount} />
-          <StatBlock label="Signed assessments" value={signedCount} accent />
-          <StatBlock label="Briefs drafted" value={pendingBriefs} />
-          <StatBlock label="Briefs sent" value={sentBriefs} />
-        </aside>
-      </div>
-    </div>
+  const header = (
+    <header className="space-y-1">
+      <h1 className="font-display text-[28px] leading-tight text-ink-1">
+        {givenName ? `Good to see you, ${givenName}.` : "Good to see you."}
+      </h1>
+      <p className="font-mono text-[11px] text-ink-3">{dateLine}</p>
+    </header>
   );
-}
 
-function StatBlock({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
-  return (
-    <div>
-      <div className="label">{label}</div>
-      <div
-        className={
-          "mt-1 text-[32px] leading-none font-medium tabular tracking-tight " +
-          (accent ? "text-seal" : "text-ink-primary")
-        }
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function StateDot({ signed, isAffected }: { signed: boolean; isAffected: boolean }) {
-  if (signed) {
-    return <Seal className="h-3.5 w-3.5 text-seal" />;
-  }
-  if (isAffected) {
-    return <span className="h-2 w-2 rounded-full bg-amber block ml-[3px]" title="Pending signature" />;
-  }
-  return <span className="h-2 w-2 rounded-full border border-ink-tertiary block ml-[3px]" title="No impact" />;
-}
-
-function ClientChip({ id }: { id: string }) {
-  return <span className="client-chip">{id}</span>;
-}
-
-function DeltaChip({ delta, type }: { delta: number | null; type: string }) {
-  if (delta === null || type === "none") {
+  if (noAssessments) {
     return (
-      <span className="text-[11px] uppercase tracking-wider text-ink-tertiary">
-        no impact
-      </span>
+      <div className="space-y-8">
+        {header}
+        <EmptyState
+          headline="Nothing to review yet."
+          body="Argus is watching IRCC. Import your caseload so the next change gets checked against it."
+          action={
+            <Link
+              href="/setup"
+              className="inline-flex h-9 items-center rounded-sm border border-brand-ink bg-brand px-4 text-[13px] font-medium text-on-brand transition-colors hover:bg-brand-hover"
+            >
+              Import clients
+            </Link>
+          }
+        />
+      </div>
     );
   }
-  const negative = delta < 0;
+
   return (
-    <span
-      className={
-        "rounded-sm px-2 py-0.5 text-[12px] font-medium tabular " +
-        (negative ? "bg-red-subtle text-red" : "bg-seal-subtle text-seal")
-      }
-    >
-      {formatDelta(delta)}
-    </span>
+    <div className="space-y-8">
+      <ProgressLine active={loading} fixed label="Loading your dashboard" />
+
+      {events.data && <AlertBanner events={events.data.events} />}
+
+      {header}
+
+      {statsError ? (
+        <InlineError
+          message="Couldn't load your numbers."
+          detail={errorDetail(statsError)}
+          retrying={events.isFetching || impacts.isFetching || briefs.isFetching}
+          onRetry={() => {
+            if (events.error) void events.refetch();
+            if (impacts.error) void impacts.refetch();
+            if (briefs.error) void briefs.refetch();
+          }}
+        />
+      ) : (
+        <StatRail stats={stats} monthLabel={monthLabel} />
+      )}
+
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        <div className="min-w-0 lg:col-span-2">
+          <RecentEventsTable
+            events={events.data?.events ?? []}
+            loading={events.isPending}
+            error={
+              events.error ? (
+                <InlineError
+                  message="Couldn't load recent policy events."
+                  detail={errorDetail(events.error)}
+                  retrying={events.isFetching}
+                  onRetry={() => void events.refetch()}
+                />
+              ) : undefined
+            }
+          />
+        </div>
+        <div className="min-w-0">
+          <ActivityFeed
+            items={activity.data?.items ?? []}
+            loading={activity.isPending}
+            error={
+              activity.error ? (
+                <InlineError
+                  message="Couldn't load audit activity."
+                  detail={errorDetail(activity.error)}
+                  retrying={activity.isFetching}
+                  onRetry={() => void activity.refetch()}
+                />
+              ) : undefined
+            }
+          />
+        </div>
+      </div>
+    </div>
   );
 }
