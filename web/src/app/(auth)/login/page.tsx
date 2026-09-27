@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useAuth } from "@/components/auth-context";
 import { signIn } from "@/lib/auth";
-import { Seal } from "@/components/seal";
+import { EyeMark } from "@/components/argus/eye-mark";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -28,7 +28,7 @@ export default function LoginPage() {
       const message = err instanceof Error ? err.message : "sign-in-failed";
       if (message.includes("UserNotConfirmedException")) {
         toast.error("Please confirm your email first.");
-        router.push(`/verify?email=${encodeURIComponent(email)}`);
+        router.push(`/confirm-email?email=${encodeURIComponent(email)}`);
       } else {
         toast.error(message);
       }
@@ -40,10 +40,10 @@ export default function LoginPage() {
   return (
     <div className="space-y-8">
       <div className="flex flex-col items-center gap-3">
-        <Seal className="h-8 w-8 text-seal" />
+        <EyeMark className="h-8 w-8" />
         <div className="flex flex-col items-center gap-1">
-          <h1 className="text-[24px] font-medium tracking-tight text-ink-primary" style={{ fontFamily: "var(--font-newsreader), serif" }}>
-            argus
+          <h1 className="font-display text-[24px] leading-tight text-ink-1">
+            Argus
           </h1>
           <p className="text-[13px] text-ink-secondary text-center leading-relaxed">
             Impact assessments,<br />signed and archived.
@@ -81,7 +81,7 @@ export default function LoginPage() {
         <button
           type="submit"
           disabled={busy}
-          className="w-full h-10 rounded-sm bg-primary text-primary-foreground text-[13px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="w-full h-10 rounded-sm border border-brand-ink bg-brand text-on-brand text-[13px] font-medium hover:bg-brand-hover disabled:opacity-50 transition-colors"
         >
           {busy ? "Signing in" : "Sign in"}
         </button>

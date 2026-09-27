@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { signUp } from "@/lib/auth";
-import { Seal } from "@/components/seal";
+import { EyeMark } from "@/components/argus/eye-mark";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -35,7 +35,7 @@ export default function SignupPage() {
         rcicLicense: license,
       });
       toast.success("Check your email for a confirmation code.");
-      router.push(`/verify?email=${encodeURIComponent(email)}`);
+      router.push(`/confirm-email?email=${encodeURIComponent(email)}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "sign-up-failed");
     } finally {
@@ -46,9 +46,9 @@ export default function SignupPage() {
   return (
     <div className="space-y-8">
       <div className="flex flex-col items-center gap-3">
-        <Seal className="h-8 w-8 text-seal" />
+        <EyeMark className="h-8 w-8" />
         <div className="flex flex-col items-center gap-1">
-          <h1 className="text-[24px] font-medium tracking-tight text-ink-primary" style={{ fontFamily: "var(--font-newsreader), serif" }}>
+          <h1 className="font-display text-[24px] leading-tight text-ink-1">
             Create your account
           </h1>
           <p className="text-[12px] text-ink-secondary text-center">
@@ -95,7 +95,7 @@ export default function SignupPage() {
         <button
           type="submit"
           disabled={busy}
-          className="w-full h-10 rounded-sm bg-primary text-primary-foreground text-[13px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="w-full h-10 rounded-sm border border-brand-ink bg-brand text-on-brand text-[13px] font-medium hover:bg-brand-hover disabled:opacity-50 transition-colors"
         >
           {busy ? "Creating" : "Create account"}
         </button>
