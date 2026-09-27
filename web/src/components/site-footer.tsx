@@ -1,16 +1,14 @@
-import { Seal } from "@/components/seal";
+import { EyeMark } from "@/components/argus/eye-mark";
 
 export function SiteFooter() {
   return (
-    <footer className="border-t border-border bg-canvas">
-      <div className="mx-auto max-w-[1080px] px-6 py-6 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[11px] text-ink-tertiary">
-          <Seal className="h-3 w-3 text-ink-tertiary" filled={false} />
-          <span>argus, signed and archived</span>
+    <footer className="border-t border-hairline bg-canvas" data-print="hide">
+      <div className="mx-auto flex max-w-[1080px] flex-wrap items-center justify-between gap-2 px-4 py-6 sm:px-6">
+        <div className="flex items-center gap-2 text-[12px] text-ink-3">
+          <EyeMark className="h-3.5 w-3.5 text-ink-3" />
+          <span>Argus, signed and archived</span>
         </div>
-        <div className="text-[11px] text-ink-tertiary tabular">
-          Built for CICC-licensed consultants
-        </div>
+        <div className="text-[12px] text-ink-3">Built for CICC-licensed consultants</div>
       </div>
     </footer>
   );
