@@ -3,6 +3,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Brief, Impact } from "@/lib/argus-types";
+import type {
+  ActivityResponse,
+  PolicyEventDetailResponse,
+  PolicyEventImpactsResponse,
+  PolicyEventStatus,
+  PolicyEventsListResponse,
+} from "@/lib/types/policy-events";
 
 /**
  * Query keys in one place. Screens that still build their own keys use the
@@ -13,7 +20,37 @@ export const queryKeys = {
   impact: (assessmentKey: string) => ["impact", assessmentKey] as const,
   briefs: () => ["briefs"] as const,
   brief: (briefId: string) => ["brief", briefId] as const,
+  policyEvents: (params: PolicyEventsParams = {}) => ["policy-events", params] as const,
+  policyEvent: (eventId: string) => ["policy-event", eventId] as const,
+  policyEventImpacts: (eventId: string) => ["policy-event-impacts", eventId] as const,
+  activity: (params: ActivityParams = {}) => ["activity", params] as const,
 };
+
+export type PolicyEventsParams = {
+  limit?: number;
+  status?: PolicyEventStatus;
+  domain?: string;
+};
+
+export type ActivityParams = {
+  limit?: number;
+  before?: string;
+};
+
+/**
+ * The API's upper bound for /policy-events. The dashboard and the sidebar both
+ * ask for this, so they share one cached response.
+ */
+export const POLICY_EVENTS_MAX_LIMIT = 200;
+
+function toQueryString(params: Record<string, string | number | undefined>): string {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined && v !== "") qs.set(k, String(v));
+  }
+  const s = qs.toString();
+  return s ? `?${s}` : "";
+}
 
 export function useImpacts(options: { enabled?: boolean } = {}) {
   return useQuery({
@@ -42,6 +79,38 @@ export function useBrief(briefId: string) {
   return useQuery({
     queryKey: queryKeys.brief(briefId),
     queryFn: () => api<Brief>(`/briefs/${briefId}`),
+  });
+}
+
+/** GET /policy-events. `totals` ignore the filters and the limit. */
+export function usePolicyEvents(params: PolicyEventsParams = {}, options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.policyEvents(params),
+    queryFn: () => api<PolicyEventsListResponse>(`/policy-events${toQueryString(params)}`),
+    enabled: options.enabled ?? true,
+  });
+}
+
+export function usePolicyEvent(eventId: string) {
+  return useQuery({
+    queryKey: queryKeys.policyEvent(eventId),
+    queryFn: () => api<PolicyEventDetailResponse>(`/policy-events/${encodeURIComponent(eventId)}`),
+  });
+}
+
+export function usePolicyEventImpacts(eventId: string) {
+  return useQuery({
+    queryKey: queryKeys.policyEventImpacts(eventId),
+    queryFn: () => api<PolicyEventImpactsResponse>(`/policy-events/${encodeURIComponent(eventId)}/impacts`),
+  });
+}
+
+/** GET /activity. Newest first. */
+export function useActivity(params: ActivityParams = {}, options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.activity(params),
+    queryFn: () => api<ActivityResponse>(`/activity${toQueryString(params)}`),
+    enabled: options.enabled ?? true,
   });
 }
 
