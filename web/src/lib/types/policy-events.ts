@@ -103,7 +103,10 @@ export type PolicyEventImpact = {
   correctionsFiled: number;
 };
 
-/** GET /policy-events/{id}/impacts. Affected clients first, then by clientId. */
+/**
+ * GET /policy-events/{id}/impacts. Affected clients first, then by clientId.
+ * 404 body is { error: "event-not-found" } when the event has no assessments.
+ */
 export type PolicyEventImpactsResponse = {
   clients: PolicyEventImpact[];
 };
