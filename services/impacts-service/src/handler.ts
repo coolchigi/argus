@@ -9,8 +9,6 @@ const kms = new KMSClient({});
 const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
 const TRAINING_CORRECTIONS_TABLE = requiredEnv('TRAINING_CORRECTIONS_TABLE');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
-const DEFAULT_RCIC_ID = process.env.DEFAULT_RCIC_ID ?? 'demo-rcic-001';
-
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
 
@@ -25,6 +23,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     if (routeKey === 'GET /public/verify/{hash}') return json(200, await publicVerify(decodePathParam(event, 'hash')));
+    if (!rcicId) throw httpError(403, 'missing-tenant-claim');
     if (routeKey === 'GET /impacts') return json(200, await listImpacts(rcicId));
     if (routeKey === 'GET /impacts/{id}') return json(200, await getImpact(rcicId, decodePathParam(event, 'id')));
     if (routeKey === 'GET /impacts/{id}/audit-signature') return json(200, await getAuditSignature(rcicId, decodePathParam(event, 'id')));
@@ -192,13 +191,14 @@ async function loadPublicKey(): Promise<{ pem: string; keyId: string }> {
   return cachedPublicKey;
 }
 
-function resolveRcicId(event: APIGatewayProxyEventV2): string {
+// No fallback tenant: a token without an rcic claim must never read another tenant's data.
+function resolveRcicId(event: APIGatewayProxyEventV2): string | null {
   const claims = (event.requestContext as { authorizer?: { jwt?: { claims?: Record<string, string> } } }).authorizer?.jwt?.claims;
   const idClaim = claims?.['custom:rcic_id'];
   if (typeof idClaim === 'string' && idClaim.length > 0) return idClaim;
   const licenseClaim = claims?.['custom:rcic_license'];
   if (typeof licenseClaim === 'string' && licenseClaim.length > 0) return licenseClaim;
-  return DEFAULT_RCIC_ID;
+  return null;
 }
 
 function decodePathParam(event: APIGatewayProxyEventV2, name: string): string {
