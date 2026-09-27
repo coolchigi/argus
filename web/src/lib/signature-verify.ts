@@ -1,11 +1,23 @@
 /**
- * Verify an Argus assessment signature entirely in the browser via WebCrypto.
+ * Verify an Argus signature entirely in the browser.
  *
- * KMS signs the SHA-256 hash of the canonicalized assessment payload with
- * ECDSA_SHA_256 on a P-256 (secp256r1) key. KMS returns a DER-encoded
- * ECDSA signature. WebCrypto's ECDSA.verify expects a raw r||s concatenation,
- * so we convert. See NIST FIPS 186-4 for the DER format.
+ * Anchor and briefs-service call KMS Sign with MessageType DIGEST, so KMS
+ * signs the 32-byte SHA-256 hash itself. WebCrypto's ECDSA verify always
+ * hashes its input again, which checks sha256(hash) and fails on every real
+ * signature. So we verify with @noble/curves in digest mode (prehash off).
+ *
+ * KMS doesn't normalize S, so high-S signatures are valid here (lowS off).
+ * The public key comes back in the same response as the signature, so we pin
+ * it: the SPKI SHA-256 must match a key we know Argus signs with.
  */
+
+import { p256 } from "@noble/curves/nist.js";
+
+/** SHA-256 of the SPKI DER for each Argus KMS signing key. */
+const PINNED_SPKI_SHA256 = new Set([
+  // 8b3b43ef-6d27-4193-9da8-f80c95b2dc65, ECC_NIST_P256, checked against KMS GetPublicKey
+  "9eeaa3055e1915ee2c31e6c904c37bdde22eb43e82a08ccf9fba9dfccebe94be",
+]);
 
 export type VerifyInput = {
   canonicalHashHex: string;
@@ -14,30 +26,39 @@ export type VerifyInput = {
 };
 
 export async function verifyAssessmentSignature(input: VerifyInput): Promise<boolean> {
-  const key = await importSpkiPem(input.publicKeyPem);
-  const derSig = base64ToBytes(input.signatureBase64);
-  const rawSig = derToRawEcdsa(derSig, 32); // P-256 -> 32 bytes per component
-  const hash = hexToBytes(input.canonicalHashHex);
-  return crypto.subtle.verify(
-    { name: "ECDSA", hash: "SHA-256" },
-    key,
-    rawSig,
-    hash,
-  );
-}
+  const spki = pemToSpki(input.publicKeyPem);
+  if (!PINNED_SPKI_SHA256.has(await sha256Hex(spki))) return false;
 
-async function importSpkiPem(pem: string): Promise<CryptoKey> {
-  const b64 = pem.replace(/-----BEGIN PUBLIC KEY-----/, "")
-    .replace(/-----END PUBLIC KEY-----/, "")
-    .replace(/\s+/g, "");
-  const spki = base64ToBytes(b64);
-  return crypto.subtle.importKey(
+  // WebCrypto checks the key really is a P-256 point, then hands us its raw bytes.
+  const key = await crypto.subtle.importKey(
     "spki",
     spki,
     { name: "ECDSA", namedCurve: "P-256" },
-    false,
+    true,
     ["verify"],
   );
+  const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", key));
+
+  const hash = hexToBytes(input.canonicalHashHex);
+  if (hash.length !== 32) return false;
+  const derSig = base64ToBytes(input.signatureBase64);
+  try {
+    return p256.verify(derSig, hash, publicKey, { prehash: false, lowS: false, format: "der" });
+  } catch {
+    return false;
+  }
+}
+
+function pemToSpki(pem: string): Uint8Array<ArrayBuffer> {
+  const b64 = pem.replace(/-----BEGIN PUBLIC KEY-----/, "")
+    .replace(/-----END PUBLIC KEY-----/, "")
+    .replace(/\s+/g, "");
+  return base64ToBytes(b64);
+}
+
+async function sha256Hex(bytes: Uint8Array<ArrayBuffer>): Promise<string> {
+  const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", bytes));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function base64ToBytes(b64: string): Uint8Array<ArrayBuffer> {
@@ -54,52 +75,4 @@ function hexToBytes(hex: string): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(buf);
   for (let i = 0; i < out.length; i += 1) out[i] = parseInt(hex.substr(i * 2, 2), 16);
   return out;
-}
-
-/**
- * Convert a DER-encoded ECDSA signature to raw r||s of `size` bytes each.
- * DER: 30 <len> 02 <rlen> <r> 02 <slen> <s>
- */
-function derToRawEcdsa(der: Uint8Array, size: number): Uint8Array<ArrayBuffer> {
-  let offset = 0;
-  if (der[offset++] !== 0x30) throw new Error("bad DER: missing sequence tag");
-  // length byte (single-byte lengths only; ECDSA signatures fit)
-  const seqLen = der[offset++];
-  if (seqLen + 2 !== der.length) {
-    // Also acceptable if this is a long-form length.
-    if ((seqLen & 0x80) === 0x80) {
-      const lenBytes = seqLen & 0x7f;
-      offset += lenBytes; // skip the length bytes; we don't strictly validate
-    } else {
-      // small-form length that doesn't match; unusual but not necessarily fatal
-    }
-  }
-
-  if (der[offset++] !== 0x02) throw new Error("bad DER: missing r integer tag");
-  let rLen = der[offset++];
-  let r = der.slice(offset, offset + rLen);
-  offset += rLen;
-
-  if (der[offset++] !== 0x02) throw new Error("bad DER: missing s integer tag");
-  let sLen = der[offset++];
-  let s = der.slice(offset, offset + sLen);
-  offset += sLen;
-
-  const rPadded = trimAndPad(r, size);
-  const sPadded = trimAndPad(s, size);
-
-  const out = new Uint8Array(new ArrayBuffer(size * 2));
-  out.set(rPadded, 0);
-  out.set(sPadded, size);
-  return out;
-}
-
-function trimAndPad(v: Uint8Array, size: number): Uint8Array<ArrayBuffer> {
-  // Strip leading 0x00 that DER adds to keep integers non-negative.
-  let cur = v;
-  while (cur.length > size && cur[0] === 0x00) cur = cur.slice(1);
-  if (cur.length > size) throw new Error(`component larger than expected ${size} bytes`);
-  const padded = new Uint8Array(new ArrayBuffer(size));
-  padded.set(cur, size - cur.length);
-  return padded;
 }
