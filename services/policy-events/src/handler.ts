@@ -36,7 +36,6 @@ const TRAINING_CORRECTIONS_TABLE = requiredEnv('TRAINING_CORRECTIONS_TABLE');
 const CLIENT_PROFILES_TABLE = requiredEnv('CLIENT_PROFILES_TABLE');
 const ALERTS_TABLE = requiredEnv('ALERTS_TABLE');
 const POLICY_CORPUS_BUCKET = requiredEnv('POLICY_CORPUS_BUCKET');
-const DEFAULT_RCIC_ID = process.env.DEFAULT_RCIC_ID ?? 'demo-rcic-001';
 const ARCHIVE_LINK_TTL_SECONDS = Number(process.env.ARCHIVE_LINK_TTL_SECONDS ?? String(7 * 24 * 60 * 60));
 const HEAD_CHECK_TIMEOUT_MS = 3_000;
 
@@ -191,6 +190,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   log('info', 'policy-events-request', { routeKey, rcicId, path: event.rawPath });
 
   try {
+    if (!rcicId) throw httpError(403, 'missing-tenant-claim');
     if (routeKey === 'GET /policy-events') return json(200, await listEvents(rcicId, event.queryStringParameters ?? {}));
     if (routeKey === 'GET /policy-events/{id}') return json(200, await getEvent(rcicId, decodePathParam(event, 'id')));
     if (routeKey === 'GET /policy-events/{id}/impacts') return json(200, await getEventImpacts(rcicId, decodePathParam(event, 'id')));
@@ -778,13 +778,14 @@ async function presignArchive(s3Key: string, versionId: string | null): Promise<
 // Utilities
 // ---------------------------------------------------------------------------
 
-function resolveRcicId(event: APIGatewayProxyEventV2): string {
+// No fallback tenant: a token without an rcic claim must never read another tenant's data.
+function resolveRcicId(event: APIGatewayProxyEventV2): string | null {
   const claims = (event.requestContext as { authorizer?: { jwt?: { claims?: Record<string, string> } } }).authorizer?.jwt?.claims;
   const idClaim = claims?.['custom:rcic_id'];
   if (typeof idClaim === 'string' && idClaim.length > 0) return idClaim;
   const licenseClaim = claims?.['custom:rcic_license'];
   if (typeof licenseClaim === 'string' && licenseClaim.length > 0) return licenseClaim;
-  return DEFAULT_RCIC_ID;
+  return null;
 }
 
 function decodePathParam(event: APIGatewayProxyEventV2, name: string): string {
