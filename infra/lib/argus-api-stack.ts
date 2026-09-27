@@ -87,8 +87,55 @@ export class ArgusApiStack extends cdk.Stack {
     // API handlers (one per bounded context).
     const meHandler = placeholder('MeHandler', 'me');
     const profilesHandler = placeholder('ProfilesHandler', 'profiles');
-    const policyEventsHandler = placeholder('PolicyEventsHandler', 'policy-events');
     const demoHandler = placeholder('DemoHandler', 'demo');
+
+    // Policy events service (Phase C1). Derives events at read time from
+    // ImpactAssessments grouped by policyEventId, joined to PolicyRules,
+    // Briefs, TrainingCorrections and Alerts, because nothing writes the
+    // PolicyEvents table yet. Also serves the /activity feed.
+    //
+    // Reuses the PolicyEventsHandler and PolicyEventsHandlerLogs construct
+    // ids and the physical names of the earlier placeholder so
+    // CloudFormation updates both in place, same as ImpactsHandler below.
+    const policyEventsLogGroup = new logs.LogGroup(this, 'PolicyEventsHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-policy-events',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const policyEventsHandler = new nodejs.NodejsFunction(this, 'PolicyEventsHandler', {
+      functionName: 'argus-policy-events',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/policy-events/package-lock.json'),
+      entry: path.join(__dirname, '../../services/policy-events/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        BRIEFS_TABLE: props.briefsTable.tableName,
+        TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
+        CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
+        ALERTS_TABLE: props.alertsTable.tableName,
+        POLICY_CORPUS_BUCKET: props.policyCorpusBucket.bucketName,
+        DEFAULT_RCIC_ID: 'demo-rcic-001',
+        ARCHIVE_LINK_TTL_SECONDS: String(7 * 24 * 60 * 60),
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: policyEventsLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.policyRulesTable.grantReadData(policyEventsHandler);
+    props.briefsTable.grantReadData(policyEventsHandler);
+    props.trainingCorrectionTable.grantReadData(policyEventsHandler);
+    props.clientProfilesTable.grantReadData(policyEventsHandler);
+    props.alertsTable.grantReadData(policyEventsHandler);
+    props.policyCorpusBucket.grantRead(policyEventsHandler);
 
 
     // Impacts service. Lists assessments, returns a single one, exports the
@@ -678,6 +725,8 @@ export class ArgusApiStack extends cdk.Stack {
           'https://tryargus.ca',
           'https://main.d270cjhakw6y7j.amplifyapp.com',
           'http://localhost:3000',
+          'https://phase-8-frontend.d270cjhakw6y7j.amplifyapp.com',
+          'http://localhost:3001',
         ],
       },
     });
@@ -690,6 +739,7 @@ export class ArgusApiStack extends cdk.Stack {
       { path: '/policy-events', methods: [apigwv2.HttpMethod.GET], handler: policyEventsHandler },
       { path: '/policy-events/{id}', methods: [apigwv2.HttpMethod.GET], handler: policyEventsHandler },
       { path: '/policy-events/{id}/impacts', methods: [apigwv2.HttpMethod.GET], handler: policyEventsHandler },
+      { path: '/activity', methods: [apigwv2.HttpMethod.GET], handler: policyEventsHandler },
       { path: '/impacts', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}/audit-signature', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
