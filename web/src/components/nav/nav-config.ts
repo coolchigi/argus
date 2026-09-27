@@ -1,6 +1,10 @@
 import type { NavIconName } from "@/components/nav/nav-icons";
 
-export type NavBadge = "action-required";
+/**
+ * action-required: affected assessments with no sent brief (danger).
+ * policy-events: policy events whose status is action-required (brand).
+ */
+export type NavBadge = "action-required" | "policy-events";
 
 export type NavItem = {
   href: string;
@@ -21,8 +25,7 @@ export const NAV_GROUPS: NavGroup[] = [
     label: "Monitor",
     items: [
       { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-      // Policy events badge stays off until the /policy-events API (Phase C1) can count it.
-      { href: "/policy-events", label: "Policy events", icon: "policy" },
+      { href: "/policy-events", label: "Policy events", icon: "policy", badge: "policy-events" },
       { href: "/caseload", label: "Client caseload", icon: "clients" },
       { href: "/impacts", label: "Assessments", icon: "assess", badge: "action-required" },
       { href: "/briefs", label: "Action briefs", icon: "briefs" },

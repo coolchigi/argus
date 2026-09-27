@@ -8,7 +8,7 @@ import { EyeMark } from "@/components/argus/eye-mark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NavIcon } from "@/components/nav/nav-icons";
 import { NAV_BOTTOM, NAV_GROUPS, isActivePath, type NavItem } from "@/components/nav/nav-config";
-import { useActionRequiredCount } from "@/lib/queries";
+import { POLICY_EVENTS_MAX_LIMIT, useActionRequiredCount, usePolicyEvents } from "@/lib/queries";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
@@ -22,11 +22,21 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const auth = useAuth();
   const authed = auth.status === "authed";
   const actionRequired = useActionRequiredCount({ enabled: authed });
+  // Same params as the dashboard, so both read one cached response.
+  const policyEvents = usePolicyEvents({ limit: POLICY_EVENTS_MAX_LIMIT }, { enabled: authed });
+  const eventsActionRequired = policyEvents.data?.totals.actionRequired ?? null;
   const sha = env.buildSha ? env.buildSha.slice(0, 7) : null;
 
   function renderItem(item: NavItem) {
     const active = isActivePath(pathname, item.href);
-    const badgeCount = item.badge === "action-required" ? actionRequired : null;
+    const badgeCount =
+      item.badge === "action-required"
+        ? actionRequired
+        : item.badge === "policy-events"
+          ? eventsActionRequired
+          : null;
+    const badgeTone =
+      item.badge === "policy-events" ? "bg-brand-subtle text-brand-ink" : "bg-danger-subtle text-danger-ink";
     return (
       <li key={item.href}>
         <Link
@@ -43,11 +53,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <NavIcon name={item.icon} className={active ? "text-brand-ink" : "text-ink-3"} />
           <span>{item.label}</span>
           {badgeCount !== null && badgeCount > 0 && (
-            <span className="ml-auto rounded-sm bg-danger-subtle px-1.5 font-mono text-[11px] leading-5 text-danger-ink tabular">
+            <span className={cn("ml-auto rounded-sm px-1.5 font-mono text-[11px] leading-5 tabular", badgeTone)}>
               <span aria-hidden>{badgeCount}</span>
-              <span className="sr-only">
-                , {badgeCount} {badgeCount === 1 ? "needs" : "need"} action
-              </span>
+              <span className="sr-only">{badgeSrText(item.badge, badgeCount)}</span>
             </span>
           )}
         </Link>
@@ -118,4 +126,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </div>
     </div>
   );
+}
+
+function badgeSrText(badge: NavItem["badge"], count: number): string {
+  const verb = count === 1 ? "needs" : "need";
+  if (badge === "policy-events") return `, ${count} ${count === 1 ? "event" : "events"} ${verb} action`;
+  return `, ${count} ${verb} action`;
 }
