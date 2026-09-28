@@ -44,8 +44,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Services with a test script. Add a service here when it gets one.
-        service: [policy-events, profiles]
+        # Every Lambda service. All get a typecheck, and tests run for any
+        # service with a test script. Add a service here when one is created.
+        service:
+          - alerts
+          - analyst
+          - anchor
+          - auditor
+          - briefs-service
+          - composer
+          - impacts-service
+          - policy-events
+          - profiles
+          - recall
+          - sentinel
+          - user-provisioning
     defaults:
       run:
         working-directory: services/${{ matrix.service }}
@@ -60,7 +73,7 @@ jobs:
           cache-dependency-path: services/${{ matrix.service }}/package-lock.json
       - run: npm ci
       - run: npx tsc --noEmit
-      - run: npm test
+      - run: npm test --if-present
 
   infra:
     runs-on: ubuntu-latest
