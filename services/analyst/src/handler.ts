@@ -1,4 +1,4 @@
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, ConverseCommand, type ConverseCommandInput } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import {
@@ -10,6 +10,7 @@ import {
   ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
+import { describeGuardrailBlock, guarded } from './guardrail';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -152,7 +153,7 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
 
     for (const client of candidates) {
       try {
-        const hyp = await reason(delta, rule, client);
+        const hyp = await reason(delta, rule, client, runId);
         await emitHypothesis(hyp, delta, client);
         log('info', 'hypothesis-emitted', {
           runId,
@@ -251,7 +252,7 @@ function filterByPolicyDomain(clients: ClientProfile[], policyDomain: string): C
   return clients.filter((c) => c.program === policyDomain);
 }
 
-async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile): Promise<ImpactHypothesis> {
+export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile): ConverseCommandInput {
   const ruleSnippet = (rule.rule_content ?? '').slice(0, RULE_CONTENT_MAX_CHARS);
   const clientJson = JSON.stringify(stripUndefined(client), null, 2);
 
@@ -264,8 +265,7 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     'Numeric deltas are only for CRS point changes; leave null for non-CRS changes.',
   ].join('\n');
 
-  const user = [
-    'POLICY CHANGE',
+  const policyChange = [
     `- Domain: ${delta.policyDomain}`,
     `- Topic: ${delta.topic}`,
     `- Category: ${delta.category}`,
@@ -273,13 +273,9 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     `- Rule kind: ${delta.ruleKind}`,
     `- Summary (from ingest classifier): ${delta.summary}`,
     `- Source: ${delta.sourceUrl}`,
-    '',
-    'RULE CONTENT SNIPPET (may be truncated):',
-    ruleSnippet,
-    '',
-    'CLIENT PROFILE:',
-    clientJson,
-    '',
+  ].join('\n');
+
+  const instructions = [
     'Return this exact JSON shape:',
     '{',
     '  "isAffected": boolean,',
@@ -309,36 +305,63 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     `Produce ONE impact hypothesis for this client against the rule content in the grounding source. Return the JSON shape described in the system prompt.`,
   ].join('\n');
 
-  const res = await bedrock.send(
-    new ConverseCommand({
-      modelId: REASONER_MODEL,
-      system: [{ text: system }],
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            guardContent: {
-              text: {
-                text: `RULE CONTENT (source of truth):\n${ruleSnippet}`,
-                qualifiers: ['grounding_source'],
-              },
+  // Qualified blocks feed only the contextual-grounding check, so the rule
+  // text, policy change and client profile are also tagged without a
+  // qualifier. That's what makes the guardrail's PII and prompt-attack
+  // filters evaluate them. See guardrail.ts for the tagging rule.
+  return {
+    modelId: REASONER_MODEL,
+    system: [{ text: system }],
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          guardContent: {
+            text: {
+              text: `RULE CONTENT (source of truth):\n${ruleSnippet}`,
+              qualifiers: ['grounding_source'],
             },
           },
-          {
-            guardContent: {
-              text: {
-                text: groundedQuery,
-                qualifiers: ['query'],
-              },
+        },
+        {
+          guardContent: {
+            text: {
+              text: groundedQuery,
+              qualifiers: ['query'],
             },
           },
-          { text: user },
-        ],
-      }],
-      inferenceConfig: { maxTokens: 800, temperature: 0.1 },
-      guardrailConfig: guardrailConfig(),
-    }),
-  );
+        },
+        { text: 'POLICY CHANGE\n' },
+        guarded(policyChange + '\n\n'),
+        { text: 'RULE CONTENT SNIPPET (may be truncated):\n' },
+        guarded(ruleSnippet + '\n\n'),
+        { text: 'CLIENT PROFILE:\n' },
+        guarded(clientJson + '\n\n'),
+        { text: instructions },
+      ],
+    }],
+    inferenceConfig: { maxTokens: 800, temperature: 0.1 },
+    guardrailConfig: guardrailConfig(),
+  };
+}
+
+async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile, runId: string): Promise<ImpactHypothesis> {
+  const res = await bedrock.send(new ConverseCommand(buildReasonRequest(delta, rule, client)));
+
+  if (res.stopReason === 'guardrail_intervened') {
+    const block = describeGuardrailBlock(res);
+    log('error', 'guardrail-blocked', {
+      runId,
+      agent: 'analyst',
+      rcicId: client.rcicId,
+      clientId: client.clientId,
+      ruleHash: delta.ruleHash,
+      stage: block.stage,
+      policies: block.policies,
+      guardedInputs: ['policy-change', 'rule-text', 'client-profile'],
+    });
+    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+  }
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);
