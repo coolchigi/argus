@@ -5,6 +5,8 @@
 // single byte of it leaves the browser. The server runs the same checks again
 // and is the one that counts.
 
+import { looksLikeSinOrSsn } from "./client-id.ts";
+
 export const MAX_IMPORT_ROWS = 500;
 
 export const REQUIRED_COLUMNS = ["client_id", "program", "status", "consent_confirmed"] as const;
@@ -104,7 +106,13 @@ export function parseCsv(text: string): string[][] {
 
 export type ParsedImport =
   | { ok: true; columns: string[]; rows: Record<string, string>[] }
-  | { ok: false; error: "empty" | "forbidden-column" | "unknown-column" | "missing-column" | "too-many-rows"; columns?: string[]; count?: number };
+  | {
+      ok: false;
+      error: "empty" | "forbidden-column" | "unknown-column" | "missing-column" | "too-many-rows" | "sin-shaped-client-id";
+      columns?: string[];
+      count?: number;
+      rows?: number[];
+    };
 
 /**
  * Parse and run the whole-file checks. Rows come back keyed by the
@@ -134,6 +142,11 @@ export function parseImport(text: string): ParsedImport {
     for (const c of REQUIRED_COLUMNS) r[c] ??= "";
     return r;
   });
+
+  // A SIN-shaped case number could be a real SIN, so the whole file stays in
+  // the browser. Row numbers count the header as row 1, like a spreadsheet.
+  const sinShaped = rows.flatMap((r, i) => (looksLikeSinOrSsn(r.client_id) ? [i + 2] : []));
+  if (sinShaped.length > 0) return { ok: false, error: "sin-shaped-client-id", rows: sinShaped };
   return { ok: true, columns, rows };
 }
 
