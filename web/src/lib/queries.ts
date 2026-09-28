@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { currentAssessments, ruleClientKey, sentRuleClientKeys } from "@/lib/current-assessments";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import type { Brief, Impact } from "@/lib/argus-types";
 import type {
   ActivityResponse,
@@ -112,10 +112,21 @@ export function usePolicyEvents(params: PolicyEventsParams = {}, options: { enab
   });
 }
 
+/** A 404 is an answer, so it isn't retried. Anything else gets the default single retry. */
+function retryUnlessNotFound(failureCount: number, err: Error): boolean {
+  if (err instanceof ApiError && err.status === 404) return false;
+  return failureCount < 1;
+}
+
+export function isNotFound(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
+}
+
 export function usePolicyEvent(eventId: string) {
   return useQuery({
     queryKey: queryKeys.policyEvent(eventId),
     queryFn: () => api<PolicyEventDetailResponse>(`/policy-events/${encodeURIComponent(eventId)}`),
+    retry: retryUnlessNotFound,
   });
 }
 
@@ -123,6 +134,7 @@ export function usePolicyEventImpacts(eventId: string) {
   return useQuery({
     queryKey: queryKeys.policyEventImpacts(eventId),
     queryFn: () => api<PolicyEventImpactsResponse>(`/policy-events/${encodeURIComponent(eventId)}/impacts`),
+    retry: retryUnlessNotFound,
   });
 }
 
