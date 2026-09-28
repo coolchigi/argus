@@ -85,8 +85,65 @@ export class ArgusApiStack extends cdk.Stack {
       });
 
     // API handlers (one per bounded context).
-    const meHandler = placeholder('MeHandler', 'me');
     const demoHandler = placeholder('DemoHandler', 'demo');
+
+    // Me service (Phase E). GET /me returns the consultant's identity, firm,
+    // province, preferences, onboarding state, signing key details and setup
+    // counts. PATCH /me edits firm, province, preferences and onboarding on
+    // the RcicUsers row. Consultant data only. Clients appear as a count.
+    //
+    // Reuses the MeHandler and MeHandlerLogs construct ids and the physical
+    // names of the earlier placeholder so CloudFormation updates both in
+    // place, same as ProfilesHandler below.
+    const meLogGroup = new logs.LogGroup(this, 'MeHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-me',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const meHandler = new nodejs.NodejsFunction(this, 'MeHandler', {
+      functionName: 'argus-me',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/me/package-lock.json'),
+      entry: path.join(__dirname, '../../services/me/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 256,
+      environment: {
+        RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
+        CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
+        IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        SIGNING_KEY_ID: props.signingKey.keyId,
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: meLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    // Least privilege. One row read and a conditional update on RcicUsers (no
+    // PutItem, so a PATCH can never create a tenant row). Query only on the
+    // two tables it counts. The public half of the signing key, never Sign.
+    meHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:GetItem', 'dynamodb:UpdateItem'],
+        resources: [props.rcicUsersTable.tableArn],
+      }),
+    );
+    meHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:Query'],
+        resources: [props.clientProfilesTable.tableArn, props.impactAssessmentsTable.tableArn],
+      }),
+    );
+    meHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['kms:GetPublicKey', 'kms:DescribeKey'],
+        resources: [props.signingKey.keyArn],
+      }),
+    );
 
     // Profiles service (Phase F). The consultant's caseload: list with derived
     // counts, detail, single create, CSV bulk import and PATCH. DELETE is a
@@ -696,8 +753,6 @@ export class ArgusApiStack extends cdk.Stack {
     // Read carefully. Do not swap for wildcard IAM policies.
     // -----------------------------------------------------------------
 
-    // Read-only surfaces for query endpoints.
-    props.clientProfilesTable.grantReadData(meHandler);
     // Read plus conditional put and update. No DeleteItem or BatchWriteItem:
     // closing a client is an update, and nothing in the service removes a row.
     props.clientProfilesTable.grantReadData(profilesHandler);
@@ -773,7 +828,7 @@ export class ArgusApiStack extends cdk.Stack {
     });
 
     const routes: Array<{ path: string; methods: apigwv2.HttpMethod[]; handler: lambda.Function }> = [
-      { path: '/me', methods: [apigwv2.HttpMethod.GET], handler: meHandler },
+      { path: '/me', methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH], handler: meHandler },
       { path: '/profiles', methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.POST], handler: profilesHandler },
       { path: '/profiles/bulk', methods: [apigwv2.HttpMethod.POST], handler: profilesHandler },
       { path: '/profiles/{id}', methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH, apigwv2.HttpMethod.DELETE], handler: profilesHandler },
