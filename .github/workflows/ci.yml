@@ -54,6 +54,7 @@ jobs:
           - briefs-service
           - composer
           - impacts-service
+          - me
           - policy-events
           - profiles
           - recall
