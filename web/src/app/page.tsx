@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { humanizeTopic } from "@/lib/humanize";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/components/auth-context";
@@ -101,7 +102,10 @@ function Hero() {
 }
 
 function SampleReceipt() {
-  const SAMPLE_HASH = "1cbb498541676b14a34b357c325a05c54b6c01bc3ce899c2a00acf9944f86191";
+  // A real signed assessment from the demo tenant (Express Entry category-based selection).
+  // It resolves through the public verify endpoint and exposes no client data.
+  const SAMPLE_HASH = "8be968886f7d6f6d9b1b0c1185f00f8e08032546dee5d8f3a1f00c0037c07d7b";
+  const SAMPLE_TOPIC = "ee-category-based-selection";
   return (
     <div className="rounded-[8px] border border-hairline bg-card p-6 space-y-5">
       <div className="flex items-center gap-2">
@@ -112,7 +116,7 @@ function SampleReceipt() {
         <div>
           <div className="label">Topic</div>
           <div className="mt-1 text-[13px] text-ink-1">
-            CRS scorecard rule change
+            {humanizeTopic(SAMPLE_TOPIC)}
           </div>
         </div>
         <div>
