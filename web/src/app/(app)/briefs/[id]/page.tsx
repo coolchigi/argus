@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { Brief } from "@/lib/argus-types";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SectionLabel } from "@/components/argus/section-label";
 import { Textarea } from "@/components/ui/textarea";
 import { CitationChips } from "@/components/citation-chips";
 import { Seal } from "@/components/seal";
@@ -175,7 +175,7 @@ function BriefBody({
           </div>
           <div className="p-4 space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="subject" className="label">Subject</Label>
+              <SectionLabel as="label" htmlFor="subject">Subject</SectionLabel>
               <Input
                 id="subject"
                 value={subject}
@@ -185,7 +185,7 @@ function BriefBody({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="body" className="label">Body</Label>
+              <SectionLabel as="label" htmlFor="body">Body</SectionLabel>
               <Textarea
                 id="body"
                 rows={16}
@@ -196,7 +196,7 @@ function BriefBody({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="actions" className="label">Suggested actions · one per line</Label>
+              <SectionLabel as="label" htmlFor="actions">Suggested actions · one per line</SectionLabel>
               <Textarea
                 id="actions"
                 rows={4}
