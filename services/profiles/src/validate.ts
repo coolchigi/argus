@@ -8,6 +8,8 @@
 // can't ride in through an attribute. `notes` isn't accepted in v1
 // (PHASE8_PLAN section 1b and Q5).
 
+import { matchesGuardrailIdPattern } from './guardrail-patterns.ts';
+
 export type Row = Record<string, unknown>;
 
 /**
@@ -148,24 +150,14 @@ function digitsOnly(s: string): string {
   return s.replace(/\D/g, '');
 }
 
-function luhnValid(digits: string): boolean {
-  let sum = 0;
-  for (let i = 0; i < digits.length; i += 1) {
-    let d = Number(digits[digits.length - 1 - i]);
-    if (i % 2 === 1) {
-      d *= 2;
-      if (d > 9) d -= 9;
-    }
-    sum += d;
-  }
-  return sum % 10 === 0;
-}
-
 /**
  * Errors for a client id. Empty array means it's fine. The PII checks run
  * before the pattern so the consultant sees why, not just "bad pattern".
  * - Email: anything with an @.
- * - SIN: 9 digits, separators allowed, passing the Luhn check SINs carry.
+ * - SIN or SSN: anything the guardrail's ca-sin or us-ssn regex matches,
+ *   searched the way the guardrail searches (guardrail-patterns.ts). No Luhn
+ *   check: the guardrail blocks any 9 digits in that shape, so an id it
+ *   blocks would fail every assessment for the client.
  * - Phone: 10 or 11 digits once separators and a leading + are stripped,
  *   made only of digits and phone punctuation.
  */
@@ -173,11 +165,9 @@ export function clientIdErrors(raw: unknown): string[] {
   if (typeof raw !== 'string' || raw.trim() === '') return ['client-id-required'];
   const id = raw.trim();
   if (id.includes('@')) return ['client-id-looks-like-email'];
+  if (matchesGuardrailIdPattern(id)) return ['client-id-looks-like-sin'];
   const phoneish = /^\+?[\d\s().-]+$/.test(id);
   const digits = digitsOnly(id);
-  if (phoneish && digits.length === 9 && /^\d{3}[\s.-]?\d{3}[\s.-]?\d{3}$/.test(id) && luhnValid(digits)) {
-    return ['client-id-looks-like-sin'];
-  }
   if (phoneish && (digits.length === 10 || (digits.length === 11 && digits.startsWith('1')))) {
     return ['client-id-looks-like-phone'];
   }
