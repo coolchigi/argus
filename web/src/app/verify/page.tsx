@@ -1,11 +1,9 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useId, useState } from "react";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
-import { useAuth } from "@/components/auth-context";
 
 /**
  * Pulls a 64-character hex fingerprint out of whatever was pasted: the bare
@@ -18,7 +16,6 @@ function extractFingerprint(input: string): string | null {
 
 export default function VerifyLookupPage() {
   const router = useRouter();
-  const auth = useAuth();
   const inputId = useId();
   const hintId = useId();
   const errorId = useId();
@@ -38,15 +35,7 @@ export default function VerifyLookupPage() {
 
   return (
     <div className="flex min-h-screen flex-col bg-canvas">
-      <SiteHeader
-        nav={
-          auth.status === "authed" ? (
-            <Link href="/dashboard" className="text-ink-2 hover:text-ink-1">
-              Back to Argus
-            </Link>
-          ) : undefined
-        }
-      />
+      <SiteHeader />
       <main id="main" className="mx-auto w-full max-w-[560px] flex-1 px-4 pb-16 pt-16 sm:px-6">
         <div className="label">Public receipt check</div>
         <h1 className="mt-2 font-display text-[28px] leading-tight text-ink-1">Verify a receipt</h1>
