@@ -6,8 +6,10 @@ import {
   buildEvents,
   eventIdOf,
   listView,
+  parseActivityBefore,
   resolveEventId,
   toAssessment,
+  type Assessment,
   type BriefRow,
   type CorrectionRow,
   type PolicyEvent,
@@ -452,16 +454,76 @@ describe('activity feed', () => {
     const first = buildActivity(rows, bs, cs, alerts, { limit: 3, before: null });
     assert.equal(first.items.length, 3);
     assert.equal(first.items[0].at, '2026-09-25T10:01:05.000Z');
-    assert.equal(first.nextBefore, first.items[2].at);
-    const seen: string[] = [];
-    let before: string | null = null;
-    for (let page = 0; page < 10; page += 1) {
-      const res = buildActivity(rows, bs, cs, alerts, { limit: 3, before });
-      seen.push(...res.items.map((i) => i.id));
-      if (!res.nextBefore) break;
-      before = res.nextBefore;
-    }
+    assert.ok(first.nextBefore);
+    assert.deepEqual(parseActivityBefore(first.nextBefore), { at: first.items[2].at, id: first.items[2].id });
+    const seen = pageAll(rows, bs, cs, alerts, 3);
     assert.equal(seen.length, 7);
     assert.equal(new Set(seen).size, 7);
+  });
+});
+
+// Walks /activity the way a client does: pass nextBefore back as before.
+function pageAll(rows: Assessment[], bs: BriefRow[], cs: CorrectionRow[], alerts: Row[], limit: number): string[] {
+  const seen: string[] = [];
+  let before: string | null = null;
+  for (let page = 0; page < 1000; page += 1) {
+    const cursor = before === null ? null : parseActivityBefore(before);
+    if (before !== null) assert.ok(cursor, `nextBefore ${before} must parse`);
+    const res = buildActivity(rows, bs, cs, alerts, { limit, before: cursor });
+    assert.ok(res.items.length <= limit);
+    seen.push(...res.items.map((i) => i.id));
+    if (!res.nextBefore) return seen;
+    before = res.nextBefore;
+  }
+  throw new Error('pagination did not terminate');
+}
+
+describe('activity pagination across identical timestamps', () => {
+  const SAME = '2026-09-25T10:00:00.000Z';
+  // 25 assessments from one run all signed in the same millisecond, which is
+  // what a Sentinel fan-out across a tenant's clients looks like.
+  const sameRun = Array.from({ length: 25 }, (_, i) =>
+    toAssessment(row(RUN_A2, RULE_A, `C-${String(i).padStart(2, '0')}`, SAME)),
+  );
+
+  it('returns every item exactly once, in feed order, for every page size', () => {
+    const all = buildActivity(sameRun, [], [], [], { limit: 1000, before: null }).items.map((i) => i.id);
+    assert.equal(all.length, 25);
+    for (const limit of [1, 2, 3, 4, 7, 24, 25, 26]) {
+      const seen = pageAll(sameRun, [], [], [], limit);
+      assert.deepEqual(seen, all, `limit ${limit}`);
+    }
+  });
+
+  it('keeps ties intact when every kind shares the boundary timestamp', () => {
+    const mixedRows = [
+      ...sameRun,
+      toAssessment(row(RUN_A1, RULE_A, 'C-older', '2026-09-20T10:00:00.000Z')),
+      toAssessment(row(RUN_A1, RULE_A, 'C-newer', '2026-09-26T10:00:00.000Z')),
+    ];
+    const mixedBriefs = Array.from({ length: 5 }, (_, i) => brief(`${RUN_A2}#C-${String(i).padStart(2, '0')}`, 'sent', { sentAt: SAME }));
+    const mixedCorrections = Array.from({ length: 5 }, (_, i) => correction(`${RUN_A2}#C-${String(i + 5).padStart(2, '0')}`, SAME));
+    const mixedAlerts: Row[] = [{ timestamp: SAME, briefId: mixedBriefs[0].briefId, clientId: 'C-00', channel: 'email' }];
+    const all = buildActivity(mixedRows, mixedBriefs, mixedCorrections, mixedAlerts, { limit: 1000, before: null }).items.map((i) => i.id);
+    assert.equal(all.length, 38);
+    assert.equal(new Set(all).size, 38);
+    for (let limit = 1; limit <= 40; limit += 1) {
+      assert.deepEqual(pageAll(mixedRows, mixedBriefs, mixedCorrections, mixedAlerts, limit), all, `limit ${limit}`);
+    }
+  });
+
+  it('still honours a legacy before=ISO as strictly older than that instant', () => {
+    const mixed = [...sameRun, toAssessment(row(RUN_A1, RULE_A, 'C-older', '2026-09-20T10:00:00.000Z'))];
+    const res = buildActivity(mixed, [], [], [], { limit: 100, before: parseActivityBefore(SAME) });
+    assert.deepEqual(res.items.map((i) => i.clientId), ['C-older']);
+    assert.equal(res.nextBefore, null);
+  });
+
+  it('rejects a malformed before', () => {
+    assert.equal(parseActivityBefore('not-a-date'), null);
+    assert.equal(parseActivityBefore('c1.'), null);
+    assert.equal(parseActivityBefore('c1.!!!'), null);
+    assert.equal(parseActivityBefore(`c1.${Buffer.from('["only-one"]').toString('base64url')}`), null);
+    assert.equal(parseActivityBefore(`c1.${Buffer.from('{"at":"x","id":"y"}').toString('base64url')}`), null);
   });
 });
