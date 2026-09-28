@@ -268,10 +268,11 @@ export class ArgusStatefulStack extends cdk.Stack {
     // are content we didn't write ourselves, so PROMPT_ATTACK is set to
     // HIGH on the input side.
     //
-    // Contextual grounding is enabled here but only enforced when the
-    // caller supplies a grounding source via guardContent (Analyst does
-    // this against the rule text). Other agents call the same guardrail
-    // without grounding sources and the check is a no-op for them.
+    // Contextual grounding runs only when the caller supplies a grounding
+    // source via guardContent (Analyst does this against the rule text and
+    // profile). It's in detect mode, see the filters below. Other agents
+    // call the same guardrail without grounding sources and the check is a
+    // no-op for them.
     this.guardrail = new bedrock.CfnGuardrail(this, 'ArgusGuardrail', {
       name: 'argus-safety',
       description: 'PII, prompt-attack, and grounding guardrail applied to every Argus Bedrock invocation.',
@@ -321,11 +322,14 @@ export class ArgusStatefulStack extends cdk.Stack {
       },
       contextualGroundingPolicyConfig: {
         filtersConfig: [
-          // Threshold is a minimum acceptable score. 0.65 gives Analyst
-          // enough latitude to reason from rule text into per-client
-          // conclusions without every wording variation being rejected.
-          { type: 'GROUNDING', threshold: 0.65 },
-          { type: 'RELEVANCE', threshold: 0.5 },
+          // Detect mode: action NONE scores the answer and reports it in the
+          // trace but never blocks. Blocking dropped clients whose answers
+          // were correct, and a dropped client gets no assessment at all.
+          // Analyst passes the scores to the Auditor as evidence and the
+          // Auditor stays the gate. The thresholds still mark what counts
+          // as a low score in the trace.
+          { type: 'GROUNDING', threshold: 0.65, action: 'NONE' },
+          { type: 'RELEVANCE', threshold: 0.5, action: 'NONE' },
         ],
       },
     });

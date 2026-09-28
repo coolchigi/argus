@@ -10,7 +10,7 @@ import {
   ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
-import { describeGuardrailBlock, guarded, type GuardrailBlock } from './guardrail';
+import { describeGuardrailBlock, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -106,6 +106,7 @@ type ImpactHypothesis = {
   recommendedAction: string;
   confidence: 'low' | 'medium' | 'high';
   reasoning: string;
+  groundingCheck: GroundingCheck;
 };
 
 export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ hypothesesEmitted: number }> => {
@@ -167,6 +168,7 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
           numericDelta: hyp.numericDelta,
           confidence: hyp.confidence,
           narrative: hyp.narrative,
+          groundingCheck: hyp.groundingCheck,
         });
         total += 1;
       } catch (err) {
@@ -372,22 +374,13 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
   };
 }
 
-// A grounding block on output means this particular answer strayed from the
-// rule text or profile. Answers vary run to run, so one fresh attempt is worth
-// making. The retry must pass the same check, so quality is unchanged. Input
-// blocks (PII, prompt attack) and relevance blocks are never retried.
-const MAX_REASON_ATTEMPTS = 2;
-
-function isRetryableGroundingBlock(block: GuardrailBlock): boolean {
-  return block.stage === 'output'
-    && block.policies.length > 0
-    && block.policies.every((p) => p === 'grounding:GROUNDING');
-}
-
+// Contextual grounding runs in detect mode, so a guardrail block here comes
+// from the PII, content or prompt-attack filters. Those are never retried.
+// The grounding and relevance scores ride on the hypothesis to the Auditor.
 async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile, runId: string): Promise<ImpactHypothesis> {
-  let res = await bedrock.send(new ConverseCommand(buildReasonRequest(delta, rule, client)));
+  const res = await bedrock.send(new ConverseCommand(buildReasonRequest(delta, rule, client)));
 
-  for (let attempt = 1; res.stopReason === 'guardrail_intervened'; attempt += 1) {
+  if (res.stopReason === 'guardrail_intervened') {
     const block = describeGuardrailBlock(res);
     log('error', 'guardrail-blocked', {
       runId,
@@ -395,16 +388,11 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
       rcicId: client.rcicId,
       clientId: client.clientId,
       ruleHash: delta.ruleHash,
-      attempt,
       stage: block.stage,
       policies: block.policies,
       guardedInputs: ['policy-change', 'rule-text', 'client-profile'],
     });
-    if (attempt >= MAX_REASON_ATTEMPTS || !isRetryableGroundingBlock(block)) {
-      throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
-    }
-    log('info', 'guardrail-retry', { runId, rcicId: client.rcicId, clientId: client.clientId, nextAttempt: attempt + 1 });
-    res = await bedrock.send(new ConverseCommand(buildReasonRequest(delta, rule, client)));
+    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
   }
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
@@ -429,6 +417,7 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     recommendedAction: parsed.recommendedAction ?? '(no action)',
     confidence: (parsed.confidence ?? 'low') as ImpactHypothesis['confidence'],
     reasoning: parsed.reasoning ?? '(no reasoning)',
+    groundingCheck: readGroundingCheck(res),
   };
 }
 
