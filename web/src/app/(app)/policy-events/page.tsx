@@ -1,12 +1,18 @@
-import { PageHeader } from "@/components/argus/page-header";
-import { EmptyState } from "@/components/empty-state";
+"use client";
 
-// Branch-only placeholder so the sidebar link resolves. Replaced before merge (Phase C).
+import { EventsList } from "@/components/policy-events/events-list";
+import { POLICY_EVENTS_MAX_LIMIT, usePolicyEvents } from "@/lib/queries";
+
 export default function PolicyEventsPage() {
+  // Same params as the sidebar badge and the dashboard, so they share one cached response.
+  const events = usePolicyEvents({ limit: POLICY_EVENTS_MAX_LIMIT });
   return (
-    <div className="space-y-6">
-      <PageHeader title="Policy events" />
-      <EmptyState headline="This screen is being built" body="Every IRCC change Argus has checked against your caseload will be listed here." />
-    </div>
+    <EventsList
+      data={events.data}
+      loading={events.isFetching}
+      error={events.error}
+      retrying={events.isFetching}
+      onRetry={() => void events.refetch()}
+    />
   );
 }
