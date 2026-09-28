@@ -11,7 +11,7 @@ type Props = {
   className?: string;
 };
 
-/** A § numbered section, as on the Figma impact detail. Heading is DM Serif at the 20px floor. */
+/** A § numbered section, as on the Figma impact detail. Heading is Plex Serif at the 20px floor. */
 export function NumberedSection({ number, title, actions, children, className }: Props) {
   const headingId = useId();
   return (

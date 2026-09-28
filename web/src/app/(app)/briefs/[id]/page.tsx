@@ -154,10 +154,7 @@ function BriefBody({
           <span className="text-[12px] text-ink-tertiary">·</span>
           <span className="text-[12px] text-ink-tertiary tabular">{formatRelative(brief.createdAt)}</span>
         </div>
-        <h1
-          className="text-[24px] font-medium tracking-tight text-ink-primary leading-tight"
-          style={{ fontFamily: "var(--font-newsreader), serif" }}
-        >
+        <h1 className="font-display text-[24px] leading-tight text-ink-1">
           {subject || "Untitled brief"}
         </h1>
       </header>
