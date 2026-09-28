@@ -10,7 +10,7 @@ import {
   ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
-import { describeGuardrailBlock, guarded } from './guardrail';
+import { describeGuardrailBlock, guarded, type GuardrailBlock } from './guardrail';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -142,6 +142,7 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
   }
 
   let total = 0;
+  const dropped: { rcicId: string; clientId: string; reason: string }[] = [];
   for (const rcicId of rcicIds) {
     const clients = await queryCaseload(rcicId);
     const candidates = filterByPolicyDomain(clients, delta.policyDomain);
@@ -169,17 +170,29 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
         });
         total += 1;
       } catch (err) {
-        log('error', 'reason-failed', {
+        // A dropped client gets no assessment, so the consultant would never
+        // hear about this change for them. Log it loudly and count it.
+        const reasonText = err instanceof Error ? err.message : String(err);
+        dropped.push({ rcicId, clientId: client.clientId, reason: reasonText });
+        log('error', 'client-dropped', {
           runId,
           rcicId,
           clientId: client.clientId,
-          error: err instanceof Error ? err.message : String(err),
+          policyEventId: delta.eventId,
+          ruleHash: delta.ruleHash,
+          reason: reasonText,
         });
       }
     }
   }
 
-  log('info', 'analyst-complete', { runId, hypothesesEmitted: total });
+  log(dropped.length > 0 ? 'error' : 'info', 'analyst-complete', {
+    runId,
+    policyEventId: delta.eventId,
+    hypothesesEmitted: total,
+    clientsDropped: dropped.length,
+    dropped,
+  });
   return { hypothesesEmitted: total };
 };
 
@@ -359,10 +372,22 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
   };
 }
 
-async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile, runId: string): Promise<ImpactHypothesis> {
-  const res = await bedrock.send(new ConverseCommand(buildReasonRequest(delta, rule, client)));
+// A grounding block on output means this particular answer strayed from the
+// rule text or profile. Answers vary run to run, so one fresh attempt is worth
+// making. The retry must pass the same check, so quality is unchanged. Input
+// blocks (PII, prompt attack) and relevance blocks are never retried.
+const MAX_REASON_ATTEMPTS = 2;
 
-  if (res.stopReason === 'guardrail_intervened') {
+function isRetryableGroundingBlock(block: GuardrailBlock): boolean {
+  return block.stage === 'output'
+    && block.policies.length > 0
+    && block.policies.every((p) => p === 'grounding:GROUNDING');
+}
+
+async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile, runId: string): Promise<ImpactHypothesis> {
+  let res = await bedrock.send(new ConverseCommand(buildReasonRequest(delta, rule, client)));
+
+  for (let attempt = 1; res.stopReason === 'guardrail_intervened'; attempt += 1) {
     const block = describeGuardrailBlock(res);
     log('error', 'guardrail-blocked', {
       runId,
@@ -370,11 +395,16 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
       rcicId: client.rcicId,
       clientId: client.clientId,
       ruleHash: delta.ruleHash,
+      attempt,
       stage: block.stage,
       policies: block.policies,
       guardedInputs: ['policy-change', 'rule-text', 'client-profile'],
     });
-    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+    if (attempt >= MAX_REASON_ATTEMPTS || !isRetryableGroundingBlock(block)) {
+      throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+    }
+    log('info', 'guardrail-retry', { runId, rcicId: client.rcicId, clientId: client.clientId, nextAttempt: attempt + 1 });
+    res = await bedrock.send(new ConverseCommand(buildReasonRequest(delta, rule, client)));
   }
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
