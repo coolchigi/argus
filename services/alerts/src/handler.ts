@@ -2,6 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import { randomUUID } from 'node:crypto';
+import { alertSeverity, sendsRealtime } from './decide';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const ses = new SESv2Client({});
@@ -11,7 +12,6 @@ const ALERTS_TABLE = requiredEnv('ALERTS_TABLE');
 const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const SES_FROM_EMAIL = requiredEnv('SES_FROM_EMAIL');
 const DEMO_RCIC_EMAIL = process.env.DEMO_RCIC_EMAIL ?? '';
-const HIGH_SEVERITY_CRS_THRESHOLD = 50;
 
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 
@@ -23,6 +23,9 @@ type BriefReadyDetail = {
   impactType: ImpactType;
   numericDelta: number | null;
   confidence: 'low' | 'medium' | 'high';
+  // Severity Sentinel stored on the PolicyRules row. Absent on events
+  // emitted before Composer started forwarding it.
+  ruleSeverity?: string | null;
   subject: string;
   createdAt: string;
 };
@@ -33,7 +36,7 @@ export const handler = async (event: EventBridgeInput | BriefReadyDetail): Promi
   const runId = randomUUID();
   const detail: BriefReadyDetail = 'detail' in event && event.detail ? event.detail : (event as BriefReadyDetail);
 
-  const severity = classify(detail);
+  const severity = alertSeverity(detail);
   log('info', 'alert-start', {
     runId,
     briefId: detail.briefId,
@@ -41,11 +44,12 @@ export const handler = async (event: EventBridgeInput | BriefReadyDetail): Promi
     clientId: detail.clientId,
     impactType: detail.impactType,
     numericDelta: detail.numericDelta,
+    ruleSeverity: detail.ruleSeverity ?? null,
     severity,
   });
 
-  if (severity !== 'high') {
-    log('info', 'alert-skipped-non-high', { runId, briefId: detail.briefId, severity });
+  if (!sendsRealtime(severity)) {
+    log('info', 'alert-skipped-below-threshold', { runId, briefId: detail.briefId, severity });
     return { dispatched: false, reason: 'severity-below-threshold' };
   }
 
@@ -80,15 +84,6 @@ export const handler = async (event: EventBridgeInput | BriefReadyDetail): Promi
   });
   return { dispatched: true };
 };
-
-function classify(detail: BriefReadyDetail): 'high' | 'medium' | 'low' {
-  if (detail.impactType === 'eligibility-flip') return 'high';
-  if (detail.impactType === 'crs-delta' && typeof detail.numericDelta === 'number' && Math.abs(detail.numericDelta) >= HIGH_SEVERITY_CRS_THRESHOLD) {
-    return 'high';
-  }
-  if (detail.impactType === 'none') return 'low';
-  return 'medium';
-}
 
 async function resolveRecipient(rcicId: string): Promise<string | null> {
   const res = await ddb.send(new GetCommand({ TableName: RCIC_USERS_TABLE, Key: { rcicId } }));
