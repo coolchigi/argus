@@ -104,14 +104,30 @@ export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promi
   const verdict = await audit(hyp, ruleContent, fewShots, runId);
   await emitVerdict(verdict);
 
+  // Every verdict, passed or rejected, logs why. A rejected verdict is
+  // dropped by Anchor, so this line is the only record of the reason. All
+  // fields are model text about the opaque clientId, and the guardrail's
+  // PII filters have already checked the model output.
   log('info', 'audit-complete', {
     runId,
     hypothesisId: hyp.hypothesisId,
+    rcicId: hyp.rcicId,
     clientId: hyp.clientId,
+    policyEventId: hyp.policyEventId,
+    ruleHash: hyp.ruleHash,
     passed: verdict.passed,
     issueCount: verdict.issues.length,
-    correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta,
+    issues: verdict.issues,
+    originalIsAffected: hyp.isAffected,
+    originalImpactType: hyp.impactType,
+    correctedImpactType: verdict.correctedImpactType,
     correctedNumericDelta: verdict.correctedNumericDelta,
+    correctedConfidence: verdict.correctedConfidence,
+    correctedNarrative: verdict.correctedNarrative,
+    correctedRecommendedAction: verdict.correctedRecommendedAction,
+    auditorReasoning: verdict.auditorReasoning,
+    correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta || verdict.correctedImpactType !== hyp.impactType,
+    groundingCheck: hyp.groundingCheck ?? null,
     fewShotCount: fewShots.length,
   });
 
