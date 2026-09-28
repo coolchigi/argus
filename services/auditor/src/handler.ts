@@ -73,6 +73,9 @@ type AuditVerdict = {
   ruleHash: string;
   passed: boolean;
   issues: AuditIssue[];
+  // The Auditor's final answer on isAffected. Anchor signs this value. The
+  // Analyst's answer stays on originalHypothesis.isAffected.
+  correctedIsAffected: boolean;
   correctedNumericDelta: number | null;
   correctedImpactType: ImpactType;
   correctedNarrative: string;
@@ -119,6 +122,8 @@ export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promi
     issueCount: verdict.issues.length,
     issues: verdict.issues,
     originalIsAffected: hyp.isAffected,
+    correctedIsAffected: verdict.correctedIsAffected,
+    isAffectedCorrected: verdict.correctedIsAffected !== hyp.isAffected,
     originalImpactType: hyp.impactType,
     correctedImpactType: verdict.correctedImpactType,
     correctedNumericDelta: verdict.correctedNumericDelta,
@@ -126,7 +131,10 @@ export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promi
     correctedNarrative: verdict.correctedNarrative,
     correctedRecommendedAction: verdict.correctedRecommendedAction,
     auditorReasoning: verdict.auditorReasoning,
-    correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta || verdict.correctedImpactType !== hyp.impactType,
+    correctionApplied:
+      verdict.correctedIsAffected !== hyp.isAffected ||
+      verdict.correctedNumericDelta !== hyp.numericDelta ||
+      verdict.correctedImpactType !== hyp.impactType,
     groundingCheck: hyp.groundingCheck ?? null,
     fewShotCount: fewShots.length,
   });
@@ -235,6 +243,7 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     'Audit the hypothesis. Return this exact JSON shape:',
     '{',
     '  "passed": boolean,',
+    '  "correctedIsAffected": boolean,',
     '  "issues": [{"type": "schema" | "citation" | "edge-case" | "magnitude-error" | "other", "detail": "..."}],',
     '  "correctedNumericDelta": number | null,',
     '  "correctedImpactType": "crs-delta" | "eligibility-flip" | "deadline-shift" | "lmia-implication" | "french-bonus" | "procedural" | "none",',
@@ -249,6 +258,8 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     '- passed=false is reserved for hypotheses that cannot be salvaged: wrong client universe (rule does not apply to this client at all), missing rule content, or fundamentally malformed input. When passed=false, Anchor drops the assessment entirely and no record is published.',
     '- If a past correction from this consultant contradicts the Analyst, override the Analyst using the correction pattern, set corrected* fields to the corrected values, and set passed=true so the corrected assessment is published.',
     '- If you correct any field, put the corrected value in the corresponding "corrected*" field. If no correction needed, echo the original value.',
+    '- correctedIsAffected is the final answer on whether this rule affects this client, and Anchor signs it. Decide it from the rule content and the client profile. When you disagree with the Analyst\'s isAffected, set your value and add an issue saying why.',
+    '- When correctedIsAffected is false, correctedImpactType is "none".',
     '- issues array is empty only when passed=true AND no corrections were needed.',
   ].join('\n');
 
@@ -337,6 +348,7 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     ruleHash: hyp.ruleHash,
     passed: parsed.passed ?? false,
     issues: (parsed.issues ?? []) as AuditIssue[],
+    correctedIsAffected: typeof parsed.correctedIsAffected === 'boolean' ? parsed.correctedIsAffected : hyp.isAffected,
     correctedNumericDelta: parsed.correctedNumericDelta ?? hyp.numericDelta,
     correctedImpactType: (parsed.correctedImpactType ?? hyp.impactType) as ImpactType,
     correctedNarrative: parsed.correctedNarrative ?? hyp.narrative,

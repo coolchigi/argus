@@ -23,6 +23,8 @@ type AuditVerdict = {
   ruleHash: string;
   passed: boolean;
   issues: Array<{ type: string; detail: string }>;
+  // Absent on verdicts emitted before the Auditor owned isAffected.
+  correctedIsAffected?: boolean;
   correctedNumericDelta: number | null;
   correctedImpactType: ImpactType;
   correctedNarrative: string;
@@ -62,6 +64,11 @@ export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{
     return { anchored: false };
   }
 
+  // The Auditor is the final gate on isAffected (ADR-0003). Its value is
+  // signed. The Analyst's answer stays on the verdict event and in the log.
+  const analystIsAffected = verdict.originalHypothesis.isAffected;
+  const isAffected = typeof verdict.correctedIsAffected === 'boolean' ? verdict.correctedIsAffected : analystIsAffected;
+
   const assessmentId = `${verdict.policyEventId}#${verdict.clientId}`;
   const payload = {
     assessmentId,
@@ -70,7 +77,7 @@ export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{
     policyEventId: verdict.policyEventId,
     ruleHash: verdict.ruleHash,
     topic: verdict.originalHypothesis.topic,
-    isAffected: verdict.originalHypothesis.isAffected,
+    isAffected,
     impactType: verdict.correctedImpactType,
     numericDelta: verdict.correctedNumericDelta,
     narrative: verdict.correctedNarrative,
@@ -113,6 +120,10 @@ export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{
     assessmentId,
     canonicalHash,
     signatureLength: signature.length,
+    analystIsAffected,
+    auditorIsAffected: verdict.correctedIsAffected ?? null,
+    signedIsAffected: isAffected,
+    isAffectedCorrected: isAffected !== analystIsAffected,
   });
 
   return { anchored: true };
