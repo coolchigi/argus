@@ -43,7 +43,7 @@ export function AgentLineage() {
           </span>
         ))}
         {crossFamily && (
-          <span className="ml-3 inline-flex items-center gap-1 rounded-sm bg-seal-subtle px-1.5 py-0.5 text-[10px] uppercase tracking-wider text-seal">
+          <span className="ml-3 inline-flex items-center gap-1 rounded-sm bg-sunk px-1.5 py-0.5 font-mono text-[11px] uppercase tracking-wider text-ink-2">
             Cross-family
           </span>
         )}
