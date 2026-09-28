@@ -1,10 +1,12 @@
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, ConverseCommand, type ConverseCommandInput } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { unmarshall } from '@aws-sdk/util-dynamodb';
 import type { DynamoDBStreamEvent, DynamoDBRecord } from 'aws-lambda';
 import { randomUUID } from 'node:crypto';
+import { describeGuardrailBlock, guarded } from './guardrail';
+import { ruleWindow } from './rule-window';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -15,7 +17,6 @@ const BRIEFS_TABLE = requiredEnv('BRIEFS_TABLE');
 const COMPOSER_MODEL = requiredEnv('BEDROCK_COMPOSER_MODEL');
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
-const RULE_CONTENT_MAX_CHARS = 3000;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -152,8 +153,8 @@ async function loadRuleContent(ruleHash: string): Promise<string> {
   return typeof content === 'string' ? content : '';
 }
 
-async function compose(assessment: Assessment, ruleContent: string, runId: string): Promise<BriefDraft> {
-  const snippet = ruleContent.slice(0, RULE_CONTENT_MAX_CHARS);
+export function buildComposeRequest(assessment: Assessment, ruleContent: string): ConverseCommandInput {
+  const snippet = ruleWindow(ruleContent);
 
   const system = [
     'You are the Composer agent in Argus, an IRCC policy-impact platform for Regulated Canadian Immigration Consultants (RCICs).',
@@ -164,26 +165,22 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
     'Return valid JSON only. No preamble.',
   ].join('\n');
 
-  const user = [
-    'ASSESSMENT (signed and audit-verified):',
-    JSON.stringify(
-      {
-        clientId: assessment.clientId,
-        topic: assessment.topic,
-        impactType: assessment.impactType,
-        numericDelta: assessment.numericDelta,
-        narrative: assessment.narrative,
-        recommendedAction: assessment.recommendedAction,
-        confidence: assessment.confidence,
-        citation: assessment.citationSourceUrl,
-      },
-      null,
-      2,
-    ),
-    '',
-    'RULE CONTENT (source of truth, may be truncated):',
-    snippet,
-    '',
+  const assessmentJson = JSON.stringify(
+    {
+      clientId: assessment.clientId,
+      topic: assessment.topic,
+      impactType: assessment.impactType,
+      numericDelta: assessment.numericDelta,
+      narrative: assessment.narrative,
+      recommendedAction: assessment.recommendedAction,
+      confidence: assessment.confidence,
+      citation: assessment.citationSourceUrl,
+    },
+    null,
+    2,
+  );
+
+  const instructions = [
     'Return this exact JSON shape:',
     '{',
     '  "subject": "one line, under 80 chars, no exclamation marks",',
@@ -199,15 +196,43 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
     '- No em dashes. No exclamation marks. Use digits for numbers.',
   ].join('\n');
 
-  const res = await bedrock.send(
-    new ConverseCommand({
-      modelId: COMPOSER_MODEL,
-      system: [{ text: system }],
-      messages: [{ role: 'user', content: [{ text: user }] }],
-      inferenceConfig: { maxTokens: 900, temperature: 0.2 },
-      guardrailConfig: guardrailConfig(),
-    }),
-  );
+  // The assessment text and the rule text are outside content. See
+  // guardrail.ts for the tagging rule.
+  return {
+    modelId: COMPOSER_MODEL,
+    system: [{ text: system }],
+    messages: [{
+      role: 'user',
+      content: [
+        { text: 'ASSESSMENT (signed and audit-verified):\n' },
+        guarded(assessmentJson + '\n\n'),
+        { text: 'RULE CONTENT (source of truth, a long rule is shown as an excerpt, marked in brackets):\n' },
+        guarded(snippet + '\n\n'),
+        { text: instructions },
+      ],
+    }],
+    inferenceConfig: { maxTokens: 900, temperature: 0.2 },
+    guardrailConfig: guardrailConfig(),
+  };
+}
+
+async function compose(assessment: Assessment, ruleContent: string, runId: string): Promise<BriefDraft> {
+  const res = await bedrock.send(new ConverseCommand(buildComposeRequest(assessment, ruleContent)));
+
+  if (res.stopReason === 'guardrail_intervened') {
+    const block = describeGuardrailBlock(res);
+    log('error', 'guardrail-blocked', {
+      runId,
+      agent: 'composer',
+      assessmentKey: assessment.assessmentKey,
+      clientId: assessment.clientId,
+      ruleHash: assessment.ruleHash,
+      stage: block.stage,
+      policies: block.policies,
+      guardedInputs: ['assessment', 'rule-text'],
+    });
+    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+  }
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);

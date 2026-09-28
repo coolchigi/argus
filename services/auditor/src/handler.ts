@@ -1,8 +1,15 @@
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import {
+  BedrockRuntimeClient,
+  ConverseCommand,
+  type ConverseCommandInput,
+  type SystemContentBlock,
+} from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
+import { describeGuardrailBlock, guarded, type GroundingCheck } from './guardrail';
+import { ruleWindow } from './rule-window';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -13,7 +20,6 @@ const TRAINING_CORRECTIONS_TABLE = requiredEnv('TRAINING_CORRECTIONS_TABLE');
 const AUDITOR_MODEL = requiredEnv('BEDROCK_AUDITOR_MODEL');
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
-const RULE_CONTENT_MAX_CHARS = 4000;
 const FEW_SHOT_MAX = Number(process.env.FEW_SHOT_MAX ?? '5');
 const FEW_SHOT_MAX_AGE_DAYS = Number(process.env.FEW_SHOT_MAX_AGE_DAYS ?? '90');
 
@@ -46,6 +52,8 @@ type ImpactHypothesis = {
   confidence: Confidence;
   reasoning: string;
   clientProfile: Record<string, unknown>;
+  // Absent on hypotheses emitted before grounding moved to detect mode.
+  groundingCheck?: GroundingCheck;
 };
 
 type EventBridgeInput = { source?: string; 'detail-type'?: string; detail?: ImpactHypothesis };
@@ -96,14 +104,30 @@ export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promi
   const verdict = await audit(hyp, ruleContent, fewShots, runId);
   await emitVerdict(verdict);
 
+  // Every verdict, passed or rejected, logs why. A rejected verdict is
+  // dropped by Anchor, so this line is the only record of the reason. All
+  // fields are model text about the opaque clientId, and the guardrail's
+  // PII filters have already checked the model output.
   log('info', 'audit-complete', {
     runId,
     hypothesisId: hyp.hypothesisId,
+    rcicId: hyp.rcicId,
     clientId: hyp.clientId,
+    policyEventId: hyp.policyEventId,
+    ruleHash: hyp.ruleHash,
     passed: verdict.passed,
     issueCount: verdict.issues.length,
-    correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta,
+    issues: verdict.issues,
+    originalIsAffected: hyp.isAffected,
+    originalImpactType: hyp.impactType,
+    correctedImpactType: verdict.correctedImpactType,
     correctedNumericDelta: verdict.correctedNumericDelta,
+    correctedConfidence: verdict.correctedConfidence,
+    correctedNarrative: verdict.correctedNarrative,
+    correctedRecommendedAction: verdict.correctedRecommendedAction,
+    auditorReasoning: verdict.auditorReasoning,
+    correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta || verdict.correctedImpactType !== hyp.impactType,
+    groundingCheck: hyp.groundingCheck ?? null,
     fewShotCount: fewShots.length,
   });
 
@@ -150,8 +174,9 @@ async function loadRecentCorrections(rcicId: string, policyDomain: string, topic
   return scored;
 }
 
-async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[], runId: string): Promise<AuditVerdict> {
-  const snippet = ruleContent.slice(0, RULE_CONTENT_MAX_CHARS);
+export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[]): ConverseCommandInput {
+  // Same window as the Analyst saw, so both agents judge the same text.
+  const snippet = ruleWindow(ruleContent, hyp.clientProfile);
   const hypothesisJson = JSON.stringify(
     {
       isAffected: hyp.isAffected,
@@ -173,8 +198,11 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     'You come from a different model family than the Analyst on purpose. You are skeptical.',
     'You look for: schema issues, missing citations, magnitude errors, edge-case failures.',
     'When you catch an error, provide the CORRECTED values, not just a rejection.',
-    'You know Canadian IRCC edge cases: TEER 0 jobs (Senior Management NOC 00) award 200 CRS points, all other job offers award 50 CRS points; the March 25 2025 change zeroed both.',
-    'You know: LMIA-exempt vs LMIA-supported distinctions, French bonus stacks with English CLB 7 gate, PGWP field-of-study rules apply to non-degree only, PNP intent-to-reside is now a provincial call not federal.',
+    'You judge only against the RULE CONTENT and CLIENT PROFILE in this request. They are your only source of IRCC facts. Do not bring in point values, dates, thresholds or program rules from memory.',
+    'Check every claim in the hypothesis (numbers, dates, codes, conditions, program names) against the rule content. A fact the rule content does not contain is a citation issue: flag it and leave it out of your corrected values.',
+    'Check the client universe: does the rule cover this client\'s program and situation as the profile describes it?',
+    'Check isAffected: for each condition the rule sets, does the profile show the client meets it or fails it? Where the profile is missing a field the rule depends on, say so and lower the confidence.',
+    'Check magnitude: a numericDelta must follow from numbers stated in the rule content and values in the profile.',
     'Return valid JSON only. No preamble.',
   ];
 
@@ -183,30 +211,27 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
       '',
       `PAST CORRECTIONS FROM THIS CONSULTANT (${fewShots.length} example${fewShots.length === 1 ? '' : 's'}). Treat them as ground-truth signal about what THIS consultant flagged as wrong. Match the pattern of correction, do not just quote the numbers.`,
     );
-    for (let i = 0; i < fewShots.length; i += 1) {
-      const c = fewShots[i];
-      systemLines.push(
-        '',
-        `CORRECTION ${i + 1} (topic=${c.topic}, domain=${c.policyDomain}, at=${c.correctedAt}):`,
-        `- Original: impactType=${c.originalImpactType}, numericDelta=${c.originalNumericDelta ?? 'null'}, narrative="${c.originalNarrative}"`,
-        `- Corrected: impactType=${c.correctedImpactType}, numericDelta=${c.correctedNumericDelta ?? 'null'}, narrative="${c.correctedNarrative ?? '(none)'}"`,
-        `- Consultant reasoning: ${c.correctorReasoning}`,
-      );
-    }
   }
 
-  const system = systemLines.join('\n');
+  // The consultant's narratives and reasoning are outside content, so each
+  // correction body is a guarded block inside the system prompt. The fixed
+  // instructions and correction headers stay plain text.
+  const system: SystemContentBlock[] = [{ text: systemLines.join('\n') }];
+  for (let i = 0; i < fewShots.length; i += 1) {
+    const c = fewShots[i];
+    system.push(
+      { text: `\n\nCORRECTION ${i + 1} (topic=${c.topic}, domain=${c.policyDomain}, at=${c.correctedAt}):\n` },
+      guarded(
+        [
+          `- Original: impactType=${c.originalImpactType}, numericDelta=${c.originalNumericDelta ?? 'null'}, narrative="${c.originalNarrative}"`,
+          `- Corrected: impactType=${c.correctedImpactType}, numericDelta=${c.correctedNumericDelta ?? 'null'}, narrative="${c.correctedNarrative ?? '(none)'}"`,
+          `- Consultant reasoning: ${c.correctorReasoning}`,
+        ].join('\n'),
+      ),
+    );
+  }
 
-  const user = [
-    'RULE CONTENT (source of truth, may be truncated):',
-    snippet,
-    '',
-    'CLIENT PROFILE (opaque client_id only):',
-    clientJson,
-    '',
-    'ANALYST HYPOTHESIS (under review):',
-    hypothesisJson,
-    '',
+  const instructions = [
     'Audit the hypothesis. Return this exact JSON shape:',
     '{',
     '  "passed": boolean,',
@@ -227,15 +252,72 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     '- issues array is empty only when passed=true AND no corrections were needed.',
   ].join('\n');
 
-  const res = await bedrock.send(
-    new ConverseCommand({
-      modelId: AUDITOR_MODEL,
-      system: [{ text: system }],
-      messages: [{ role: 'user', content: [{ text: user }] }],
-      inferenceConfig: { maxTokens: 800, temperature: 0.1 },
-      guardrailConfig: guardrailConfig(),
-    }),
+  // Rule text, client profile and the Analyst's hypothesis are all outside
+  // content. See guardrail.ts for the tagging rule.
+  return {
+    modelId: AUDITOR_MODEL,
+    system,
+    messages: [{
+      role: 'user',
+      content: [
+        { text: 'RULE CONTENT (source of truth, a long rule is shown as an excerpt, marked in brackets):\n' },
+        guarded(snippet + '\n\n'),
+        { text: 'CLIENT PROFILE (opaque client_id only):\n' },
+        guarded(clientJson + '\n\n'),
+        { text: 'ANALYST HYPOTHESIS (under review):\n' },
+        guarded(hypothesisJson + '\n\n'),
+        { text: groundingEvidence(hyp.groundingCheck) + '\n\n' },
+        { text: instructions },
+      ],
+    }],
+    inferenceConfig: { maxTokens: 1200, temperature: 0.1 },
+    guardrailConfig: guardrailConfig(),
+  };
+}
+
+// The guardrail's contextual grounding check scored the Analyst's answer
+// against the rule text and client profile. It runs in detect mode, so the
+// score is evidence for the Auditor to weigh, never a verdict. Numbers only,
+// written by our code, so this block stays unguarded.
+export function groundingEvidence(check: GroundingCheck | undefined): string {
+  const lines = ['AUTOMATED GROUNDING CHECK (evidence to weigh, not a verdict):'];
+  if (!check || (check.grounding === null && check.relevance === null)) {
+    lines.push('- Not available for this hypothesis.');
+    return lines.join('\n');
+  }
+  const fmt = (n: number | null) => (n === null ? 'n/a' : n.toFixed(2));
+  const below = (score: number | null, threshold: number | null) =>
+    score !== null && threshold !== null && score < threshold ? ', BELOW threshold' : '';
+  lines.push(
+    `- Grounding score ${fmt(check.grounding)} (threshold ${fmt(check.groundingThreshold)}${below(check.grounding, check.groundingThreshold)}). Measures how well the hypothesis statements are supported by the rule content and client profile. Lower means some statements may not be supported: check each one against the rule content.`,
+    `- Relevance score ${fmt(check.relevance)} (threshold ${fmt(check.relevanceThreshold)}${below(check.relevance, check.relevanceThreshold)}). Measures whether the hypothesis addresses this client and this policy change. Lower means it may be off topic.`,
+    '- A low score alone is not a reason to reject. Decide from the rule content and the client profile.',
   );
+  return lines.join('\n');
+}
+
+async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[], runId: string): Promise<AuditVerdict> {
+  const res = await bedrock.send(new ConverseCommand(buildAuditRequest(hyp, ruleContent, fewShots)));
+
+  if (res.stopReason === 'guardrail_intervened') {
+    const block = describeGuardrailBlock(res);
+    log('error', 'guardrail-blocked', {
+      runId,
+      agent: 'auditor',
+      hypothesisId: hyp.hypothesisId,
+      clientId: hyp.clientId,
+      ruleHash: hyp.ruleHash,
+      stage: block.stage,
+      policies: block.policies,
+      guardedInputs: [
+        'rule-text',
+        'client-profile',
+        'analyst-hypothesis',
+        ...(fewShots.length > 0 ? ['consultant-corrections'] : []),
+      ],
+    });
+    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+  }
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);

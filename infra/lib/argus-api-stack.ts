@@ -86,9 +86,91 @@ export class ArgusApiStack extends cdk.Stack {
 
     // API handlers (one per bounded context).
     const meHandler = placeholder('MeHandler', 'me');
-    const profilesHandler = placeholder('ProfilesHandler', 'profiles');
-    const policyEventsHandler = placeholder('PolicyEventsHandler', 'policy-events');
     const demoHandler = placeholder('DemoHandler', 'demo');
+
+    // Profiles service (Phase F). The consultant's caseload: list with derived
+    // counts, detail, single create, CSV bulk import and PATCH. DELETE is a
+    // soft close (status closed), never a hard delete (ADR-0002).
+    //
+    // Reuses the ProfilesHandler and ProfilesHandlerLogs construct ids and the
+    // physical names of the earlier placeholder so CloudFormation updates both
+    // in place, same as PolicyEventsHandler below.
+    const profilesLogGroup = new logs.LogGroup(this, 'ProfilesHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-profiles',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const profilesHandler = new nodejs.NodejsFunction(this, 'ProfilesHandler', {
+      functionName: 'argus-profiles',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/profiles/package-lock.json'),
+      entry: path.join(__dirname, '../../services/profiles/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
+        IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        BRIEFS_TABLE: props.briefsTable.tableName,
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: profilesLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.impactAssessmentsTable.grantReadData(profilesHandler);
+    props.briefsTable.grantReadData(profilesHandler);
+
+    // Policy events service (Phase C1). Derives events at read time from
+    // ImpactAssessments grouped by policyEventId, joined to PolicyRules,
+    // Briefs, TrainingCorrections and Alerts, because nothing writes the
+    // PolicyEvents table yet. Also serves the /activity feed.
+    //
+    // Reuses the PolicyEventsHandler and PolicyEventsHandlerLogs construct
+    // ids and the physical names of the earlier placeholder so
+    // CloudFormation updates both in place, same as ImpactsHandler below.
+    const policyEventsLogGroup = new logs.LogGroup(this, 'PolicyEventsHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-policy-events',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const policyEventsHandler = new nodejs.NodejsFunction(this, 'PolicyEventsHandler', {
+      functionName: 'argus-policy-events',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/policy-events/package-lock.json'),
+      entry: path.join(__dirname, '../../services/policy-events/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        BRIEFS_TABLE: props.briefsTable.tableName,
+        TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
+        CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
+        ALERTS_TABLE: props.alertsTable.tableName,
+        POLICY_CORPUS_BUCKET: props.policyCorpusBucket.bucketName,
+        ARCHIVE_LINK_TTL_SECONDS: String(7 * 24 * 60 * 60),
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: policyEventsLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    props.policyRulesTable.grantReadData(policyEventsHandler);
+    props.briefsTable.grantReadData(policyEventsHandler);
+    props.trainingCorrectionTable.grantReadData(policyEventsHandler);
+    props.clientProfilesTable.grantReadData(policyEventsHandler);
+    props.alertsTable.grantReadData(policyEventsHandler);
+    props.policyCorpusBucket.grantRead(policyEventsHandler);
 
 
     // Impacts service. Lists assessments, returns a single one, exports the
@@ -121,7 +203,6 @@ export class ArgusApiStack extends cdk.Stack {
         IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
         TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
         SIGNING_KEY_ID: props.signingKey.keyId,
-        DEFAULT_RCIC_ID: 'demo-rcic-001',
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: impactsServiceLogGroup,
@@ -521,7 +602,6 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_CORPUS_BUCKET: props.policyCorpusBucket.bucketName,
         SIGNING_KEY_ID: props.signingKey.keyId,
         DEFAULT_FROM_EMAIL: alertsFromEmail,
-        DEFAULT_RCIC_ID: 'demo-rcic-001',
         BATCH_SEND_MAX: '25',
         ARCHIVE_LINK_TTL_SECONDS: String(7 * 24 * 60 * 60),
         NODE_OPTIONS: '--enable-source-maps',
@@ -618,7 +698,15 @@ export class ArgusApiStack extends cdk.Stack {
 
     // Read-only surfaces for query endpoints.
     props.clientProfilesTable.grantReadData(meHandler);
-    props.clientProfilesTable.grantReadWriteData(profilesHandler);
+    // Read plus conditional put and update. No DeleteItem or BatchWriteItem:
+    // closing a client is an update, and nothing in the service removes a row.
+    props.clientProfilesTable.grantReadData(profilesHandler);
+    profilesHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:PutItem', 'dynamodb:UpdateItem'],
+        resources: [props.clientProfilesTable.tableArn],
+      }),
+    );
     props.policyEventsTable.grantReadData(policyEventsHandler);
     props.impactAssessmentsTable.grantReadData(policyEventsHandler);
 
@@ -678,6 +766,8 @@ export class ArgusApiStack extends cdk.Stack {
           'https://tryargus.ca',
           'https://main.d270cjhakw6y7j.amplifyapp.com',
           'http://localhost:3000',
+          'https://phase-8-frontend.d270cjhakw6y7j.amplifyapp.com',
+          'http://localhost:3001',
         ],
       },
     });
@@ -690,6 +780,7 @@ export class ArgusApiStack extends cdk.Stack {
       { path: '/policy-events', methods: [apigwv2.HttpMethod.GET], handler: policyEventsHandler },
       { path: '/policy-events/{id}', methods: [apigwv2.HttpMethod.GET], handler: policyEventsHandler },
       { path: '/policy-events/{id}/impacts', methods: [apigwv2.HttpMethod.GET], handler: policyEventsHandler },
+      { path: '/activity', methods: [apigwv2.HttpMethod.GET], handler: policyEventsHandler },
       { path: '/impacts', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}/audit-signature', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },

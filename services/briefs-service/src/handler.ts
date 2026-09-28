@@ -19,7 +19,6 @@ const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const POLICY_CORPUS_BUCKET = requiredEnv('POLICY_CORPUS_BUCKET');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
 const DEFAULT_FROM_EMAIL = requiredEnv('DEFAULT_FROM_EMAIL');
-const DEFAULT_RCIC_ID = process.env.DEFAULT_RCIC_ID ?? 'demo-rcic-001';
 const BATCH_SEND_MAX = Number(process.env.BATCH_SEND_MAX ?? '25');
 const ARCHIVE_LINK_TTL_SECONDS = Number(process.env.ARCHIVE_LINK_TTL_SECONDS ?? String(7 * 24 * 60 * 60));
 const HEAD_CHECK_TIMEOUT_MS = 3_000;
@@ -46,6 +45,7 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
   log('info', 'briefs-request', { routeKey, rcicId, path: event.rawPath });
 
   try {
+    if (!rcicId) throw httpError(403, 'missing-tenant-claim');
     if (routeKey === 'GET /briefs') return json(200, await listBriefs(rcicId));
     if (routeKey === 'GET /briefs/{id}') return json(200, await getBrief(rcicId, requireParam(event, 'id')));
     if (routeKey === 'GET /briefs/{id}/archive-link') return json(200, await getArchiveLink(rcicId, requireParam(event, 'id')));
@@ -370,13 +370,14 @@ function renderEmailText(body: string, actions: string[], citation: CitationForE
   return parts.join('\n');
 }
 
-function resolveRcicId(event: APIGatewayProxyEventV2): string {
+// No fallback tenant: a token without an rcic claim must never read another tenant's data.
+function resolveRcicId(event: APIGatewayProxyEventV2): string | null {
   const claims = (event.requestContext as { authorizer?: { jwt?: { claims?: Record<string, string> } } }).authorizer?.jwt?.claims;
   const idClaim = claims?.['custom:rcic_id'];
   if (typeof idClaim === 'string' && idClaim.length > 0) return idClaim;
   const licenseClaim = claims?.['custom:rcic_license'];
   if (typeof licenseClaim === 'string' && licenseClaim.length > 0) return licenseClaim;
-  return DEFAULT_RCIC_ID;
+  return null;
 }
 
 function requireParam(event: APIGatewayProxyEventV2, name: string): string {
