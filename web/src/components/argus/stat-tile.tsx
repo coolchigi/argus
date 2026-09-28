@@ -20,7 +20,7 @@ const ACCENT: Record<Accent, string> = {
   danger: "border-t-danger",
 };
 
-/** Dashboard stat. Mono label, DM Serif 30px numeral, optional sub line. */
+/** Dashboard stat. Mono label, Plex Serif 30px numeral, optional sub line. */
 export function StatTile({ label, value, sub, accent = "none", href, className }: Props) {
   const body = (
     <>

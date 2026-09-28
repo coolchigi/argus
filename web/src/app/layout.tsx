@@ -1,29 +1,30 @@
 import type { Metadata } from "next";
-import { Inter, DM_Serif_Display, JetBrains_Mono } from "next/font/google";
+import { IBM_Plex_Sans, IBM_Plex_Serif, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { QueryProvider } from "@/components/query-provider";
 import { AuthProvider } from "@/components/auth-context";
 import { ThemeProvider, themeInitScript } from "@/components/theme-provider";
 
-const inter = Inter({
-  variable: "--font-inter",
-  subsets: ["latin"],
+// One superfamily for UI, display and IDs. latin-ext covers French accents.
+const plexSans = IBM_Plex_Sans({
+  variable: "--font-plex-sans",
+  subsets: ["latin", "latin-ext"],
   display: "swap",
-  axes: ["opsz"],
+  weight: ["400", "500", "600"],
 });
 
-// Display roles only, 20px floor. The family ships a single 400 weight.
-const dmSerif = DM_Serif_Display({
-  variable: "--font-dm-serif",
-  subsets: ["latin"],
+// Display roles only, 20px floor.
+const plexSerif = IBM_Plex_Serif({
+  variable: "--font-plex-serif",
+  subsets: ["latin", "latin-ext"],
   display: "swap",
-  weight: "400",
+  weight: ["400", "500"],
 });
 
-const jetbrains = JetBrains_Mono({
-  variable: "--font-jetbrains",
-  subsets: ["latin"],
+const plexMono = IBM_Plex_Mono({
+  variable: "--font-plex-mono",
+  subsets: ["latin", "latin-ext"],
   display: "swap",
   weight: ["400", "500"],
 });
@@ -37,7 +38,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html
       lang="en"
-      className={`${inter.variable} ${dmSerif.variable} ${jetbrains.variable} h-full`}
+      className={`${plexSans.variable} ${plexSerif.variable} ${plexMono.variable} h-full`}
       suppressHydrationWarning
     >
       <head>

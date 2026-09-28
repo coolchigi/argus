@@ -13,7 +13,7 @@ type Props = {
   className?: string;
 };
 
-/** Page title block: optional trail, DM Serif 24px title, a meta line, and right-aligned actions. */
+/** Page title block: optional trail, Plex Serif 24px title, a meta line, and right-aligned actions. */
 export function PageHeader({ title, crumbs, meta, actions, className }: Props) {
   return (
     <header className={cn("flex flex-wrap items-end justify-between gap-4", className)}>

@@ -8,7 +8,7 @@ type Props = {
 };
 
 /**
- * Plain empty state. Static mark, DM Serif headline, one line of body.
+ * Plain empty state. Static mark, Plex Serif headline, one line of body.
  * The hexagon stays reserved for signatures, so it isn't used here.
  */
 export function EmptyState({ headline, body, action }: Props) {
