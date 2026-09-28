@@ -45,7 +45,10 @@ function deriveStatus(i: Impact, sentKeys: ReadonlySet<string>, correctedKeys: R
 function combineCorrections(results: Array<UseQueryResult<PolicyEventImpactsResponse>>) {
   const keys: string[] = [];
   for (const q of results) {
-    for (const c of q.data?.clients ?? []) if (c.correctionsFiled > 0) keys.push(c.assessmentKey);
+    for (const c of q.data?.clients ?? []) {
+      if (c.correctionsFiled > 0) keys.push(c.assessmentKey);
+      for (const p of c.priorAssessments) if (p.correctionsFiled > 0) keys.push(p.assessmentKey);
+    }
   }
   return { pending: results.some((q) => q.isPending), keys: keys.sort().join("\n") };
 }
@@ -108,8 +111,9 @@ export default function ImpactsPage() {
   const all = useMemo(() => impacts.data?.impacts ?? [], [impacts.data]);
 
   // Corrections aren't on the assessment row. The per-event endpoint joins them,
-  // and the event screen reads the same cache.
-  const eventIds = useMemo(() => Array.from(new Set(all.map((i) => i.policyEventId))), [all]);
+  // and the event screen reads the same cache. Events are keyed by rule, and
+  // each response covers every run of that rule through priorAssessments.
+  const eventIds = useMemo(() => Array.from(new Set(all.map((i) => i.ruleHash || i.policyEventId))), [all]);
   const corrections = useQueries({
     queries: eventIds.map((id) => ({
       queryKey: queryKeys.policyEventImpacts(id),

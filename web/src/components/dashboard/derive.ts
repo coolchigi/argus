@@ -62,7 +62,7 @@ export function bannerImpactSentence(e: PolicyEvent): string {
     return `${clients} and ${e.briefsUnsent} ${plural(e.briefsUnsent, "brief hasn't", "briefs haven't")} gone out yet.`;
   }
   // No unsent brief rows. Count the affected clients still without a sent brief.
-  const waiting = Math.max(affected - e.briefsSent, 0);
+  const waiting = e.awaitingBrief;
   if (waiting === 0) return `${clients}.`;
   if (waiting === affected) return `${clients} and still ${plural(affected, "needs", "need")} a brief.`;
   return `${clients} and ${waiting} still ${plural(waiting, "needs", "need")} a brief.`;
