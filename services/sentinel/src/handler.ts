@@ -4,6 +4,7 @@ import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createHash, randomUUID } from 'node:crypto';
+import { extractMainText } from './extract';
 
 const s3 = new S3Client({});
 const eb = new EventBridgeClient({});
@@ -57,6 +58,7 @@ type PolicyDelta = {
   newHash: string;
   s3Key: string;
   contentLengthDelta: number;
+  targetRcicIds?: string[];
 };
 
 type ScanResult =
@@ -64,11 +66,22 @@ type ScanResult =
   | { url: string; changed: true; delta: PolicyDelta }
   | { url: string; error: string };
 
-export const handler = async (): Promise<{ scanned: number; changed: number; errored: number }> => {
-  const runId = randomUUID();
-  log('info', 'scan-start', { runId, urlCount: SEED_URLS.length });
+// Manual invocations may pass `{ urls?, targetRcicIds? }`. The hourly
+// EventBridge schedule sends a Scheduled Event with neither, so it scans
+// IRCC_SEED_URLS.
+type ScanRequest = { urls: string[]; targetRcicIds?: string[]; mode: 'seed' | 'requested' };
 
-  const results = await Promise.all(SEED_URLS.map((url) => scanOne(url, runId)));
+export const handler = async (event?: unknown): Promise<{ scanned: number; changed: number; errored: number }> => {
+  const runId = randomUUID();
+  const request = parseRequest(event);
+  log('info', 'scan-start', {
+    runId,
+    mode: request.mode,
+    urlCount: request.urls.length,
+    targetRcicCount: request.targetRcicIds?.length ?? null,
+  });
+
+  const results = await Promise.all(request.urls.map((url) => scanOne(url, runId, request.targetRcicIds)));
   const changed = results.filter((r): r is Extract<ScanResult, { changed: true }> => 'changed' in r && r.changed === true).length;
   const errored = results.filter((r): r is Extract<ScanResult, { error: string }> => 'error' in r).length;
 
@@ -76,26 +89,70 @@ export const handler = async (): Promise<{ scanned: number; changed: number; err
   return { scanned: results.length, changed, errored };
 };
 
-async function scanOne(url: string, runId: string): Promise<ScanResult> {
+function parseRequest(event: unknown): ScanRequest {
+  const payload = (typeof event === 'object' && event !== null ? event : {}) as Record<string, unknown>;
+
+  let targetRcicIds: string[] | undefined;
+  if (payload.targetRcicIds !== undefined) {
+    if (!Array.isArray(payload.targetRcicIds) || !payload.targetRcicIds.every((id) => typeof id === 'string' && id.length > 0)) {
+      throw new Error('targetRcicIds must be an array of non-empty strings');
+    }
+    targetRcicIds = payload.targetRcicIds as string[];
+  }
+
+  if (payload.urls === undefined) {
+    return { urls: SEED_URLS, targetRcicIds, mode: 'seed' };
+  }
+  if (!Array.isArray(payload.urls) || payload.urls.length === 0) {
+    throw new Error('urls must be a non-empty array of https://www.canada.ca/ URLs');
+  }
+  const rejected = payload.urls.filter((u) => !isCanadaCaUrl(u));
+  if (rejected.length > 0) {
+    throw new Error(`urls must be https://www.canada.ca/ URLs, rejected: ${JSON.stringify(rejected)}`);
+  }
+  return { urls: [...new Set(payload.urls as string[])], targetRcicIds, mode: 'requested' };
+}
+
+function isCanadaCaUrl(u: unknown): boolean {
+  if (typeof u !== 'string') return false;
+  try {
+    const parsed = new URL(u);
+    return parsed.protocol === 'https:' && parsed.hostname === 'www.canada.ca' && parsed.port === '' && parsed.username === '' && parsed.password === '';
+  } catch {
+    return false;
+  }
+}
+
+async function scanOne(url: string, runId: string, targetRcicIds?: string[]): Promise<ScanResult> {
   try {
     const html = await fetchWithTimeout(url);
-    const normalized = normalize(html);
-    const newHash = sha256(normalized);
+    // Change detection, the rule hash and rule_content all use the extracted
+    // main text. The previous snapshot in S3 is raw HTML, so we run the same
+    // extractor over it to compare like with like.
+    const text = extractMainText(html);
+    if (text.length === 0) {
+      throw new Error('extracted main text is empty');
+    }
+    const newHash = sha256(text);
     const s3Key = keyForUrl(url);
     const previous = await readLatest(s3Key);
-    const previousHash = previous ? sha256(normalize(previous)) : null;
+    const previousText = previous === null ? null : extractMainText(previous);
+    const previousHash = previousText === null ? null : sha256(previousText);
 
     if (previousHash === newHash) {
       log('debug', 'unchanged', { runId, url, hash: newHash });
       return { url, changed: false, hash: newHash };
     }
 
-    const versionId = await writeSnapshot(s3Key, html);
-
-    const classification = await classifyWithBedrock(url, normalized, runId);
+    const classification = await classifyWithBedrock(url, text, runId);
     const ruleHash = newHash;
 
-    await writePolicyRule(ruleHash, classification, url, s3Key, versionId, normalized);
+    // Snapshot only after classification succeeds. If Bedrock fails or the
+    // guardrail blocks, S3 still holds the old snapshot and the next run
+    // sees the change again.
+    const versionId = await writeSnapshot(s3Key, html);
+
+    await writePolicyRule(ruleHash, classification, url, s3Key, versionId, text);
     await writeRuleIndex(classification.topic, ruleHash);
 
     const delta: PolicyDelta = {
@@ -112,7 +169,8 @@ async function scanOne(url: string, runId: string): Promise<ScanResult> {
       previousHash,
       newHash,
       s3Key,
-      contentLengthDelta: html.length - (previous?.length ?? 0),
+      contentLengthDelta: text.length - (previousText?.length ?? 0),
+      ...(targetRcicIds ? { targetRcicIds } : {}),
     };
     await emitDelta(delta);
 
@@ -128,6 +186,7 @@ async function scanOne(url: string, runId: string): Promise<ScanResult> {
       previousHash,
       newHash,
       contentLengthDelta: delta.contentLengthDelta,
+      targetRcicCount: targetRcicIds?.length ?? null,
     });
     return { url, changed: true, delta };
   } catch (err) {
@@ -154,8 +213,8 @@ async function fetchWithTimeout(url: string): Promise<string> {
   }
 }
 
-async function classifyWithBedrock(url: string, normalizedHtml: string, runId: string): Promise<Classification> {
-  const snippet = normalizedHtml.slice(0, CLASSIFIER_MAX_INPUT_CHARS);
+async function classifyWithBedrock(url: string, pageText: string, runId: string): Promise<Classification> {
+  const snippet = pageText.slice(0, CLASSIFIER_MAX_INPUT_CHARS);
   const userText = [
     'Classify this IRCC page change. Return valid JSON only, no prose.',
     '',
@@ -193,6 +252,9 @@ async function classifyWithBedrock(url: string, normalizedHtml: string, runId: s
     }),
   );
 
+  if (res.stopReason === 'guardrail_intervened') {
+    throw new Error('classifier blocked by guardrail');
+  }
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);
   if (!match) {
@@ -261,16 +323,6 @@ async function writeRuleIndex(topic: string, ruleHash: string): Promise<void> {
 
 function sha256(s: string): string {
   return createHash('sha256').update(s).digest('hex');
-}
-
-function normalize(html: string): string {
-  return html
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/<script[\s\S]*?<\/script>/gi, '')
-    .replace(/<style[\s\S]*?<\/style>/gi, '')
-    .replace(/\sdata-[a-z-]+="[^"]*"/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
 }
 
 function keyForUrl(url: string): string {
