@@ -140,6 +140,8 @@ async function loadRuleContent(ruleHash: string): Promise<string> {
   return typeof content === 'string' ? content : '';
 }
 
+// One TrainingCorrections row, as impacts-service writes it. The original
+// action and confidence are absent on rows filed before they were stored.
 type Correction = {
   correctedAt: string;
   policyDomain: string;
@@ -147,9 +149,13 @@ type Correction = {
   originalImpactType: string;
   originalNumericDelta: number | null;
   originalNarrative: string;
+  originalRecommendedAction?: string | null;
+  originalConfidence?: string | null;
   correctedImpactType: string;
   correctedNumericDelta: number | null;
   correctedNarrative: string | null;
+  correctedRecommendedAction?: string | null;
+  correctedConfidence?: string | null;
   correctorReasoning: string;
 };
 
@@ -221,13 +227,7 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     const c = fewShots[i];
     system.push(
       { text: `\n\nCORRECTION ${i + 1} (topic=${c.topic}, domain=${c.policyDomain}, at=${c.correctedAt}):\n` },
-      guarded(
-        [
-          `- Original: impactType=${c.originalImpactType}, numericDelta=${c.originalNumericDelta ?? 'null'}, narrative="${c.originalNarrative}"`,
-          `- Corrected: impactType=${c.correctedImpactType}, numericDelta=${c.correctedNumericDelta ?? 'null'}, narrative="${c.correctedNarrative ?? '(none)'}"`,
-          `- Consultant reasoning: ${c.correctorReasoning}`,
-        ].join('\n'),
-      ),
+      guarded(correctionBody(c)),
     );
   }
 
@@ -273,6 +273,26 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     inferenceConfig: { maxTokens: 1200, temperature: 0.1 },
     guardrailConfig: guardrailConfig(),
   };
+}
+
+// The consultant can correct every field the Auditor can: impact type, delta,
+// narrative, recommended action and confidence. Each one the consultant set
+// is shown, so a corrected action or confidence teaches too.
+function correctionBody(c: Correction): string {
+  const lines = [
+    `- Original: impactType=${c.originalImpactType}, numericDelta=${c.originalNumericDelta ?? 'null'}, narrative="${c.originalNarrative}"`,
+    `- Corrected: impactType=${c.correctedImpactType}, numericDelta=${c.correctedNumericDelta ?? 'null'}, narrative="${c.correctedNarrative ?? '(none)'}"`,
+  ];
+  if (c.correctedRecommendedAction) {
+    const was = c.originalRecommendedAction ? ` (original: "${c.originalRecommendedAction}")` : '';
+    lines.push(`- Corrected recommendedAction: "${c.correctedRecommendedAction}"${was}`);
+  }
+  if (c.correctedConfidence) {
+    const was = c.originalConfidence ? ` (original: ${c.originalConfidence})` : '';
+    lines.push(`- Corrected confidence: ${c.correctedConfidence}${was}`);
+  }
+  lines.push(`- Consultant reasoning: ${c.correctorReasoning}`);
+  return lines.join('\n');
 }
 
 // The guardrail's contextual grounding check scored the Analyst's answer

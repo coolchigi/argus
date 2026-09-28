@@ -8,6 +8,7 @@ const kms = new KMSClient({});
 
 const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
 const TRAINING_CORRECTIONS_TABLE = requiredEnv('TRAINING_CORRECTIONS_TABLE');
+const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
@@ -88,6 +89,12 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
   const correctedRecommendedAction = optionalString(body, 'correctedRecommendedAction');
   const correctedConfidence = optionalEnum<Confidence>(body, 'correctedConfidence', ['low', 'medium', 'high']);
 
+  // The Auditor ranks corrections by topic, then by policyDomain. Anchor
+  // doesn't write the domain onto the assessment, so read it from the rule
+  // the assessment cites.
+  const ruleHash = String(original.ruleHash ?? '');
+  const policyDomain = await loadPolicyDomain(ruleHash);
+
   const timestamp = new Date().toISOString();
   const correctionKey = `${assessmentKey}#${timestamp}`;
   const item = {
@@ -96,12 +103,14 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
     assessmentKey,
     clientId: String(original.clientId ?? ''),
     policyEventId: String(original.policyEventId ?? ''),
-    ruleHash: String(original.ruleHash ?? ''),
+    ruleHash,
     topic: String(original.topic ?? ''),
-    policyDomain: String((original as { policyDomain?: unknown }).policyDomain ?? ''),
+    policyDomain,
     originalImpactType: String(original.impactType ?? ''),
     originalNumericDelta: original.numericDelta ?? null,
     originalNarrative: String(original.narrative ?? ''),
+    originalRecommendedAction: String(original.recommendedAction ?? ''),
+    originalConfidence: String(original.confidence ?? ''),
     correctedImpactType,
     correctedNumericDelta,
     correctedNarrative,
@@ -122,6 +131,15 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
     correctedDelta: correctedNumericDelta,
   });
   return { correction: item };
+}
+
+async function loadPolicyDomain(ruleHash: string): Promise<string> {
+  if (!ruleHash) return '';
+  const res = await ddb.send(
+    new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash }, ProjectionExpression: 'policy_domain' }),
+  );
+  const domain = res.Item?.policy_domain;
+  return typeof domain === 'string' ? domain : '';
 }
 
 /**
