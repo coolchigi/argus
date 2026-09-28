@@ -280,6 +280,7 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
     'You never see or reference the client by name. Client is identified only by client_id.',
     'You are conservative: prefer isAffected=false when the policy change does not clearly apply.',
     'A pause, cap or closure of intake affects clients who have not yet submitted an application, including clients waiting for an invitation or selection to apply. A client who can no longer take their next step is affected.',
+    'When the rule sets a condition for the client\'s own program (a list of eligible codes, a minimum, a required validity period) and the profile shows the client does not meet it, the client is affected. Being absent from such a list is a finding, not a reason to answer false. A list that only offers an optional extra route affects only the clients who are on it.',
     'Numeric deltas are only for CRS point changes; leave null for non-CRS changes.',
     'Base every statement on the rule content and the client profile only. Reuse the rule content\'s own wording. Do not add facts, programs or options the rule content does not mention.',
   ].join('\n');
