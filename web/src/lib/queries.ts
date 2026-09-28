@@ -1,6 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import { currentAssessments, ruleClientKey, sentRuleClientKeys } from "@/lib/current-assessments";
 import { api } from "@/lib/api";
 import type { Brief, Impact } from "@/lib/argus-types";
 import type {
@@ -52,11 +53,20 @@ function toQueryString(params: Record<string, string | number | undefined>): str
   return s ? `?${s}` : "";
 }
 
+/**
+ * `impacts` is one current assessment per (rule, client), the latest run.
+ * `allImpacts` keeps every run for history. See current-assessments.ts.
+ */
 export function useImpacts(options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.impacts(),
     queryFn: () => api<{ impacts: Impact[] }>("/impacts"),
     enabled: options.enabled ?? true,
+    select: (d) => {
+      const allImpacts = d.impacts ?? [];
+      const { current, priorRuns } = currentAssessments(allImpacts);
+      return { impacts: current, allImpacts, priorRuns };
+    },
   });
 }
 
@@ -119,8 +129,8 @@ export function useActivity(params: ActivityParams = {}, options: { enabled?: bo
  * behind the Assessments badge and, later, the Action required tab.
  */
 export function countActionRequired(impacts: Impact[], briefs: Brief[]): number {
-  const sent = new Set(briefs.filter((b) => b.status === "sent").map((b) => b.assessmentKey));
-  return impacts.filter((i) => i.isAffected && !sent.has(i.assessmentKey)).length;
+  const sent = sentRuleClientKeys(briefs);
+  return impacts.filter((i) => i.isAffected && !sent.has(ruleClientKey(i))).length;
 }
 
 /** Returns null until both lists have loaded, so a badge never flashes a wrong number. */

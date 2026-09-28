@@ -1,9 +1,10 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { ruleClientKey, sentRuleClientKeys } from "@/lib/current-assessments";
 import { useQueries, type UseQueryResult } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import type { Brief, Impact } from "@/lib/argus-types";
+import type { Impact } from "@/lib/argus-types";
 import type { PolicyEventImpactsResponse } from "@/lib/types/policy-events";
 import { queryKeys, useBriefs, useImpacts } from "@/lib/queries";
 import { humanizeTopic } from "@/lib/humanize";
@@ -35,10 +36,12 @@ const FILTERS: Array<{ value: Filter; label: string }> = [
  * Every stored assessment is signed, so the status column shows what the
  * consultant still has to do. A correction wins over everything else.
  */
+/** Keys are (rule, client), so a brief or correction on any run of the rule counts. */
 function deriveStatus(i: Impact, sentKeys: ReadonlySet<string>, correctedKeys: ReadonlySet<string>): AssessmentStatus {
-  if (correctedKeys.has(i.assessmentKey)) return "corrected";
+  const key = ruleClientKey(i);
+  if (correctedKeys.has(key)) return "corrected";
   if (!i.isAffected) return "no-impact";
-  return sentKeys.has(i.assessmentKey) ? "done" : "action-required";
+  return sentKeys.has(key) ? "done" : "action-required";
 }
 
 /** Primitives only, so the combined result stays stable between renders. */
@@ -121,13 +124,15 @@ export default function ImpactsPage() {
     })),
     combine: combineCorrections,
   });
-  const correctedKeys = useMemo(
-    () => new Set(corrections.keys ? corrections.keys.split("\n") : []),
-    [corrections.keys],
-  );
+  // Corrections come back per assessmentKey (any run). Map them to (rule, client).
+  const correctedKeys = useMemo(() => {
+    const byAssessment = new Map((impacts.data?.allImpacts ?? []).map((i) => [i.assessmentKey, ruleClientKey(i)]));
+    const keys = corrections.keys ? corrections.keys.split("\n") : [];
+    return new Set(keys.map((k) => byAssessment.get(k)).filter((k): k is string => Boolean(k)));
+  }, [corrections.keys, impacts.data]);
 
   const rowsAll = useMemo<Row[]>(() => {
-    const sent = new Set((briefs.data?.briefs ?? []).filter((b: Brief) => b.status === "sent").map((b) => b.assessmentKey));
+    const sent = sentRuleClientKeys(briefs.data?.briefs ?? []);
     return all.map((i) => ({ ...i, status: deriveStatus(i, sent, correctedKeys), title: humanizeTopic(i.topic) }));
   }, [all, briefs.data, correctedKeys]);
 
