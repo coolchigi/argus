@@ -11,6 +11,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 import { describeGuardrailBlock, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
+import { ruleWindow } from './rule-window';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -22,7 +23,6 @@ const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const REASONER_MODEL = requiredEnv('BEDROCK_REASONER_MODEL');
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
-const RULE_CONTENT_MAX_CHARS = 4000;
 const GROUNDING_QUERY_MAX_CHARS = 1000;
 
 function guardrailConfig() {
@@ -269,8 +269,9 @@ function filterByPolicyDomain(clients: ClientProfile[], policyDomain: string): C
 }
 
 export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile): ConverseCommandInput {
-  const ruleSnippet = (rule.rule_content ?? '').slice(0, RULE_CONTENT_MAX_CHARS);
-  const clientJson = JSON.stringify(stripUndefined(client), null, 2);
+  const profile = stripUndefined(client);
+  const ruleSnippet = ruleWindow(rule.rule_content ?? '', profile);
+  const clientJson = JSON.stringify(profile, null, 2);
 
   const system = [
     'You are the Analyst agent in Argus, an IRCC policy-impact platform.',
@@ -362,7 +363,7 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
         },
         { text: 'POLICY CHANGE\n' },
         guarded(policyChange + '\n\n'),
-        { text: 'RULE CONTENT SNIPPET (may be truncated):\n' },
+        { text: 'RULE CONTENT (a long rule is shown as an excerpt, marked in brackets):\n' },
         guarded(ruleSnippet + '\n\n'),
         { text: 'CLIENT PROFILE:\n' },
         guarded(clientJson + '\n\n'),
