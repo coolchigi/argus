@@ -19,11 +19,13 @@ import {
   buildEvents,
   eventIdOf,
   listView,
+  parseActivityBefore,
   parseLimit,
   resolveEventId,
   str,
   strOrNull,
   toAssessment,
+  type ActivityCursor,
   type ActivityItem,
   type Assessment,
   type BriefRow,
@@ -221,11 +223,10 @@ function selectEvent<T extends Row | Assessment>(rows: T[], id: string): { event
 
 async function listActivity(rcicId: string, qs: Record<string, string | undefined>): Promise<{ items: ActivityItem[]; nextBefore: string | null }> {
   const limit = parseLimit(qs.limit, ACTIVITY_DEFAULT_LIMIT, ACTIVITY_MAX_LIMIT);
-  let before: string | null = null;
+  let before: ActivityCursor | null = null;
   if (qs.before !== undefined && qs.before !== '') {
-    const ms = Date.parse(qs.before);
-    if (Number.isNaN(ms)) throw httpError(400, 'invalid-before-must-be-iso-timestamp');
-    before = new Date(ms).toISOString();
+    before = parseActivityBefore(qs.before);
+    if (!before) throw httpError(400, 'invalid-before-must-be-nextBefore-or-iso-timestamp');
   }
 
   const [assessments, briefs, corrections, alerts] = await Promise.all([

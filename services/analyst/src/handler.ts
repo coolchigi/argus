@@ -11,6 +11,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 import { describeGuardrailBlock, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
+import { eligibleClients, tenantFromItem, TENANT_ATTRIBUTES, type Tenant } from './eligibility';
 import { ruleWindow } from './rule-window';
 
 const bedrock = new BedrockRuntimeClient({});
@@ -128,29 +129,37 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
   }
 
   const targeted = Array.isArray(delta.targetRcicIds) && delta.targetRcicIds.length > 0;
-  const rcicIds = targeted
-    ? await loadActiveTargetRcicIds(delta.targetRcicIds as string[])
-    : await loadActiveRcicIds();
+  const tenants = targeted
+    ? await loadActiveTargetTenants(delta.targetRcicIds as string[])
+    : await loadActiveTenants();
   log('info', 'rcics-loaded', {
     runId,
     mode: targeted ? 'targeted' : 'all-active',
     requestedRcicCount: targeted ? delta.targetRcicIds!.length : null,
-    activeRcicCount: rcicIds.length,
+    activeRcicCount: tenants.length,
   });
-  if (rcicIds.length === 0) {
+  if (tenants.length === 0) {
     log('info', 'no-active-rcics', { runId });
     return { hypothesesEmitted: 0 };
   }
 
   let total = 0;
   const dropped: { rcicId: string; clientId: string; reason: string }[] = [];
-  for (const rcicId of rcicIds) {
+  for (const tenant of tenants) {
+    const { rcicId } = tenant;
+    // The consultant turned this program area off in Settings. Records
+    // already signed stay as they are. Nothing new is assessed.
+    if (tenant.disabledDomains.has(delta.policyDomain)) {
+      log('info', 'tenant-skipped-domain-off', { runId, rcicId, policyDomain: delta.policyDomain });
+      continue;
+    }
     const clients = await queryCaseload(rcicId);
-    const candidates = filterByPolicyDomain(clients, delta.policyDomain);
+    const candidates = eligibleClients(clients, delta.policyDomain, tenant);
     log('info', 'caseload-loaded', {
       runId,
       rcicId,
       caseloadSize: clients.length,
+      closedCount: clients.filter((c) => c.status === 'closed').length,
       candidateCount: candidates.length,
     });
 
@@ -203,21 +212,26 @@ async function loadRule(ruleHash: string): Promise<PolicyRule | null> {
   return (res.Item as PolicyRule | undefined) ?? null;
 }
 
-async function loadActiveRcicIds(): Promise<string[]> {
-  const out: string[] = [];
+// Aliased so a reserved word in the list never breaks the projection.
+const TENANT_PROJECTION = {
+  ProjectionExpression: TENANT_ATTRIBUTES.map((_, i) => `#t${i}`).join(', '),
+  ExpressionAttributeNames: Object.fromEntries(TENANT_ATTRIBUTES.map((a, i) => [`#t${i}`, a])),
+};
+
+async function loadActiveTenants(): Promise<Tenant[]> {
+  const out: Tenant[] = [];
   let ExclusiveStartKey: Record<string, unknown> | undefined = undefined;
   do {
     const res: { Items?: Record<string, unknown>[]; LastEvaluatedKey?: Record<string, unknown> } = await ddb.send(
       new ScanCommand({
         TableName: RCIC_USERS_TABLE,
-        ProjectionExpression: 'rcicId, active',
+        ...TENANT_PROJECTION,
         ExclusiveStartKey,
       }),
     );
     for (const item of res.Items ?? []) {
-      if (typeof item.rcicId !== 'string') continue;
-      if (item.active === false) continue;
-      out.push(item.rcicId);
+      const tenant = tenantFromItem(item);
+      if (tenant) out.push(tenant);
     }
     ExclusiveStartKey = res.LastEvaluatedKey;
   } while (ExclusiveStartKey);
@@ -226,9 +240,9 @@ async function loadActiveRcicIds(): Promise<string[]> {
 
 // Reads only the named tenants from RcicUsers and keeps the ones that
 // exist and are not marked inactive.
-async function loadActiveTargetRcicIds(requested: string[]): Promise<string[]> {
+async function loadActiveTargetTenants(requested: string[]): Promise<Tenant[]> {
   const ids = [...new Set(requested.filter((id) => typeof id === 'string' && id.length > 0))];
-  const active = new Set<string>();
+  const active = new Map<string, Tenant>();
   for (let i = 0; i < ids.length; i += 100) {
     let keys: Record<string, unknown>[] | undefined = ids.slice(i, i + 100).map((rcicId) => ({ rcicId }));
     for (let attempt = 0; keys && keys.length > 0; attempt++) {
@@ -237,19 +251,18 @@ async function loadActiveTargetRcicIds(requested: string[]): Promise<string[]> {
       const res: BatchGetCommandOutput = await ddb.send(
         new BatchGetCommand({
           RequestItems: {
-            [RCIC_USERS_TABLE]: { Keys: keys, ProjectionExpression: 'rcicId, active' },
+            [RCIC_USERS_TABLE]: { Keys: keys, ...TENANT_PROJECTION },
           },
         }),
       );
       for (const item of res.Responses?.[RCIC_USERS_TABLE] ?? []) {
-        if (typeof item.rcicId !== 'string') continue;
-        if (item.active === false) continue;
-        active.add(item.rcicId);
+        const tenant = tenantFromItem(item);
+        if (tenant) active.set(tenant.rcicId, tenant);
       }
       keys = res.UnprocessedKeys?.[RCIC_USERS_TABLE]?.Keys;
     }
   }
-  return ids.filter((id) => active.has(id));
+  return ids.flatMap((id) => active.get(id) ?? []);
 }
 
 async function queryCaseload(rcicId: string): Promise<ClientProfile[]> {
@@ -261,11 +274,6 @@ async function queryCaseload(rcicId: string): Promise<ClientProfile[]> {
     }),
   );
   return (res.Items ?? []) as ClientProfile[];
-}
-
-function filterByPolicyDomain(clients: ClientProfile[], policyDomain: string): ClientProfile[] {
-  if (policyDomain === 'general' || policyDomain === 'other') return clients;
-  return clients.filter((c) => c.program === policyDomain);
 }
 
 export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile): ConverseCommandInput {

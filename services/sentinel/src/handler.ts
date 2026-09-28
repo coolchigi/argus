@@ -244,9 +244,10 @@ export function buildClassifierRequest(url: string, pageText: string): ConverseC
     '- other: none of the above.',
     '',
     'Severity rules:',
-    '- high: eligibility flip, program open or close, CRS scoring change affecting more than 30 points.',
+    '- high: eligibility flip, program or intake open, pause or close, a change to how points are awarded (a points factor added, removed or re-weighted).',
     '- medium: category-based-draw change, procedural rule change.',
     '- low: news release, statistics, minor form-version bump.',
+    'Judge severity from what the page says. Do not use point values, dates or program rules from memory.',
   ].join('\n');
 
   // The IRCC page text is the only outside content, so it's the only

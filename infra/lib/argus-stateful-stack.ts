@@ -10,6 +10,7 @@ import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
+import { CA_SIN_PATTERN, US_SSN_PATTERN } from './guardrail-patterns';
 
 /**
  * Stateful resources for Argus.
@@ -296,8 +297,10 @@ export class ArgusStatefulStack extends cdk.Stack {
           // No built-in ADDRESS entity: it flags "Canada", "Quebec" and
           // "British Columbia", which every IRCC page and brief contains.
           // Real street addresses and postal codes are caught by the regexes below.
-          { type: 'US_SOCIAL_SECURITY_NUMBER', action: 'BLOCK' },
-          { type: 'CA_SOCIAL_INSURANCE_NUMBER', action: 'BLOCK' },
+          // No built-in CA_SOCIAL_INSURANCE_NUMBER or US_SOCIAL_SECURITY_NUMBER
+          // entity: both flag any number near the words SIN or SSN, which
+          // blocked client file numbers and NOC codes. The ca-sin and us-ssn
+          // regexes below match the number formats instead.
           { type: 'DRIVER_ID', action: 'BLOCK' },
           { type: 'CA_HEALTH_NUMBER', action: 'BLOCK' },
           { type: 'CREDIT_DEBIT_CARD_NUMBER', action: 'BLOCK' },
@@ -320,6 +323,18 @@ export class ArgusStatefulStack extends cdk.Stack {
             name: 'street-address',
             description: 'Street number, capitalized street name and type (45 Rideau Street), or French rue/chemin/boulevard before a capitalized name (2201 rue Sainte-Catherine)',
             pattern: String.raw`\b[0-9]{1,6}[A-Za-z]?(?:-[0-9]{1,6})?,?\s+(?:(?:[A-Z][A-Za-zÀ-ÿ.'-]*\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Crescent|Cres|Court|Ct|Way|Place|Pl|Terrace|Highway|Hwy|Parkway|Pkwy|Circle)\b|(?:[Rr]ue|[Cc]hemin|[Bb]oulevard|[Bb]oul|[Aa]venue|[Rr]ang)\s+(?:de\s+la\s+|de\s+l'|du\s+|des\s+|de\s+)?[A-ZÀ-Ý])`,
+            action: 'BLOCK',
+          },
+          {
+            name: 'ca-sin',
+            description: 'Canadian SIN, 9 digits as 3-3-3 with spaces, dashes or no separator, e.g. 046 454 286',
+            pattern: CA_SIN_PATTERN,
+            action: 'BLOCK',
+          },
+          {
+            name: 'us-ssn',
+            description: 'US SSN, 9 digits as 3-2-4 with spaces or dashes, e.g. 123-45-6789',
+            pattern: US_SSN_PATTERN,
             action: 'BLOCK',
           },
         ],

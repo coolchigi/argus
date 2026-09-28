@@ -3,6 +3,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
+import { eligibleClients, tenantFromItem, TENANT_ATTRIBUTES, type Tenant } from './eligibility';
 import { describeGuardrailBlock, guarded } from './guardrail';
 
 const bedrock = new BedrockRuntimeClient({});
@@ -66,10 +67,10 @@ export const handler = async (): Promise<{
   deltasEmitted: number;
 }> => {
   const runId = randomUUID();
-  const rcicIds = await loadActiveRcicIds();
-  log('info', 'recall-start', { runId, rcicCount: rcicIds.length, lookbackDays: LOOKBACK_DAYS });
+  const tenants = await loadActiveTenants();
+  log('info', 'recall-start', { runId, rcicCount: tenants.length, lookbackDays: LOOKBACK_DAYS });
 
-  if (rcicIds.length === 0) {
+  if (tenants.length === 0) {
     log('info', 'recall-no-active-rcics', { runId });
     return { rulesConsidered: 0, pairsTriaged: 0, pairsSkippedAlreadyAssessed: 0, deltasEmitted: 0 };
   }
@@ -84,12 +85,15 @@ export const handler = async (): Promise<{
   let pairsSkippedAlreadyAssessed = 0;
   let deltasEmitted = 0;
 
-  for (const rcicId of rcicIds) {
+  for (const tenant of tenants) {
+    const { rcicId } = tenant;
     const clients = await loadClients(rcicId);
     const assessed = await loadAssessedPairs(rcicId);
 
     for (const rule of rules) {
-      const candidates = filterByProgram(clients, rule.policy_domain);
+      // Closed clients and program areas the consultant turned off are
+      // never triaged, so they never cost a model call.
+      const candidates = eligibleClients(clients, rule.policy_domain, tenant);
       for (const client of candidates) {
         if (pairsTriaged >= MAX_PAIRS_PER_RUN) {
           log('info', 'recall-cap-reached', { runId, pairsTriaged, cap: MAX_PAIRS_PER_RUN });
@@ -145,21 +149,22 @@ export const handler = async (): Promise<{
   };
 };
 
-async function loadActiveRcicIds(): Promise<string[]> {
-  const out: string[] = [];
+async function loadActiveTenants(): Promise<Tenant[]> {
+  const out: Tenant[] = [];
   let ExclusiveStartKey: Record<string, unknown> | undefined = undefined;
   do {
     const res: { Items?: Record<string, unknown>[]; LastEvaluatedKey?: Record<string, unknown> } = await ddb.send(
       new ScanCommand({
         TableName: RCIC_USERS_TABLE,
-        ProjectionExpression: 'rcicId, active',
+        // Aliased so a reserved word in the list never breaks the projection.
+        ProjectionExpression: TENANT_ATTRIBUTES.map((_, i) => `#t${i}`).join(', '),
+        ExpressionAttributeNames: Object.fromEntries(TENANT_ATTRIBUTES.map((a, i) => [`#t${i}`, a])),
         ExclusiveStartKey,
       }),
     );
     for (const item of res.Items ?? []) {
-      if (typeof item.rcicId !== 'string') continue;
-      if (item.active === false) continue;
-      out.push(item.rcicId);
+      const tenant = tenantFromItem(item);
+      if (tenant) out.push(tenant);
     }
     ExclusiveStartKey = res.LastEvaluatedKey;
   } while (ExclusiveStartKey);
@@ -230,11 +235,6 @@ async function loadAssessedPairs(
     ExclusiveStartKey = res.LastEvaluatedKey;
   } while (ExclusiveStartKey);
   return { assessmentKeys, ruleClientPairs };
-}
-
-function filterByProgram(clients: ClientSummary[], policyDomain: string): ClientSummary[] {
-  if (policyDomain === 'general' || policyDomain === 'other') return clients;
-  return clients.filter((c) => c.program === policyDomain);
 }
 
 export function buildTriageRequest(rule: PolicyRule, client: ClientSummary): ConverseCommandInput {
