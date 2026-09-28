@@ -6,12 +6,17 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { Brief } from "@/lib/argus-types";
-import { Input } from "@/components/ui/input";
 import { formatDelta, formatRelative } from "@/lib/format";
-import { Seal } from "@/components/seal";
+import { humanizeImpactType, humanizeTopic } from "@/lib/humanize";
+import { PageHeader } from "@/components/argus/page-header";
+import { DataTable, type Column } from "@/components/argus/data-table";
+import { FilterBar } from "@/components/argus/filter-bar";
+import { StatusBadge } from "@/components/argus/status-badge";
+import { ClientChip } from "@/components/argus/client-chip";
+import { InlineError } from "@/components/argus/inline-error";
+import { ProgressLine } from "@/components/argus/progress-line";
 import { EmptyState } from "@/components/empty-state";
-import { Send, Search } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Send } from "lucide-react";
 
 export default function BriefsPage() {
   const qc = useQueryClient();
@@ -29,7 +34,8 @@ export default function BriefsPage() {
       (b) =>
         b.subject.toLowerCase().includes(term) ||
         b.clientId.toLowerCase().includes(term) ||
-        (b.topic ?? "").toLowerCase().includes(term),
+        (b.topic ?? "").toLowerCase().includes(term) ||
+        humanizeTopic(b.topic).toLowerCase().includes(term),
     );
   }, [q.data, search]);
   const draftIds = useMemo(() => rows.filter((b) => b.status !== "sent").map((b) => b.briefId), [rows]);
@@ -66,55 +72,134 @@ export default function BriefsPage() {
     onError: (err) => toast.error(err instanceof Error ? err.message : "batch-send-failed"),
   });
 
-  return (
-    <div className="space-y-8">
-      <header className="space-y-1">
-        <div className="label">Briefs</div>
-        <h1
-          className="text-[24px] font-medium tracking-tight text-ink-primary leading-tight"
-          style={{ fontFamily: "var(--font-newsreader), serif" }}
-        >
-          Client update drafts
-        </h1>
-        <p className="text-[13px] text-ink-secondary">
-          Composer drafts one per affected client. Edit and send from here.
-        </p>
-      </header>
-
-      <div className="flex items-center gap-3">
-        <span className="label">{q.data?.briefs.length ?? 0} total</span>
-        <div className="ml-auto relative w-[280px]">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink-tertiary" strokeWidth={1.75} />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search subject, client, topic"
-            className="h-8 pl-8 text-[13px]"
+  const columns: Column<Brief>[] = [
+    {
+      key: "select",
+      header: (
+        <input
+          type="checkbox"
+          aria-label="Select every unsent brief"
+          checked={allSelected}
+          onChange={toggleAll}
+          disabled={draftIds.length === 0}
+          className="h-3.5 w-3.5 cursor-pointer accent-brand align-middle"
+        />
+      ),
+      className: "w-10",
+      cell: (b) =>
+        b.status !== "sent" ? (
+          <input
+            type="checkbox"
+            aria-label={`Select brief for ${b.clientId}`}
+            checked={selected.has(b.briefId)}
+            onChange={() => toggle(b.briefId)}
+            className="h-3.5 w-3.5 cursor-pointer accent-brand align-middle"
           />
-        </div>
+        ) : null,
+    },
+    {
+      key: "subject",
+      header: "Subject",
+      cell: (b) => (
+        <Link
+          href={`/briefs/${b.briefId}`}
+          className="font-medium text-ink-1 underline-offset-4 decoration-hairline hover:underline"
+        >
+          {b.subject}
+        </Link>
+      ),
+    },
+    {
+      key: "client",
+      header: "Client",
+      cell: (b) => <ClientChip clientId={b.clientId} />,
+    },
+    {
+      key: "impact",
+      header: "Impact",
+      cell: (b) => (
+        <span className="whitespace-nowrap">
+          <span className="text-ink-2">{humanizeImpactType(b.impactType)}</span>
+          {b.numericDelta !== null && (
+            <span className="ml-1.5 font-mono text-[12px] tabular text-ink-1">{formatDelta(b.numericDelta)}</span>
+          )}
+        </span>
+      ),
+    },
+    {
+      key: "status",
+      header: "Status",
+      cell: (b) => <StatusBadge kind="brief" status={b.status} />,
+    },
+    {
+      key: "when",
+      header: "Drafted",
+      align: "right",
+      cell: (b) => (
+        <time dateTime={b.createdAt} className="font-mono text-[12px] tabular whitespace-nowrap text-ink-2">
+          {formatRelative(b.createdAt)}
+        </time>
+      ),
+    },
+  ];
+
+  const total = q.data?.briefs.length ?? 0;
+  const header = (
+    <PageHeader title="Action briefs" meta="Composer drafts one per affected client. Edit and send from here." />
+  );
+
+  if (q.error) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <InlineError
+          message="Couldn't load your briefs."
+          detail={q.error instanceof Error ? q.error.message : null}
+          retrying={q.isFetching}
+          onRetry={() => void q.refetch()}
+        />
       </div>
+    );
+  }
+
+  if (q.data && total === 0) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <EmptyState
+          headline="No briefs drafted yet."
+          body="Composer writes one for every affected client after a policy change. When Sentinel catches something, drafts appear here for you to edit and send."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      <ProgressLine active={q.isPending} fixed label="Loading briefs" />
+      {header}
 
       {selected.size > 0 && (
-        <div className="rounded-md border border-seal-ring bg-seal-subtle/60 px-4 py-3 flex items-center gap-3">
-          <span className="text-[13px] font-medium text-ink-primary">
-            {selected.size} selected
-          </span>
-          <span className="text-[12px] text-ink-secondary">
-            Sends to a single recipient email for demo purposes.
-          </span>
+        <div className="flex flex-wrap items-center gap-3 border border-brand-ink/40 bg-brand-subtle px-4 py-3">
+          <span className="text-[13px] font-medium text-ink-1">{selected.size} selected</span>
+          <span className="text-[12px] text-ink-2">Sends to a single recipient email for demo purposes.</span>
           <div className="ml-auto flex items-center gap-2">
-            <Input
+            <label htmlFor="batch-recipient" className="sr-only">
+              Recipient email
+            </label>
+            <input
+              id="batch-recipient"
               type="email"
               placeholder="Recipient email"
               value={batchRecipient}
               onChange={(e) => setBatchRecipient(e.target.value)}
-              className="h-8 w-[240px] text-[13px]"
+              className="h-8 w-[240px] rounded-sm border border-control bg-surface px-3 text-[13px] text-ink-1 placeholder:text-ink-3"
             />
             <button
               type="button"
               onClick={() => batchSend.mutate()}
               disabled={batchSend.isPending}
-              className="inline-flex h-8 items-center gap-1.5 rounded-sm bg-primary px-3 text-[13px] font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+              className="inline-flex h-8 items-center gap-1.5 rounded-sm border border-brand-ink bg-brand px-3 text-[13px] font-medium text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-50"
             >
               <Send className="h-3 w-3" strokeWidth={1.75} />
               {batchSend.isPending ? "Sending" : `Send ${selected.size}`}
@@ -122,7 +207,7 @@ export default function BriefsPage() {
             <button
               type="button"
               onClick={() => setSelected(new Set())}
-              className="text-[12px] text-ink-secondary hover:text-ink-primary"
+              className="h-8 px-2 text-[12px] text-ink-2 transition-colors hover:text-ink-1"
             >
               Clear
             </button>
@@ -130,150 +215,24 @@ export default function BriefsPage() {
         </div>
       )}
 
-      {(q.data?.briefs.length ?? 0) === 0 && !q.isLoading ? (
-        <div className="rounded-md border border-border bg-surface">
-          <EmptyState
-            headline="No briefs drafted yet."
-            body="Composer writes one for every affected client after a policy change. When Sentinel catches something, drafts appear here for you to edit and send."
-          />
-        </div>
-      ) : (
-      <div className="rounded-md border border-border bg-surface overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border">
-              <Th className="w-10 pl-4">
-                <input
-                  type="checkbox"
-                  checked={allSelected}
-                  onChange={toggleAll}
-                  className="h-3.5 w-3.5 accent-primary cursor-pointer"
-                />
-              </Th>
-              <Th>Subject</Th>
-              <Th>Client</Th>
-              <Th>Impact</Th>
-              <Th className="w-[110px]">Status</Th>
-              <Th align="right" className="w-[120px]">When</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-divider">
-            {q.isLoading ? (
-              <tr>
-                <td colSpan={6} className="py-16 text-center label">Loading</td>
-              </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="py-16 text-center">
-                  <div className="label">Nothing yet</div>
-                  <p className="mt-2 text-[12px] text-ink-tertiary">
-                    Composer drafts a brief for every affected client after a policy change.
-                  </p>
-                </td>
-              </tr>
-            ) : (
-              rows.map((b) => {
-                const selectable = b.status !== "sent";
-                return (
-                  <tr key={b.briefId} className="h-11 hover:bg-surface-alt/50 transition-colors">
-                    <td className="pl-4">
-                      {selectable && (
-                        <input
-                          type="checkbox"
-                          checked={selected.has(b.briefId)}
-                          onChange={() => toggle(b.briefId)}
-                          className="h-3.5 w-3.5 accent-primary cursor-pointer"
-                        />
-                      )}
-                    </td>
-                    <Td>
-                      <Link
-                        href={`/briefs/${b.briefId}`}
-                        className="text-[13px] font-medium text-ink-primary hover:underline underline-offset-4 decoration-border"
-                      >
-                        {b.subject}
-                      </Link>
-                    </Td>
-                    <Td>
-                      <span className="client-chip">{b.clientId}</span>
-                    </Td>
-                    <Td>
-                      <span className="text-[12px] text-ink-secondary">{b.impactType}</span>
-                      {b.numericDelta !== null && (
-                        <span className="ml-1.5 fingerprint text-ink-primary">
-                          {formatDelta(b.numericDelta)}
-                        </span>
-                      )}
-                    </Td>
-                    <Td>
-                      <StatusPill status={b.status} />
-                    </Td>
-                    <Td align="right">
-                      <span className="text-[11px] text-ink-tertiary tabular">
-                        {formatRelative(b.createdAt)}
-                      </span>
-                    </Td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+      <div>
+        <FilterBar
+          className="border border-b-0 border-hairline"
+          search={search}
+          onSearchChange={setSearch}
+          searchLabel="Search briefs"
+          searchPlaceholder="Search subject, client, topic"
+          count={q.isPending ? undefined : `${rows.length} of ${total}`}
+        />
+        <DataTable
+          caption="Action briefs"
+          columns={columns}
+          rows={rows}
+          getRowKey={(b) => b.briefId}
+          loading={q.isPending}
+          empty="Nothing matches. Clear the search to see every brief."
+        />
       </div>
-      )}
     </div>
-  );
-}
-
-function Th({
-  children,
-  align = "left",
-  className = "",
-}: {
-  children: React.ReactNode;
-  align?: "left" | "right";
-  className?: string;
-}) {
-  return (
-    <th
-      className={cn(
-        "px-4 py-2.5 label",
-        align === "right" ? "text-right" : "text-left",
-        className,
-      )}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" }) {
-  return (
-    <td className={cn("px-4", align === "right" ? "text-right" : "text-left")}>{children}</td>
-  );
-}
-
-function StatusPill({ status }: { status: string }) {
-  if (status === "sent") {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-[12px] text-seal">
-        <Seal className="h-3 w-3" />
-        Sent
-      </span>
-    );
-  }
-  if (status === "edited") {
-    return (
-      <span className="inline-flex items-center gap-1.5 text-[12px] text-amber">
-        <span className="h-2 w-2 rounded-full bg-amber" />
-        Edited
-      </span>
-    );
-  }
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[12px] text-ink-secondary">
-      <span className="h-2 w-2 rounded-full border border-ink-tertiary" />
-      Draft
-    </span>
   );
 }
