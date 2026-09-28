@@ -1,10 +1,11 @@
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, ConverseCommand, type ConverseCommandInput } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createHash, randomUUID } from 'node:crypto';
 import { extractMainText } from './extract';
+import { describeGuardrailBlock, guarded } from './guardrail';
 
 const s3 = new S3Client({});
 const eb = new EventBridgeClient({});
@@ -213,15 +214,15 @@ async function fetchWithTimeout(url: string): Promise<string> {
   }
 }
 
-async function classifyWithBedrock(url: string, pageText: string, runId: string): Promise<Classification> {
+export function buildClassifierRequest(url: string, pageText: string): ConverseCommandInput {
   const snippet = pageText.slice(0, CLASSIFIER_MAX_INPUT_CHARS);
-  const userText = [
+  const intro = [
     'Classify this IRCC page change. Return valid JSON only, no prose.',
     '',
     `URL: ${url}`,
     'Content (may be truncated):',
-    snippet,
-    '',
+  ].join('\n');
+  const instructions = [
     'Return this exact JSON shape:',
     '{',
     '  "category": "ministerial-instruction" | "news-release" | "rounds-of-invitations" | "policy-page-change",',
@@ -238,22 +239,35 @@ async function classifyWithBedrock(url: string, pageText: string, runId: string)
     '- low: news release, statistics, minor form-version bump.',
   ].join('\n');
 
-  const res = await bedrock.send(
-    new ConverseCommand({
-      modelId: CLASSIFIER_MODEL,
-      system: [
-        {
-          text: 'You classify Canadian IRCC (Immigration, Refugees and Citizenship Canada) policy pages. Return valid JSON only. No preamble, no explanation.',
-        },
-      ],
-      messages: [{ role: 'user', content: [{ text: userText }] }],
-      inferenceConfig: { maxTokens: 512, temperature: 0.1 },
-      guardrailConfig: guardrailConfig(),
-    }),
-  );
+  // The IRCC page text is the only outside content, so it's the only
+  // guarded block. See guardrail.ts for the tagging rule.
+  return {
+    modelId: CLASSIFIER_MODEL,
+    system: [
+      {
+        text: 'You classify Canadian IRCC (Immigration, Refugees and Citizenship Canada) policy pages. Return valid JSON only. No preamble, no explanation.',
+      },
+    ],
+    messages: [{ role: 'user', content: [{ text: intro + '\n' }, guarded(snippet + '\n\n'), { text: instructions }] }],
+    inferenceConfig: { maxTokens: 512, temperature: 0.1 },
+    guardrailConfig: guardrailConfig(),
+  };
+}
+
+async function classifyWithBedrock(url: string, pageText: string, runId: string): Promise<Classification> {
+  const res = await bedrock.send(new ConverseCommand(buildClassifierRequest(url, pageText)));
 
   if (res.stopReason === 'guardrail_intervened') {
-    throw new Error('classifier blocked by guardrail');
+    const block = describeGuardrailBlock(res);
+    log('error', 'guardrail-blocked', {
+      runId,
+      agent: 'sentinel',
+      url,
+      stage: block.stage,
+      policies: block.policies,
+      guardedInputs: ['ircc-page-text'],
+    });
+    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
   }
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);
