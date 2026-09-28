@@ -1,4 +1,5 @@
 import type { Brief, Impact } from "@/lib/argus-types";
+import { ruleClientKey, sentRuleClientKeys } from "@/lib/current-assessments";
 import type { PolicyEvent } from "@/lib/types/policy-events";
 
 /** The banner only looks back this far. PHASE8_PLAN section 4, Q8. */
@@ -87,9 +88,10 @@ export function dashboardStats(input: {
   impacts: Impact[];
   briefs: Brief[];
 }): DashboardStats {
-  const sent = new Set(input.briefs.filter((b) => b.status === "sent").map((b) => b.assessmentKey));
+  // input.impacts is one current assessment per (rule, client). A brief sent on any run covers the client.
+  const sent = sentRuleClientKeys(input.briefs);
   const affected = input.impacts.filter((i) => i.isAffected);
-  const unsentAffected = affected.filter((i) => !sent.has(i.assessmentKey));
+  const unsentAffected = affected.filter((i) => !sent.has(ruleClientKey(i)));
   return {
     clientsAffected: new Set(affected.map((i) => i.clientId)).size,
     clientsWaiting: new Set(unsentAffected.map((i) => i.clientId)).size,
