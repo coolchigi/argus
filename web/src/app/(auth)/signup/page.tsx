@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SectionLabel } from "@/components/argus/section-label";
 import { signUp } from "@/lib/auth";
 import { EyeMark } from "@/components/argus/eye-mark";
 
@@ -62,24 +62,24 @@ export default function SignupPage() {
       <form onSubmit={onSubmit} className="space-y-5">
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
-            <Label htmlFor="given" className="label">First name</Label>
+            <SectionLabel as="label" htmlFor="given">First name</SectionLabel>
             <Input id="given" required value={givenName} onChange={(e) => setGivenName(e.target.value)} className="h-10" />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="family" className="label">Last name</Label>
+            <SectionLabel as="label" htmlFor="family">Last name</SectionLabel>
             <Input id="family" required value={familyName} onChange={(e) => setFamilyName(e.target.value)} className="h-10" />
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="email" className="label">Email</Label>
+          <SectionLabel as="label" htmlFor="email">Email</SectionLabel>
           <Input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="h-10" />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="rcic" className="label">CICC R-license</Label>
+          <SectionLabel as="label" htmlFor="rcic">CICC R-license</SectionLabel>
           <Input id="rcic" required placeholder="R527888" value={rcicLicense} onChange={(e) => setRcicLicense(e.target.value)} className="h-10 font-mono" />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="password" className="label">Password</Label>
+          <SectionLabel as="label" htmlFor="password">Password</SectionLabel>
           <Input
             id="password"
             type="password"

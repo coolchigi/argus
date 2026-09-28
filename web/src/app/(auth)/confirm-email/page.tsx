@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SectionLabel } from "@/components/argus/section-label";
 import { confirmSignUp, resendConfirmationCode } from "@/lib/auth";
 import { EyeMark } from "@/components/argus/eye-mark";
 
@@ -57,11 +57,11 @@ function ConfirmEmailForm() {
 
       <form onSubmit={onSubmit} className="space-y-5">
         <div className="space-y-1.5">
-          <Label htmlFor="email" className="label">Email</Label>
+          <SectionLabel as="label" htmlFor="email">Email</SectionLabel>
           <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="h-10" />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="code" className="label">Confirmation code</Label>
+          <SectionLabel as="label" htmlFor="code">Confirmation code</SectionLabel>
           <Input
             id="code"
             inputMode="numeric"

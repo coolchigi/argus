@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SectionLabel } from "@/components/argus/section-label";
 import { useAuth } from "@/components/auth-context";
 import { signIn } from "@/lib/auth";
 import { EyeMark } from "@/components/argus/eye-mark";
@@ -55,7 +55,7 @@ export default function LoginPage() {
 
       <form onSubmit={onSubmit} className="space-y-5">
         <div className="space-y-1.5">
-          <Label htmlFor="email" className="label">Email</Label>
+          <SectionLabel as="label" htmlFor="email">Email</SectionLabel>
           <Input
             id="email"
             type="email"
@@ -67,7 +67,7 @@ export default function LoginPage() {
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="password" className="label">Password</Label>
+          <SectionLabel as="label" htmlFor="password">Password</SectionLabel>
           <Input
             id="password"
             type="password"
