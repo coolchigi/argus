@@ -451,7 +451,7 @@ export function buildActivity(
   briefs: BriefRow[],
   corrections: CorrectionRow[],
   alerts: Row[],
-  opts: { limit: number; before: string | null },
+  opts: { limit: number; before: ActivityCursor | null },
 ): { items: ActivityItem[]; nextBefore: string | null } {
   const eventByAssessment = new Map<string, string>();
   for (const a of assessments) eventByAssessment.set(a.assessmentKey, eventIdOf(a));
@@ -523,12 +523,60 @@ export function buildActivity(
     });
   }
 
+  const before = opts.before;
   const sorted = items
-    .filter((i) => (opts.before ? i.at < opts.before : true))
-    .sort((a, b) => b.at.localeCompare(a.at) || a.id.localeCompare(b.id));
+    .filter((i) => (before ? isAfterCursor(i, before) : true))
+    .sort(compareActivity);
   const page = sorted.slice(0, opts.limit);
-  const nextBefore = sorted.length > opts.limit && page.length > 0 ? page[page.length - 1].at : null;
+  const last = page[page.length - 1];
+  const nextBefore = sorted.length > opts.limit && last ? encodeActivityCursor({ at: last.at, id: last.id }) : null;
   return { items: page, nextBefore };
+}
+
+/**
+ * Where the next /activity page starts. `id` is null for a legacy `before=ISO`
+ * request, which keeps its old meaning: everything strictly older than `at`.
+ */
+export type ActivityCursor = { at: string; id: string | null };
+
+const CURSOR_PREFIX = 'c1.';
+
+// Feed order: newest first, then id ascending. Item ids are unique per tenant
+// (they carry the row's sort key), so (at, id) is a total order and a cursor
+// on it never skips or repeats an item that shares a timestamp.
+function compareActivity(a: { at: string; id: string }, b: { at: string; id: string }): number {
+  return b.at.localeCompare(a.at) || a.id.localeCompare(b.id);
+}
+
+function isAfterCursor(item: { at: string; id: string }, c: ActivityCursor): boolean {
+  if (c.id === null) return item.at < c.at;
+  return compareActivity(item, { at: c.at, id: c.id }) > 0;
+}
+
+/** Opaque to clients. They pass nextBefore back as `before` unchanged. */
+export function encodeActivityCursor(c: { at: string; id: string }): string {
+  return CURSOR_PREFIX + Buffer.from(JSON.stringify([c.at, c.id]), 'utf8').toString('base64url');
+}
+
+/**
+ * Parses the `before` query param: a cursor minted by encodeActivityCursor, or
+ * an ISO timestamp from an older client. Returns null for a malformed value.
+ */
+export function parseActivityBefore(raw: string): ActivityCursor | null {
+  if (raw.startsWith(CURSOR_PREFIX)) {
+    try {
+      const parsed: unknown = JSON.parse(Buffer.from(raw.slice(CURSOR_PREFIX.length), 'base64url').toString('utf8'));
+      if (Array.isArray(parsed) && parsed.length === 2 && typeof parsed[0] === 'string' && typeof parsed[1] === 'string' && parsed[0] && parsed[1]) {
+        return { at: parsed[0], id: parsed[1] };
+      }
+    } catch {
+      // fall through to null
+    }
+    return null;
+  }
+  const ms = Date.parse(raw);
+  if (Number.isNaN(ms)) return null;
+  return { at: new Date(ms).toISOString(), id: null };
 }
 
 // ---------------------------------------------------------------------------
