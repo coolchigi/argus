@@ -303,7 +303,11 @@ export class ArgusStatefulStack extends cdk.Stack {
           { type: 'CREDIT_DEBIT_CARD_NUMBER', action: 'BLOCK' },
           { type: 'PASSWORD', action: 'BLOCK' },
           { type: 'IP_ADDRESS', action: 'ANONYMIZE' },
-          { type: 'AGE', action: 'ANONYMIZE' },
+          // No AGE entity. Date of birth stays prohibited by the zero-PII
+          // rule, but age alone isn't identifying and it's a CRS scoring
+          // input the agents need. ANONYMIZE still counts as an
+          // intervention, so an AGE entity dropped clients whose profiles
+          // carried an age.
         ],
         regexesConfig: [
           {
