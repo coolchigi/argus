@@ -1,8 +1,14 @@
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import {
+  BedrockRuntimeClient,
+  ConverseCommand,
+  type ConverseCommandInput,
+  type SystemContentBlock,
+} from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
+import { describeGuardrailBlock, guarded } from './guardrail';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -150,7 +156,7 @@ async function loadRecentCorrections(rcicId: string, policyDomain: string, topic
   return scored;
 }
 
-async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[], runId: string): Promise<AuditVerdict> {
+export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[]): ConverseCommandInput {
   const snippet = ruleContent.slice(0, RULE_CONTENT_MAX_CHARS);
   const hypothesisJson = JSON.stringify(
     {
@@ -183,30 +189,27 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
       '',
       `PAST CORRECTIONS FROM THIS CONSULTANT (${fewShots.length} example${fewShots.length === 1 ? '' : 's'}). Treat them as ground-truth signal about what THIS consultant flagged as wrong. Match the pattern of correction, do not just quote the numbers.`,
     );
-    for (let i = 0; i < fewShots.length; i += 1) {
-      const c = fewShots[i];
-      systemLines.push(
-        '',
-        `CORRECTION ${i + 1} (topic=${c.topic}, domain=${c.policyDomain}, at=${c.correctedAt}):`,
-        `- Original: impactType=${c.originalImpactType}, numericDelta=${c.originalNumericDelta ?? 'null'}, narrative="${c.originalNarrative}"`,
-        `- Corrected: impactType=${c.correctedImpactType}, numericDelta=${c.correctedNumericDelta ?? 'null'}, narrative="${c.correctedNarrative ?? '(none)'}"`,
-        `- Consultant reasoning: ${c.correctorReasoning}`,
-      );
-    }
   }
 
-  const system = systemLines.join('\n');
+  // The consultant's narratives and reasoning are outside content, so each
+  // correction body is a guarded block inside the system prompt. The fixed
+  // instructions and correction headers stay plain text.
+  const system: SystemContentBlock[] = [{ text: systemLines.join('\n') }];
+  for (let i = 0; i < fewShots.length; i += 1) {
+    const c = fewShots[i];
+    system.push(
+      { text: `\n\nCORRECTION ${i + 1} (topic=${c.topic}, domain=${c.policyDomain}, at=${c.correctedAt}):\n` },
+      guarded(
+        [
+          `- Original: impactType=${c.originalImpactType}, numericDelta=${c.originalNumericDelta ?? 'null'}, narrative="${c.originalNarrative}"`,
+          `- Corrected: impactType=${c.correctedImpactType}, numericDelta=${c.correctedNumericDelta ?? 'null'}, narrative="${c.correctedNarrative ?? '(none)'}"`,
+          `- Consultant reasoning: ${c.correctorReasoning}`,
+        ].join('\n'),
+      ),
+    );
+  }
 
-  const user = [
-    'RULE CONTENT (source of truth, may be truncated):',
-    snippet,
-    '',
-    'CLIENT PROFILE (opaque client_id only):',
-    clientJson,
-    '',
-    'ANALYST HYPOTHESIS (under review):',
-    hypothesisJson,
-    '',
+  const instructions = [
     'Audit the hypothesis. Return this exact JSON shape:',
     '{',
     '  "passed": boolean,',
@@ -227,15 +230,50 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     '- issues array is empty only when passed=true AND no corrections were needed.',
   ].join('\n');
 
-  const res = await bedrock.send(
-    new ConverseCommand({
-      modelId: AUDITOR_MODEL,
-      system: [{ text: system }],
-      messages: [{ role: 'user', content: [{ text: user }] }],
-      inferenceConfig: { maxTokens: 800, temperature: 0.1 },
-      guardrailConfig: guardrailConfig(),
-    }),
-  );
+  // Rule text, client profile and the Analyst's hypothesis are all outside
+  // content. See guardrail.ts for the tagging rule.
+  return {
+    modelId: AUDITOR_MODEL,
+    system,
+    messages: [{
+      role: 'user',
+      content: [
+        { text: 'RULE CONTENT (source of truth, may be truncated):\n' },
+        guarded(snippet + '\n\n'),
+        { text: 'CLIENT PROFILE (opaque client_id only):\n' },
+        guarded(clientJson + '\n\n'),
+        { text: 'ANALYST HYPOTHESIS (under review):\n' },
+        guarded(hypothesisJson + '\n\n'),
+        { text: instructions },
+      ],
+    }],
+    inferenceConfig: { maxTokens: 800, temperature: 0.1 },
+    guardrailConfig: guardrailConfig(),
+  };
+}
+
+async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[], runId: string): Promise<AuditVerdict> {
+  const res = await bedrock.send(new ConverseCommand(buildAuditRequest(hyp, ruleContent, fewShots)));
+
+  if (res.stopReason === 'guardrail_intervened') {
+    const block = describeGuardrailBlock(res);
+    log('error', 'guardrail-blocked', {
+      runId,
+      agent: 'auditor',
+      hypothesisId: hyp.hypothesisId,
+      clientId: hyp.clientId,
+      ruleHash: hyp.ruleHash,
+      stage: block.stage,
+      policies: block.policies,
+      guardedInputs: [
+        'rule-text',
+        'client-profile',
+        'analyst-hypothesis',
+        ...(fewShots.length > 0 ? ['consultant-corrections'] : []),
+      ],
+    });
+    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+  }
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);
