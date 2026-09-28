@@ -313,8 +313,8 @@ export class ArgusStatefulStack extends cdk.Stack {
           },
           {
             name: 'street-address',
-            description: 'Street number followed by a street type, English or French, e.g. 45 Rideau Street, 2201 rue Sainte-Catherine',
-            pattern: String.raw`\b[0-9]{1,6}[A-Za-z]?(?:-[0-9]{1,6})?,?\s+(?:[A-Za-zÀ-ÿ0-9.'-]+\s+){0,4}(?:[Ss]treet|St|[Aa]venue|Ave|[Rr]oad|Rd|[Bb]oulevard|Blvd|[Dd]rive|Dr|[Ll]ane|Ln|[Cc]rescent|Cres|[Cc]ourt|Ct|[Ww]ay|[Pp]lace|Pl|[Tt]errace|[Hh]ighway|Hwy|[Pp]arkway|Pkwy|[Cc]ircle|[Rr]ue|[Cc]hemin|[Bb]oul|[Aa]ve|[Rr]ang)\b`,
+            description: 'Street number, capitalized street name and type (45 Rideau Street), or French rue/chemin/boulevard before a capitalized name (2201 rue Sainte-Catherine)',
+            pattern: String.raw`\b[0-9]{1,6}[A-Za-z]?(?:-[0-9]{1,6})?,?\s+(?:(?:[A-Z][A-Za-zÀ-ÿ.'-]*\s+){1,4}(?:Street|St|Avenue|Ave|Road|Rd|Boulevard|Blvd|Drive|Dr|Lane|Ln|Crescent|Cres|Court|Ct|Way|Place|Pl|Terrace|Highway|Hwy|Parkway|Pkwy|Circle)\b|(?:[Rr]ue|[Cc]hemin|[Bb]oulevard|[Bb]oul|[Aa]venue|[Rr]ang)\s+(?:de\s+la\s+|de\s+l'|du\s+|des\s+|de\s+)?[A-ZÀ-Ý])`,
             action: 'BLOCK',
           },
         ],
