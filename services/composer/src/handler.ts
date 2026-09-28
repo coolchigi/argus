@@ -6,6 +6,7 @@ import { unmarshall } from '@aws-sdk/util-dynamodb';
 import type { DynamoDBStreamEvent, DynamoDBRecord } from 'aws-lambda';
 import { randomUUID } from 'node:crypto';
 import { describeGuardrailBlock, guarded } from './guardrail';
+import { ruleWindow } from './rule-window';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -16,7 +17,6 @@ const BRIEFS_TABLE = requiredEnv('BRIEFS_TABLE');
 const COMPOSER_MODEL = requiredEnv('BEDROCK_COMPOSER_MODEL');
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
-const RULE_CONTENT_MAX_CHARS = 3000;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -154,7 +154,7 @@ async function loadRuleContent(ruleHash: string): Promise<string> {
 }
 
 export function buildComposeRequest(assessment: Assessment, ruleContent: string): ConverseCommandInput {
-  const snippet = ruleContent.slice(0, RULE_CONTENT_MAX_CHARS);
+  const snippet = ruleWindow(ruleContent);
 
   const system = [
     'You are the Composer agent in Argus, an IRCC policy-impact platform for Regulated Canadian Immigration Consultants (RCICs).',
@@ -206,7 +206,7 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
       content: [
         { text: 'ASSESSMENT (signed and audit-verified):\n' },
         guarded(assessmentJson + '\n\n'),
-        { text: 'RULE CONTENT (source of truth, may be truncated):\n' },
+        { text: 'RULE CONTENT (source of truth, a long rule is shown as an excerpt, marked in brackets):\n' },
         guarded(snippet + '\n\n'),
         { text: instructions },
       ],
