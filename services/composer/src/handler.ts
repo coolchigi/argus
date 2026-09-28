@@ -94,8 +94,8 @@ async function processOne(record: DynamoDBRecord, runId: string): Promise<'compo
     return 'skipped';
   }
 
-  const ruleContent = await loadRuleContent(assessment.ruleHash);
-  const draft = await compose(assessment, ruleContent, runId);
+  const rule = await loadRule(assessment.ruleHash);
+  const draft = await compose(assessment, rule.content, runId);
 
   const briefId = randomUUID();
   const now = new Date().toISOString();
@@ -131,6 +131,7 @@ async function processOne(record: DynamoDBRecord, runId: string): Promise<'compo
     impactType: assessment.impactType,
     numericDelta: assessment.numericDelta,
     confidence: assessment.confidence,
+    ruleSeverity: rule.severity,
     subject: draft.subject,
     createdAt: now,
   });
@@ -147,10 +148,17 @@ async function processOne(record: DynamoDBRecord, runId: string): Promise<'compo
   return 'composed';
 }
 
-async function loadRuleContent(ruleHash: string): Promise<string> {
+// One read gives Composer the rule text for the prompt and the severity
+// Sentinel classified, which it forwards so Alerts never needs its own
+// threshold.
+async function loadRule(ruleHash: string): Promise<{ content: string; severity: string | null }> {
   const res = await ddb.send(new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash } }));
   const content = res.Item?.rule_content;
-  return typeof content === 'string' ? content : '';
+  const severity = res.Item?.severity;
+  return {
+    content: typeof content === 'string' ? content : '',
+    severity: typeof severity === 'string' ? severity : null,
+  };
 }
 
 export function buildComposeRequest(assessment: Assessment, ruleContent: string): ConverseCommandInput {
