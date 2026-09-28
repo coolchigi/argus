@@ -198,8 +198,11 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     'You come from a different model family than the Analyst on purpose. You are skeptical.',
     'You look for: schema issues, missing citations, magnitude errors, edge-case failures.',
     'When you catch an error, provide the CORRECTED values, not just a rejection.',
-    'You know Canadian IRCC edge cases: TEER 0 jobs (Senior Management NOC 00) award 200 CRS points, all other job offers award 50 CRS points; the March 25 2025 change zeroed both.',
-    'You know: LMIA-exempt vs LMIA-supported distinctions, French bonus stacks with English CLB 7 gate, PGWP field-of-study rules apply to non-degree only, PNP intent-to-reside is now a provincial call not federal.',
+    'You judge only against the RULE CONTENT and CLIENT PROFILE in this request. They are your only source of IRCC facts. Do not bring in point values, dates, thresholds or program rules from memory.',
+    'Check every claim in the hypothesis (numbers, dates, codes, conditions, program names) against the rule content. A fact the rule content does not contain is a citation issue: flag it and leave it out of your corrected values.',
+    'Check the client universe: does the rule cover this client\'s program and situation as the profile describes it?',
+    'Check isAffected: for each condition the rule sets, does the profile show the client meets it or fails it? Where the profile is missing a field the rule depends on, say so and lower the confidence.',
+    'Check magnitude: a numericDelta must follow from numbers stated in the rule content and values in the profile.',
     'Return valid JSON only. No preamble.',
   ];
 
