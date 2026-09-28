@@ -23,6 +23,7 @@ const REASONER_MODEL = requiredEnv('BEDROCK_REASONER_MODEL');
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const RULE_CONTENT_MAX_CHARS = 4000;
+const GROUNDING_QUERY_MAX_CHARS = 1000;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -262,7 +263,9 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
     'You produce ONE structured impact hypothesis. Return valid JSON only. No preamble, no explanation.',
     'You never see or reference the client by name. Client is identified only by client_id.',
     'You are conservative: prefer isAffected=false when the policy change does not clearly apply.',
+    'A pause, cap or closure of intake affects clients who have not yet submitted an application, including clients waiting for an invitation or selection to apply. A client who can no longer take their next step is affected.',
     'Numeric deltas are only for CRS point changes; leave null for non-CRS changes.',
+    'Base every statement on the rule content and the client profile only. Reuse the rule content\'s own wording. Do not add facts, programs or options the rule content does not mention.',
   ].join('\n');
 
   const policyChange = [
@@ -288,22 +291,25 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
     '}',
   ].join('\n');
 
-  // Mark the rule snippet as a grounding source and the assessment ask
-  // as a query so the guardrail's contextual-grounding filter can score
-  // the Analyst's output against the rule text. Both qualifiers are
-  // required for the grounding policy to evaluate; without either the
-  // Converse call fails with a validation error.
-  const groundedQuery = [
+  // Contextual grounding scores the Analyst's answer against every
+  // grounding_source block combined, so the rule text and the client
+  // profile are both sources. The query keeps its old shape, profile
+  // included, because scores dropped in testing when the profile left the
+  // query or moved after the ask. Bedrock rejects the whole call when the
+  // query is over 1,000 characters, so a long profile is cut to fit. The
+  // full profile is in the grounding source anyway.
+  const queryHead = [
     `POLICY CHANGE`,
     `- Domain: ${delta.policyDomain}`,
     `- Topic: ${delta.topic}`,
     `- Summary: ${delta.summary}`,
     ``,
     `CLIENT PROFILE`,
-    clientJson,
     ``,
-    `Produce ONE impact hypothesis for this client against the rule content in the grounding source. Return the JSON shape described in the system prompt.`,
   ].join('\n');
+  const queryTail = `\n\nProduce ONE impact hypothesis for this client against the rule content in the grounding source. Return the JSON shape described in the system prompt.`;
+  const profileBudget = Math.max(0, GROUNDING_QUERY_MAX_CHARS - queryHead.length - queryTail.length);
+  const groundedQuery = (queryHead + clientJson.slice(0, profileBudget) + queryTail).slice(0, GROUNDING_QUERY_MAX_CHARS);
 
   // Qualified blocks feed only the contextual-grounding check, so the rule
   // text, policy change and client profile are also tagged without a
@@ -319,6 +325,14 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
           guardContent: {
             text: {
               text: `RULE CONTENT (source of truth):\n${ruleSnippet}`,
+              qualifiers: ['grounding_source'],
+            },
+          },
+        },
+        {
+          guardContent: {
+            text: {
+              text: `CLIENT PROFILE (source of truth):\n${clientJson}`,
               qualifiers: ['grounding_source'],
             },
           },
