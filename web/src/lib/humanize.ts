@@ -118,3 +118,13 @@ export function humanizeSeverity(s: string | null | undefined): string {
   if (s === "low") return "Low";
   return "Not set";
 }
+
+const SIGNATURE_ALGORITHM_LABELS: Record<string, string> = {
+  ECDSA_SHA_256: "ECDSA P-256 (SHA-256)",
+};
+
+/** KMS signing enum to a readable name. "ECDSA_SHA_256" becomes "ECDSA P-256 (SHA-256)". */
+export function humanizeSignatureAlgorithm(a: string | null | undefined): string {
+  if (!a) return "Not set";
+  return SIGNATURE_ALGORITHM_LABELS[a] ?? a;
+}
