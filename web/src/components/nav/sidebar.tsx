@@ -8,7 +8,8 @@ import { EyeMark } from "@/components/argus/eye-mark";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { NavIcon } from "@/components/nav/nav-icons";
 import { NAV_BOTTOM, NAV_GROUPS, isActivePath, type NavItem } from "@/components/nav/nav-config";
-import { POLICY_EVENTS_MAX_LIMIT, useActionRequiredCount, usePolicyEvents } from "@/lib/queries";
+import { useSetupProgress } from "@/components/setup/use-setup-progress";
+import { POLICY_EVENTS_MAX_LIMIT, useActionRequiredCount, useMe, usePolicyEvents } from "@/lib/queries";
 import { env } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
@@ -25,6 +26,9 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   // Same params as the dashboard, so both read one cached response.
   const policyEvents = usePolicyEvents({ limit: POLICY_EVENTS_MAX_LIMIT }, { enabled: authed });
   const eventsActionRequired = policyEvents.data?.totals.actionRequired ?? null;
+  const me = useMe({ enabled: authed });
+  const setup = useSetupProgress({ enabled: authed });
+  const firm = me.data?.consultant.firm ?? null;
   const sha = env.buildSha ? env.buildSha.slice(0, 7) : null;
 
   function renderItem(item: NavItem) {
@@ -37,6 +41,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           : null;
     const badgeTone =
       item.badge === "policy-events" ? "bg-brand-subtle text-brand-ink" : "bg-danger-subtle text-danger-ink";
+    const setupBadge = item.badge === "setup" && setup && !setup.complete ? setup : null;
     return (
       <li key={item.href}>
         <Link
@@ -56,6 +61,16 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <span className={cn("ml-auto rounded-sm px-1.5 font-mono text-[11px] leading-5 tabular", badgeTone)}>
               <span aria-hidden>{badgeCount}</span>
               <span className="sr-only">{badgeSrText(item.badge, badgeCount)}</span>
+            </span>
+          )}
+          {setupBadge && (
+            <span className="ml-auto rounded-sm bg-brand-subtle px-1.5 font-mono text-[11px] leading-5 text-brand-ink tabular">
+              <span aria-hidden>
+                {setupBadge.done} of {setupBadge.total}
+              </span>
+              <span className="sr-only">
+                , {setupBadge.done} of {setupBadge.total} steps done
+              </span>
             </span>
           )}
         </Link>
@@ -103,6 +118,11 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             <div className="truncate text-[13px] text-ink-1">
               {[auth.claims.givenName, auth.claims.familyName].filter(Boolean).join(" ") || auth.claims.email}
             </div>
+            {firm && (
+              <div className="mt-0.5 truncate text-[12px] text-ink-2" title={firm}>
+                {firm}
+              </div>
+            )}
             <div className="mt-0.5 truncate font-mono text-[11px] text-ink-2">
               {auth.claims.rcicLicense ? `RCIC ${auth.claims.rcicLicense}` : auth.claims.email}
             </div>

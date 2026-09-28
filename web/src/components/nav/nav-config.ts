@@ -3,8 +3,9 @@ import type { NavIconName } from "@/components/nav/nav-icons";
 /**
  * action-required: affected assessments with no sent brief (danger).
  * policy-events: policy events whose status is action-required (brand).
+ * setup: "N of M" setup steps done, hidden once setup is complete (brand).
  */
-export type NavBadge = "action-required" | "policy-events";
+export type NavBadge = "action-required" | "policy-events" | "setup";
 
 export type NavItem = {
   href: string;
@@ -40,7 +41,7 @@ export const NAV_GROUPS: NavGroup[] = [
 
 export const NAV_BOTTOM: NavItem[] = [
   { href: "/settings", label: "Settings", icon: "settings" },
-  { href: "/setup", label: "Setup guide", icon: "setup" },
+  { href: "/setup", label: "Setup guide", icon: "setup", badge: "setup" },
 ];
 
 const ALL_ITEMS: NavItem[] = [...NAV_GROUPS.flatMap((g) => g.items), ...NAV_BOTTOM];

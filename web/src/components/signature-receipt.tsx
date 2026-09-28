@@ -7,6 +7,7 @@ import { Seal } from "@/components/seal";
 import { api } from "@/lib/api";
 import type { AuditSignature } from "@/lib/argus-types";
 import { verifyAssessmentSignature } from "@/lib/signature-verify";
+import { markSampleVerified } from "@/components/setup/use-setup-progress";
 import { VERIFY_TIMELINE, prefersReducedMotion } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { humanizeSignatureAlgorithm } from "@/lib/humanize";
@@ -117,6 +118,8 @@ export function SignatureReceipt({
 
       const now = new Date();
       setLoaded({ sig, verifiedAt: now, message: null });
+      // Ticks "Verified a sample receipt" in the setup guide.
+      markSampleVerified();
 
       const t = prefersReducedMotion() ? REDUCED_STAGE_TIMING : {
         sealBar: VERIFY_TIMELINE.sealBarStart,
