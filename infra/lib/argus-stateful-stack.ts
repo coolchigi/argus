@@ -292,7 +292,9 @@ export class ArgusStatefulStack extends cdk.Stack {
           { type: 'NAME', action: 'BLOCK' },
           { type: 'EMAIL', action: 'BLOCK' },
           { type: 'PHONE', action: 'BLOCK' },
-          { type: 'ADDRESS', action: 'BLOCK' },
+          // No built-in ADDRESS entity: it flags "Canada", "Quebec" and
+          // "British Columbia", which every IRCC page and brief contains.
+          // Real street addresses and postal codes are caught by the regexes below.
           { type: 'US_SOCIAL_SECURITY_NUMBER', action: 'BLOCK' },
           { type: 'CA_SOCIAL_INSURANCE_NUMBER', action: 'BLOCK' },
           { type: 'DRIVER_ID', action: 'BLOCK' },
@@ -301,6 +303,20 @@ export class ArgusStatefulStack extends cdk.Stack {
           { type: 'PASSWORD', action: 'BLOCK' },
           { type: 'IP_ADDRESS', action: 'ANONYMIZE' },
           { type: 'AGE', action: 'ANONYMIZE' },
+        ],
+        regexesConfig: [
+          {
+            name: 'ca-postal-code',
+            description: 'Canadian postal code, e.g. K1A 0B1',
+            pattern: String.raw`\b[ABCEGHJ-NPRSTVXYabceghj-nprstvxy][0-9][ABCEGHJ-NPRSTV-Zabceghj-nprstv-z][ -]?[0-9][ABCEGHJ-NPRSTV-Zabceghj-nprstv-z][0-9]\b`,
+            action: 'BLOCK',
+          },
+          {
+            name: 'street-address',
+            description: 'Street number followed by a street type, English or French, e.g. 45 Rideau Street, 2201 rue Sainte-Catherine',
+            pattern: String.raw`\b[0-9]{1,6}[A-Za-z]?(?:-[0-9]{1,6})?,?\s+(?:[A-Za-zÀ-ÿ0-9.'-]+\s+){0,4}(?:[Ss]treet|St|[Aa]venue|Ave|[Rr]oad|Rd|[Bb]oulevard|Blvd|[Dd]rive|Dr|[Ll]ane|Ln|[Cc]rescent|Cres|[Cc]ourt|Ct|[Ww]ay|[Pp]lace|Pl|[Tt]errace|[Hh]ighway|Hwy|[Pp]arkway|Pkwy|[Cc]ircle|[Rr]ue|[Cc]hemin|[Bb]oul|[Aa]ve|[Rr]ang)\b`,
+            action: 'BLOCK',
+          },
         ],
       },
       contextualGroundingPolicyConfig: {
