@@ -1,8 +1,9 @@
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, ConverseCommand, type ConverseCommandInput } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
+import { describeGuardrailBlock, guarded } from './guardrail';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -85,7 +86,7 @@ export const handler = async (): Promise<{
 
   for (const rcicId of rcicIds) {
     const clients = await loadClients(rcicId);
-    const existingKeys = await loadExistingAssessmentKeys(rcicId);
+    const assessed = await loadAssessedPairs(rcicId);
 
     for (const rule of rules) {
       const candidates = filterByProgram(clients, rule.policy_domain);
@@ -95,8 +96,14 @@ export const handler = async (): Promise<{
           break;
         }
         const recallEventId = recallEventIdFor(rule.rule_hash);
-        const assessmentKey = `${recallEventId}#${client.clientId}`;
-        if (existingKeys.has(assessmentKey)) {
+        // Skip when this tenant already has an assessment for the same rule
+        // hash and client, whether it came from live Sentinel or an earlier
+        // Recall run. The assessmentKey check covers older rows written
+        // before ruleHash was on every item.
+        if (
+          assessed.ruleClientPairs.has(`${rule.rule_hash}#${client.clientId}`) ||
+          assessed.assessmentKeys.has(`${recallEventId}#${client.clientId}`)
+        ) {
           pairsSkippedAlreadyAssessed += 1;
           continue;
         }
@@ -172,7 +179,12 @@ async function loadRecentRules(): Promise<PolicyRule[]> {
         ExclusiveStartKey,
       }),
     );
-    for (const item of res.Items ?? []) out.push(item as unknown as PolicyRule);
+    for (const item of res.Items ?? []) {
+      // A superseded rule keeps its row for replay but should not be
+      // re-emitted for fresh analysis.
+      if (item.deprecated_at !== undefined && item.deprecated_at !== null && item.deprecated_at !== '') continue;
+      out.push(item as unknown as PolicyRule);
+    }
     ExclusiveStartKey = res.LastEvaluatedKey;
   } while (ExclusiveStartKey);
   return out;
@@ -189,8 +201,14 @@ async function loadClients(rcicId: string): Promise<ClientSummary[]> {
   return (res.Items ?? []) as ClientSummary[];
 }
 
-async function loadExistingAssessmentKeys(rcicId: string): Promise<Set<string>> {
-  const keys = new Set<string>();
+// One paginated Query per tenant (ImpactAssessments is keyed by rcicId),
+// projected down to the three attributes the dedup needs. The per-pair
+// checks then run against in-memory sets.
+async function loadAssessedPairs(
+  rcicId: string,
+): Promise<{ assessmentKeys: Set<string>; ruleClientPairs: Set<string> }> {
+  const assessmentKeys = new Set<string>();
+  const ruleClientPairs = new Set<string>();
   let ExclusiveStartKey: Record<string, unknown> | undefined = undefined;
   do {
     const res: { Items?: Record<string, unknown>[]; LastEvaluatedKey?: Record<string, unknown> } = await ddb.send(
@@ -198,16 +216,20 @@ async function loadExistingAssessmentKeys(rcicId: string): Promise<Set<string>> 
         TableName: IMPACT_ASSESSMENTS_TABLE,
         KeyConditionExpression: 'rcicId = :r',
         ExpressionAttributeValues: { ':r': rcicId },
-        ProjectionExpression: 'assessmentKey',
+        ProjectionExpression: '#ak, #rh, #cid',
+        ExpressionAttributeNames: { '#ak': 'assessmentKey', '#rh': 'ruleHash', '#cid': 'clientId' },
         ExclusiveStartKey,
       }),
     );
     for (const item of res.Items ?? []) {
-      if (typeof item.assessmentKey === 'string') keys.add(item.assessmentKey);
+      if (typeof item.assessmentKey === 'string') assessmentKeys.add(item.assessmentKey);
+      if (typeof item.ruleHash === 'string' && typeof item.clientId === 'string') {
+        ruleClientPairs.add(`${item.ruleHash}#${item.clientId}`);
+      }
     }
     ExclusiveStartKey = res.LastEvaluatedKey;
   } while (ExclusiveStartKey);
-  return keys;
+  return { assessmentKeys, ruleClientPairs };
 }
 
 function filterByProgram(clients: ClientSummary[], policyDomain: string): ClientSummary[] {
@@ -215,7 +237,7 @@ function filterByProgram(clients: ClientSummary[], policyDomain: string): Client
   return clients.filter((c) => c.program === policyDomain);
 }
 
-async function triage(rule: PolicyRule, client: ClientSummary, runId: string): Promise<TriageDecision> {
+export function buildTriageRequest(rule: PolicyRule, client: ClientSummary): ConverseCommandInput {
   const system = [
     'You are the Recall triage agent in Argus.',
     'You decide whether a specific (rule, client) pair deserves deep multi-agent analysis, which is expensive.',
@@ -224,23 +246,20 @@ async function triage(rule: PolicyRule, client: ClientSummary, runId: string): P
     'Return valid JSON only. No preamble.',
   ].join('\n');
 
-  const user = [
-    'RULE (recent IRCC change):',
-    JSON.stringify(
-      {
-        topic: rule.topic,
-        policyDomain: rule.policy_domain,
-        ruleKind: rule.rule_kind,
-        severity: rule.severity,
-        summary: rule.summary,
-      },
-      null,
-      2,
-    ),
-    '',
-    'CLIENT (opaque id only):',
-    JSON.stringify(stripUndefined(client as unknown as Record<string, unknown>), null, 2),
-    '',
+  const ruleJson = JSON.stringify(
+    {
+      topic: rule.topic,
+      policyDomain: rule.policy_domain,
+      ruleKind: rule.rule_kind,
+      severity: rule.severity,
+      summary: rule.summary,
+    },
+    null,
+    2,
+  );
+  const clientJson = JSON.stringify(stripUndefined(client as unknown as Record<string, unknown>), null, 2);
+
+  const instructions = [
     'Return this exact JSON shape:',
     '{',
     '  "deserves_analysis": boolean,',
@@ -248,15 +267,45 @@ async function triage(rule: PolicyRule, client: ClientSummary, runId: string): P
     '}',
   ].join('\n');
 
-  const res = await bedrock.send(
-    new ConverseCommand({
-      modelId: TRIAGE_MODEL,
-      system: [{ text: system }],
-      messages: [{ role: 'user', content: [{ text: user }] }],
-      inferenceConfig: { maxTokens: 200, temperature: 0 },
-      guardrailConfig: guardrailConfig(),
-    }),
-  );
+  // The rule summary and the client profile are outside content. See
+  // guardrail.ts for the tagging rule.
+  return {
+    modelId: TRIAGE_MODEL,
+    system: [{ text: system }],
+    messages: [{
+      role: 'user',
+      content: [
+        { text: 'RULE (recent IRCC change):\n' },
+        guarded(ruleJson + '\n\n'),
+        { text: 'CLIENT (opaque id only):\n' },
+        guarded(clientJson + '\n\n'),
+        { text: instructions },
+      ],
+    }],
+    inferenceConfig: { maxTokens: 200, temperature: 0 },
+    guardrailConfig: guardrailConfig(),
+  };
+}
+
+async function triage(rule: PolicyRule, client: ClientSummary, runId: string): Promise<TriageDecision> {
+  const res = await bedrock.send(new ConverseCommand(buildTriageRequest(rule, client)));
+
+  // A blocked pair is skipped, the same outcome a non-JSON reply had
+  // before, so one bad pair doesn't stop the rest of the run.
+  if (res.stopReason === 'guardrail_intervened') {
+    const block = describeGuardrailBlock(res);
+    log('error', 'guardrail-blocked', {
+      runId,
+      agent: 'recall',
+      rcicId: client.rcicId,
+      clientId: client.clientId,
+      ruleHash: rule.rule_hash,
+      stage: block.stage,
+      policies: block.policies,
+      guardedInputs: ['rule-summary', 'client-profile'],
+    });
+    return { deserves_analysis: false, rationale: 'guardrail-blocked' };
+  }
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);

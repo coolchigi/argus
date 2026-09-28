@@ -1,8 +1,17 @@
-import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, ConverseCommand, type ConverseCommandInput } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import {
+  BatchGetCommand,
+  type BatchGetCommandOutput,
+  DynamoDBDocumentClient,
+  GetCommand,
+  QueryCommand,
+  ScanCommand,
+} from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
+import { describeGuardrailBlock, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
+import { ruleWindow } from './rule-window';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -14,7 +23,7 @@ const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const REASONER_MODEL = requiredEnv('BEDROCK_REASONER_MODEL');
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
-const RULE_CONTENT_MAX_CHARS = 4000;
+const GROUNDING_QUERY_MAX_CHARS = 1000;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -40,6 +49,7 @@ type PolicyDelta = {
   newHash: string;
   s3Key: string;
   contentLengthDelta: number;
+  targetRcicIds?: string[];
 };
 
 type EventBridgeInput = { source?: string; 'detail-type'?: string; detail?: PolicyDelta };
@@ -96,6 +106,7 @@ type ImpactHypothesis = {
   recommendedAction: string;
   confidence: 'low' | 'medium' | 'high';
   reasoning: string;
+  groundingCheck: GroundingCheck;
 };
 
 export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ hypothesesEmitted: number }> => {
@@ -116,14 +127,23 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
     return { hypothesesEmitted: 0 };
   }
 
-  const rcicIds = await loadActiveRcicIds();
-  log('info', 'rcics-loaded', { runId, activeRcicCount: rcicIds.length });
+  const targeted = Array.isArray(delta.targetRcicIds) && delta.targetRcicIds.length > 0;
+  const rcicIds = targeted
+    ? await loadActiveTargetRcicIds(delta.targetRcicIds as string[])
+    : await loadActiveRcicIds();
+  log('info', 'rcics-loaded', {
+    runId,
+    mode: targeted ? 'targeted' : 'all-active',
+    requestedRcicCount: targeted ? delta.targetRcicIds!.length : null,
+    activeRcicCount: rcicIds.length,
+  });
   if (rcicIds.length === 0) {
     log('info', 'no-active-rcics', { runId });
     return { hypothesesEmitted: 0 };
   }
 
   let total = 0;
+  const dropped: { rcicId: string; clientId: string; reason: string }[] = [];
   for (const rcicId of rcicIds) {
     const clients = await queryCaseload(rcicId);
     const candidates = filterByPolicyDomain(clients, delta.policyDomain);
@@ -136,7 +156,7 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
 
     for (const client of candidates) {
       try {
-        const hyp = await reason(delta, rule, client);
+        const hyp = await reason(delta, rule, client, runId);
         await emitHypothesis(hyp, delta, client);
         log('info', 'hypothesis-emitted', {
           runId,
@@ -148,20 +168,33 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
           numericDelta: hyp.numericDelta,
           confidence: hyp.confidence,
           narrative: hyp.narrative,
+          groundingCheck: hyp.groundingCheck,
         });
         total += 1;
       } catch (err) {
-        log('error', 'reason-failed', {
+        // A dropped client gets no assessment, so the consultant would never
+        // hear about this change for them. Log it loudly and count it.
+        const reasonText = err instanceof Error ? err.message : String(err);
+        dropped.push({ rcicId, clientId: client.clientId, reason: reasonText });
+        log('error', 'client-dropped', {
           runId,
           rcicId,
           clientId: client.clientId,
-          error: err instanceof Error ? err.message : String(err),
+          policyEventId: delta.eventId,
+          ruleHash: delta.ruleHash,
+          reason: reasonText,
         });
       }
     }
   }
 
-  log('info', 'analyst-complete', { runId, hypothesesEmitted: total });
+  log(dropped.length > 0 ? 'error' : 'info', 'analyst-complete', {
+    runId,
+    policyEventId: delta.eventId,
+    hypothesesEmitted: total,
+    clientsDropped: dropped.length,
+    dropped,
+  });
   return { hypothesesEmitted: total };
 };
 
@@ -191,6 +224,34 @@ async function loadActiveRcicIds(): Promise<string[]> {
   return out;
 }
 
+// Reads only the named tenants from RcicUsers and keeps the ones that
+// exist and are not marked inactive.
+async function loadActiveTargetRcicIds(requested: string[]): Promise<string[]> {
+  const ids = [...new Set(requested.filter((id) => typeof id === 'string' && id.length > 0))];
+  const active = new Set<string>();
+  for (let i = 0; i < ids.length; i += 100) {
+    let keys: Record<string, unknown>[] | undefined = ids.slice(i, i + 100).map((rcicId) => ({ rcicId }));
+    for (let attempt = 0; keys && keys.length > 0; attempt++) {
+      if (attempt >= 5) throw new Error('BatchGet on RcicUsers left unprocessed keys after 5 attempts');
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 100 * 2 ** attempt));
+      const res: BatchGetCommandOutput = await ddb.send(
+        new BatchGetCommand({
+          RequestItems: {
+            [RCIC_USERS_TABLE]: { Keys: keys, ProjectionExpression: 'rcicId, active' },
+          },
+        }),
+      );
+      for (const item of res.Responses?.[RCIC_USERS_TABLE] ?? []) {
+        if (typeof item.rcicId !== 'string') continue;
+        if (item.active === false) continue;
+        active.add(item.rcicId);
+      }
+      keys = res.UnprocessedKeys?.[RCIC_USERS_TABLE]?.Keys;
+    }
+  }
+  return ids.filter((id) => active.has(id));
+}
+
 async function queryCaseload(rcicId: string): Promise<ClientProfile[]> {
   const res = await ddb.send(
     new QueryCommand({
@@ -207,9 +268,10 @@ function filterByPolicyDomain(clients: ClientProfile[], policyDomain: string): C
   return clients.filter((c) => c.program === policyDomain);
 }
 
-async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile): Promise<ImpactHypothesis> {
-  const ruleSnippet = (rule.rule_content ?? '').slice(0, RULE_CONTENT_MAX_CHARS);
-  const clientJson = JSON.stringify(stripUndefined(client), null, 2);
+export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile): ConverseCommandInput {
+  const profile = stripUndefined(client);
+  const ruleSnippet = ruleWindow(rule.rule_content ?? '', profile);
+  const clientJson = JSON.stringify(profile, null, 2);
 
   const system = [
     'You are the Analyst agent in Argus, an IRCC policy-impact platform.',
@@ -217,11 +279,13 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     'You produce ONE structured impact hypothesis. Return valid JSON only. No preamble, no explanation.',
     'You never see or reference the client by name. Client is identified only by client_id.',
     'You are conservative: prefer isAffected=false when the policy change does not clearly apply.',
+    'A pause, cap or closure of intake affects clients who have not yet submitted an application, including clients waiting for an invitation or selection to apply. A client who can no longer take their next step is affected.',
+    'When the rule sets a condition for the client\'s own program (a list of eligible codes, a minimum, a required validity period) and the profile shows the client does not meet it, the client is affected. Being absent from such a list is a finding, not a reason to answer false. A list that only offers an optional extra route affects only the clients who are on it.',
     'Numeric deltas are only for CRS point changes; leave null for non-CRS changes.',
+    'Base every statement on the rule content and the client profile only. Reuse the rule content\'s own wording. Do not add facts, programs or options the rule content does not mention.',
   ].join('\n');
 
-  const user = [
-    'POLICY CHANGE',
+  const policyChange = [
     `- Domain: ${delta.policyDomain}`,
     `- Topic: ${delta.topic}`,
     `- Category: ${delta.category}`,
@@ -229,13 +293,9 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     `- Rule kind: ${delta.ruleKind}`,
     `- Summary (from ingest classifier): ${delta.summary}`,
     `- Source: ${delta.sourceUrl}`,
-    '',
-    'RULE CONTENT SNIPPET (may be truncated):',
-    ruleSnippet,
-    '',
-    'CLIENT PROFILE:',
-    clientJson,
-    '',
+  ].join('\n');
+
+  const instructions = [
     'Return this exact JSON shape:',
     '{',
     '  "isAffected": boolean,',
@@ -248,53 +308,94 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     '}',
   ].join('\n');
 
-  // Mark the rule snippet as a grounding source and the assessment ask
-  // as a query so the guardrail's contextual-grounding filter can score
-  // the Analyst's output against the rule text. Both qualifiers are
-  // required for the grounding policy to evaluate; without either the
-  // Converse call fails with a validation error.
-  const groundedQuery = [
+  // Contextual grounding scores the Analyst's answer against every
+  // grounding_source block combined, so the rule text and the client
+  // profile are both sources. The query keeps its old shape, profile
+  // included, because scores dropped in testing when the profile left the
+  // query or moved after the ask. Bedrock rejects the whole call when the
+  // query is over 1,000 characters, so a long profile is cut to fit. The
+  // full profile is in the grounding source anyway.
+  const queryHead = [
     `POLICY CHANGE`,
     `- Domain: ${delta.policyDomain}`,
     `- Topic: ${delta.topic}`,
     `- Summary: ${delta.summary}`,
     ``,
     `CLIENT PROFILE`,
-    clientJson,
     ``,
-    `Produce ONE impact hypothesis for this client against the rule content in the grounding source. Return the JSON shape described in the system prompt.`,
   ].join('\n');
+  const queryTail = `\n\nProduce ONE impact hypothesis for this client against the rule content in the grounding source. Return the JSON shape described in the system prompt.`;
+  const profileBudget = Math.max(0, GROUNDING_QUERY_MAX_CHARS - queryHead.length - queryTail.length);
+  const groundedQuery = (queryHead + clientJson.slice(0, profileBudget) + queryTail).slice(0, GROUNDING_QUERY_MAX_CHARS);
 
-  const res = await bedrock.send(
-    new ConverseCommand({
-      modelId: REASONER_MODEL,
-      system: [{ text: system }],
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            guardContent: {
-              text: {
-                text: `RULE CONTENT (source of truth):\n${ruleSnippet}`,
-                qualifiers: ['grounding_source'],
-              },
+  // Qualified blocks feed only the contextual-grounding check, so the rule
+  // text, policy change and client profile are also tagged without a
+  // qualifier. That's what makes the guardrail's PII and prompt-attack
+  // filters evaluate them. See guardrail.ts for the tagging rule.
+  return {
+    modelId: REASONER_MODEL,
+    system: [{ text: system }],
+    messages: [{
+      role: 'user',
+      content: [
+        {
+          guardContent: {
+            text: {
+              text: `RULE CONTENT (source of truth):\n${ruleSnippet}`,
+              qualifiers: ['grounding_source'],
             },
           },
-          {
-            guardContent: {
-              text: {
-                text: groundedQuery,
-                qualifiers: ['query'],
-              },
+        },
+        {
+          guardContent: {
+            text: {
+              text: `CLIENT PROFILE (source of truth):\n${clientJson}`,
+              qualifiers: ['grounding_source'],
             },
           },
-          { text: user },
-        ],
-      }],
-      inferenceConfig: { maxTokens: 800, temperature: 0.1 },
-      guardrailConfig: guardrailConfig(),
-    }),
-  );
+        },
+        {
+          guardContent: {
+            text: {
+              text: groundedQuery,
+              qualifiers: ['query'],
+            },
+          },
+        },
+        { text: 'POLICY CHANGE\n' },
+        guarded(policyChange + '\n\n'),
+        { text: 'RULE CONTENT (a long rule is shown as an excerpt, marked in brackets):\n' },
+        guarded(ruleSnippet + '\n\n'),
+        { text: 'CLIENT PROFILE:\n' },
+        guarded(clientJson + '\n\n'),
+        { text: instructions },
+      ],
+    }],
+    inferenceConfig: { maxTokens: 800, temperature: 0.1 },
+    guardrailConfig: guardrailConfig(),
+  };
+}
+
+// Contextual grounding runs in detect mode, so a guardrail block here comes
+// from the PII, content or prompt-attack filters. Those are never retried.
+// The grounding and relevance scores ride on the hypothesis to the Auditor.
+async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile, runId: string): Promise<ImpactHypothesis> {
+  const res = await bedrock.send(new ConverseCommand(buildReasonRequest(delta, rule, client)));
+
+  if (res.stopReason === 'guardrail_intervened') {
+    const block = describeGuardrailBlock(res);
+    log('error', 'guardrail-blocked', {
+      runId,
+      agent: 'analyst',
+      rcicId: client.rcicId,
+      clientId: client.clientId,
+      ruleHash: delta.ruleHash,
+      stage: block.stage,
+      policies: block.policies,
+      guardedInputs: ['policy-change', 'rule-text', 'client-profile'],
+    });
+    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+  }
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);
@@ -318,6 +419,7 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     recommendedAction: parsed.recommendedAction ?? '(no action)',
     confidence: (parsed.confidence ?? 'low') as ImpactHypothesis['confidence'],
     reasoning: parsed.reasoning ?? '(no reasoning)',
+    groundingCheck: readGroundingCheck(res),
   };
 }
 
