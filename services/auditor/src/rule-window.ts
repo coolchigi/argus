@@ -72,7 +72,7 @@ export function ruleWindow(ruleContent: string, profile?: Record<string, unknown
         `The lines below are the later lines of the full rule content that contain one of these client profile values: ${needles.join(', ')}.]`,
     );
     if (extra.length > 0) parts.push(extra.join('\n'));
-    if (missing.length > 0) parts.push(`[No line of the full rule content contains: ${missing.join(', ')}.]`);
+    if (missing.length > 0) parts.push(`[The full ${ruleContent.length}-character rule content was searched. None of it contains: ${missing.join(', ')}.]`);
   }
   return parts.join('\n').slice(0, maxChars);
 }
