@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { SiteHeader } from "@/components/site-header";
 import { SiteFooter } from "@/components/site-footer";
 import { verifyAssessmentSignature } from "@/lib/signature-verify";
+import { markSampleVerified } from "@/components/setup/use-setup-progress";
 import { VERIFY_TIMELINE, prefersReducedMotion } from "@/lib/motion";
 import { CheckCircle2, XCircle, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -61,6 +62,8 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
         setStage("invalid");
         return;
       }
+      // Ticks "Verified a sample receipt" in the setup guide.
+      markSampleVerified();
       const t = prefersReducedMotion() ? { sealBar: 60, settled: 300 } : {
         sealBar: VERIFY_TIMELINE.sealBarStart,
         settled: VERIFY_TIMELINE.totalDuration,
