@@ -8,7 +8,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
-import { describeGuardrailBlock, guarded } from './guardrail';
+import { describeGuardrailBlock, guarded, type GroundingCheck } from './guardrail';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -52,6 +52,8 @@ type ImpactHypothesis = {
   confidence: Confidence;
   reasoning: string;
   clientProfile: Record<string, unknown>;
+  // Absent on hypotheses emitted before grounding moved to detect mode.
+  groundingCheck?: GroundingCheck;
 };
 
 type EventBridgeInput = { source?: string; 'detail-type'?: string; detail?: ImpactHypothesis };
@@ -244,12 +246,34 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
         guarded(clientJson + '\n\n'),
         { text: 'ANALYST HYPOTHESIS (under review):\n' },
         guarded(hypothesisJson + '\n\n'),
+        { text: groundingEvidence(hyp.groundingCheck) + '\n\n' },
         { text: instructions },
       ],
     }],
     inferenceConfig: { maxTokens: 800, temperature: 0.1 },
     guardrailConfig: guardrailConfig(),
   };
+}
+
+// The guardrail's contextual grounding check scored the Analyst's answer
+// against the rule text and client profile. It runs in detect mode, so the
+// score is evidence for the Auditor to weigh, never a verdict. Numbers only,
+// written by our code, so this block stays unguarded.
+export function groundingEvidence(check: GroundingCheck | undefined): string {
+  const lines = ['AUTOMATED GROUNDING CHECK (evidence to weigh, not a verdict):'];
+  if (!check || (check.grounding === null && check.relevance === null)) {
+    lines.push('- Not available for this hypothesis.');
+    return lines.join('\n');
+  }
+  const fmt = (n: number | null) => (n === null ? 'n/a' : n.toFixed(2));
+  const below = (score: number | null, threshold: number | null) =>
+    score !== null && threshold !== null && score < threshold ? ', BELOW threshold' : '';
+  lines.push(
+    `- Grounding score ${fmt(check.grounding)} (threshold ${fmt(check.groundingThreshold)}${below(check.grounding, check.groundingThreshold)}). Measures how well the hypothesis statements are supported by the rule content and client profile. Lower means some statements may not be supported: check each one against the rule content.`,
+    `- Relevance score ${fmt(check.relevance)} (threshold ${fmt(check.relevanceThreshold)}${below(check.relevance, check.relevanceThreshold)}). Measures whether the hypothesis addresses this client and this policy change. Lower means it may be off topic.`,
+    '- A low score alone is not a reason to reject. Decide from the rule content and the client profile.',
+  );
+  return lines.join('\n');
 }
 
 async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[], runId: string): Promise<AuditVerdict> {

@@ -27,6 +27,32 @@ export function describeGuardrailBlock(res: ConverseCommandOutput): GuardrailBlo
   return { stage: 'unknown', policies: [] };
 }
 
+export type GroundingCheck = {
+  grounding: number | null;
+  groundingThreshold: number | null;
+  relevance: number | null;
+  relevanceThreshold: number | null;
+};
+
+// Reads the contextual grounding and relevance scores from the output
+// assessment. The guardrail runs these checks in detect mode, so they're
+// evidence for the Auditor and never block. Reads only numbers from the
+// trace. Null means the check didn't run (no grounding source or query).
+export function readGroundingCheck(res: ConverseCommandOutput): GroundingCheck {
+  const filters = Object.values(res.trace?.guardrail?.outputAssessments ?? {})
+    .flat()
+    .flatMap((a) => a.contextualGroundingPolicy?.filters ?? []);
+  const pick = (type: string) => filters.find((f) => f.type === type);
+  const grounding = pick('GROUNDING');
+  const relevance = pick('RELEVANCE');
+  return {
+    grounding: grounding?.score ?? null,
+    groundingThreshold: grounding?.threshold ?? null,
+    relevance: relevance?.score ?? null,
+    relevanceThreshold: relevance?.threshold ?? null,
+  };
+}
+
 function blockedPolicies(a: GuardrailAssessment): string[] {
   const out: string[] = [];
   for (const t of a.topicPolicy?.topics ?? []) if (t.action === 'BLOCKED') out.push(`topic:${t.name}`);
