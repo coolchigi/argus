@@ -9,6 +9,7 @@ import { verifyAssessmentSignature } from "@/lib/signature-verify";
 import { VERIFY_TIMELINE, prefersReducedMotion } from "@/lib/motion";
 import { CheckCircle2, XCircle, Copy } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { humanizeSignatureAlgorithm, humanizeTopic } from "@/lib/humanize";
 
 type PublicVerify = {
   fingerprint: string;
@@ -88,7 +89,7 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
       />
       <SiteHeader />
 
-      <main className="flex-1 mx-auto w-full max-w-[560px] px-6 pt-16 pb-16">
+      <main id="main" className="flex-1 mx-auto w-full max-w-[560px] px-6 pt-16 pb-16">
         {stage === "loading" && (
           <div className="py-16 text-center label">Loading receipt</div>
         )}
@@ -122,18 +123,18 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
               <div className="mt-2 fingerprint-lg text-ink-primary">
                 {formatFingerprint(data.canonicalHash)}
               </div>
+              <p className="mt-3 text-[13px] text-ink-secondary">
+                {stage === "settled"
+                  ? `Signed on ${formatDate(data.signedAt)}. Unchanged since.`
+                  : `Signed on ${formatDate(data.signedAt)}.`}
+              </p>
             </div>
 
             <div className="rounded-lg border border-border bg-surface px-8 py-8 space-y-5">
-              <ReceiptField label="Topic" value={data.topic} />
+              <ReceiptField label="Topic" value={humanizeTopic(data.topic)} />
               <ReceiptField label="Signed at" value={formatDateTime(data.signedAt)} tabular />
-              <ReceiptField label="Algorithm" value={data.signatureAlgorithm} />
-              <ReceiptField label="Signing key" value={data.signingKeyId} mono />
-              <ReceiptField
-                label="Public keys"
-                value="argus.ca/.well-known/jwks.json"
-                link="/.well-known/jwks.json"
-              />
+              <ReceiptField label="Algorithm" value={humanizeSignatureAlgorithm(data.signatureAlgorithm)} />
+              <ReceiptField label="Signing key" value={`Key ID ${data.signingKeyId}`} mono />
             </div>
 
             <div className="rounded-lg border border-border bg-surface px-8 py-6">
@@ -201,20 +202,14 @@ function ReceiptField({
   value,
   mono,
   tabular,
-  link,
 }: {
   label: string;
   value: string;
   mono?: boolean;
   tabular?: boolean;
-  link?: string;
 }) {
   const content = mono ? (
     <span className="fingerprint text-ink-primary break-all">{value}</span>
-  ) : link ? (
-    <a href={link} className="text-[13px] text-ink-primary hover:underline underline-offset-4 decoration-border break-all">
-      {value}
-    </a>
   ) : (
     <span className={cn("text-[13px] text-ink-primary", tabular && "tabular")}>{value}</span>
   );
@@ -243,6 +238,12 @@ function formatDateTime(iso: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
 }
 
 function formatTime(d: Date): string {

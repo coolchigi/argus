@@ -4,11 +4,11 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SectionLabel } from "@/components/argus/section-label";
 import { confirmSignUp, resendConfirmationCode } from "@/lib/auth";
-import { Seal } from "@/components/seal";
+import { EyeMark } from "@/components/argus/eye-mark";
 
-function VerifyForm() {
+function ConfirmEmailForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const initialEmail = searchParams.get("email") ?? "";
@@ -42,9 +42,9 @@ function VerifyForm() {
   return (
     <div className="space-y-8">
       <div className="flex flex-col items-center gap-3">
-        <Seal className="h-8 w-8 text-seal" />
+        <EyeMark className="h-8 w-8" />
         <div className="flex flex-col items-center gap-1">
-          <h1 className="text-[24px] font-medium tracking-tight text-ink-primary" style={{ fontFamily: "var(--font-newsreader), serif" }}>
+          <h1 className="font-display text-[24px] leading-tight text-ink-1">
             Confirm your email
           </h1>
           <p className="text-[12px] text-ink-secondary text-center">
@@ -57,11 +57,11 @@ function VerifyForm() {
 
       <form onSubmit={onSubmit} className="space-y-5">
         <div className="space-y-1.5">
-          <Label htmlFor="email" className="label">Email</Label>
+          <SectionLabel as="label" htmlFor="email">Email</SectionLabel>
           <Input id="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="h-10" />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="code" className="label">Confirmation code</Label>
+          <SectionLabel as="label" htmlFor="code">Confirmation code</SectionLabel>
           <Input
             id="code"
             inputMode="numeric"
@@ -76,7 +76,7 @@ function VerifyForm() {
         <button
           type="submit"
           disabled={busy}
-          className="w-full h-10 rounded-sm bg-primary text-primary-foreground text-[13px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="w-full h-10 rounded-sm border border-brand-ink bg-brand text-on-brand text-[13px] font-medium hover:bg-brand-hover disabled:opacity-50 transition-colors"
         >
           {busy ? "Confirming" : "Confirm"}
         </button>
@@ -95,10 +95,10 @@ function VerifyForm() {
   );
 }
 
-export default function VerifyPage() {
+export default function ConfirmEmailPage() {
   return (
     <Suspense fallback={<div className="text-center label">Loading</div>}>
-      <VerifyForm />
+      <ConfirmEmailForm />
     </Suspense>
   );
 }

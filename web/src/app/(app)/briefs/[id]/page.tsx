@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { Brief } from "@/lib/argus-types";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SectionLabel } from "@/components/argus/section-label";
 import { Textarea } from "@/components/ui/textarea";
 import { CitationChips } from "@/components/citation-chips";
 import { Seal } from "@/components/seal";
@@ -154,10 +154,7 @@ function BriefBody({
           <span className="text-[12px] text-ink-tertiary">·</span>
           <span className="text-[12px] text-ink-tertiary tabular">{formatRelative(brief.createdAt)}</span>
         </div>
-        <h1
-          className="text-[24px] font-medium tracking-tight text-ink-primary leading-tight"
-          style={{ fontFamily: "var(--font-newsreader), serif" }}
-        >
+        <h1 className="font-display text-[24px] leading-tight text-ink-1">
           {subject || "Untitled brief"}
         </h1>
       </header>
@@ -175,7 +172,7 @@ function BriefBody({
           </div>
           <div className="p-4 space-y-4">
             <div className="space-y-1.5">
-              <Label htmlFor="subject" className="label">Subject</Label>
+              <SectionLabel as="label" htmlFor="subject">Subject</SectionLabel>
               <Input
                 id="subject"
                 value={subject}
@@ -185,7 +182,7 @@ function BriefBody({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="body" className="label">Body</Label>
+              <SectionLabel as="label" htmlFor="body">Body</SectionLabel>
               <Textarea
                 id="body"
                 rows={16}
@@ -196,7 +193,7 @@ function BriefBody({
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="actions" className="label">Suggested actions · one per line</Label>
+              <SectionLabel as="label" htmlFor="actions">Suggested actions · one per line</SectionLabel>
               <Textarea
                 id="actions"
                 rows={4}

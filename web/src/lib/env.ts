@@ -8,6 +8,8 @@ const apiUrl = process.env.NEXT_PUBLIC_ARGUS_API_URL;
 const cognitoRegion = process.env.NEXT_PUBLIC_COGNITO_REGION;
 const cognitoUserPoolId = process.env.NEXT_PUBLIC_COGNITO_USER_POOL_ID;
 const cognitoClientId = process.env.NEXT_PUBLIC_COGNITO_USER_POOL_CLIENT_ID;
+// Optional. Amplify echoes AWS_COMMIT_ID into this at build time.
+const buildSha = process.env.NEXT_PUBLIC_BUILD_SHA || null;
 
 if (!apiUrl) throw new Error("Missing NEXT_PUBLIC_ARGUS_API_URL");
 if (!cognitoRegion) throw new Error("Missing NEXT_PUBLIC_COGNITO_REGION");
@@ -19,4 +21,5 @@ export const env = {
   cognitoRegion,
   cognitoUserPoolId,
   cognitoClientId,
+  buildSha,
 };

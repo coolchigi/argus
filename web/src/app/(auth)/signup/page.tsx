@@ -5,9 +5,9 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SectionLabel } from "@/components/argus/section-label";
 import { signUp } from "@/lib/auth";
-import { Seal } from "@/components/seal";
+import { EyeMark } from "@/components/argus/eye-mark";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -35,7 +35,7 @@ export default function SignupPage() {
         rcicLicense: license,
       });
       toast.success("Check your email for a confirmation code.");
-      router.push(`/verify?email=${encodeURIComponent(email)}`);
+      router.push(`/confirm-email?email=${encodeURIComponent(email)}`);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "sign-up-failed");
     } finally {
@@ -46,9 +46,9 @@ export default function SignupPage() {
   return (
     <div className="space-y-8">
       <div className="flex flex-col items-center gap-3">
-        <Seal className="h-8 w-8 text-seal" />
+        <EyeMark className="h-8 w-8" />
         <div className="flex flex-col items-center gap-1">
-          <h1 className="text-[24px] font-medium tracking-tight text-ink-primary" style={{ fontFamily: "var(--font-newsreader), serif" }}>
+          <h1 className="font-display text-[24px] leading-tight text-ink-1">
             Create your account
           </h1>
           <p className="text-[12px] text-ink-secondary text-center">
@@ -62,24 +62,24 @@ export default function SignupPage() {
       <form onSubmit={onSubmit} className="space-y-5">
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
-            <Label htmlFor="given" className="label">First name</Label>
+            <SectionLabel as="label" htmlFor="given">First name</SectionLabel>
             <Input id="given" required value={givenName} onChange={(e) => setGivenName(e.target.value)} className="h-10" />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="family" className="label">Last name</Label>
+            <SectionLabel as="label" htmlFor="family">Last name</SectionLabel>
             <Input id="family" required value={familyName} onChange={(e) => setFamilyName(e.target.value)} className="h-10" />
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="email" className="label">Email</Label>
+          <SectionLabel as="label" htmlFor="email">Email</SectionLabel>
           <Input id="email" type="email" autoComplete="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="h-10" />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="rcic" className="label">CICC R-license</Label>
+          <SectionLabel as="label" htmlFor="rcic">CICC R-license</SectionLabel>
           <Input id="rcic" required placeholder="R527888" value={rcicLicense} onChange={(e) => setRcicLicense(e.target.value)} className="h-10 font-mono" />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="password" className="label">Password</Label>
+          <SectionLabel as="label" htmlFor="password">Password</SectionLabel>
           <Input
             id="password"
             type="password"
@@ -95,7 +95,7 @@ export default function SignupPage() {
         <button
           type="submit"
           disabled={busy}
-          className="w-full h-10 rounded-sm bg-primary text-primary-foreground text-[13px] font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
+          className="w-full h-10 rounded-sm border border-brand-ink bg-brand text-on-brand text-[13px] font-medium hover:bg-brand-hover disabled:opacity-50 transition-colors"
         >
           {busy ? "Creating" : "Create account"}
         </button>

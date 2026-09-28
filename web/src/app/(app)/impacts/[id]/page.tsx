@@ -7,14 +7,18 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type { Impact, ImpactType, Confidence } from "@/lib/argus-types";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { SectionLabel } from "@/components/argus/section-label";
 import { Textarea } from "@/components/ui/textarea";
 import { SignatureReceipt } from "@/components/signature-receipt";
 import { AgentLineage } from "@/components/agent-lineage";
 import { CitationChips } from "@/components/citation-chips";
 import { formatDelta, formatRelative } from "@/lib/format";
 import { ArrowLeft } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { humanizeImpactType, humanizeTopic } from "@/lib/humanize";
+import { PageHeader } from "@/components/argus/page-header";
+import { Badge } from "@/components/argus/status-badge";
+import { formatDayMonthYear } from "@/components/dashboard/derive";
+import { useBreadcrumbLabel } from "@/components/nav/breadcrumb-context";
 
 const IMPACT_TYPES: ImpactType[] = [
   "crs-delta",
@@ -58,19 +62,22 @@ export default function ImpactDetailPage({ params }: { params: Promise<{ id: str
 }
 
 function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: string }) {
+  const title = humanizeTopic(impact.topic);
+  useBreadcrumbLabel(`${impact.clientId} · ${title}`);
   return (
     <div className="grid grid-cols-[1fr_320px] gap-10">
       <div className="space-y-8 min-w-0">
-        <header className="space-y-2">
-          <div className="label">{impact.topic}</div>
-          <h1
-            className="text-[32px] font-medium tracking-tight text-ink-primary leading-tight"
-            style={{ fontFamily: "var(--font-newsreader), serif" }}
-          >
-            Impact on <span className="client-chip text-[26px] px-3 py-1 align-middle">{impact.clientId}</span>
-          </h1>
-          <p className="text-[13px] text-ink-secondary tabular">{formatRelative(impact.timestamp)}</p>
-        </header>
+        <PageHeader
+          title={`${impact.clientId} · ${title}`}
+          meta={
+            <>
+              <time dateTime={impact.timestamp} className="text-ink-2">
+                Signed {formatDateTime(impact.timestamp)}
+              </time>
+              <span> · {formatRelative(impact.timestamp)}</span>
+            </>
+          }
+        />
 
         <AgentLineage />
 
@@ -79,7 +86,7 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
             <div>
               <div className="label">Impact type</div>
               <div className="mt-1 text-[15px] font-medium text-ink-primary">
-                {formatImpactType(impact.impactType)}
+                {humanizeImpactType(impact.impactType)}
               </div>
             </div>
             <HeroDelta delta={impact.numericDelta} type={impact.impactType} />
@@ -124,25 +131,28 @@ function HeroDelta({ delta, type }: { delta: number | null; type: string }) {
   if (delta === null || type === "none") {
     return (
       <div className="text-right">
-        <div className="label">Effect</div>
-        <div className="mt-1 text-[15px] font-medium text-ink-secondary">Not affected</div>
+        <div className="label">CRS points</div>
+        <div className="mt-1 text-[15px] font-medium text-ink-2">n/a</div>
       </div>
     );
   }
-  const negative = delta < 0;
   return (
     <div className="text-right">
       <div className="label">CRS points</div>
-      <div
-        className={cn(
-          "mt-1 text-[36px] font-medium leading-none tabular tracking-tight",
-          negative ? "text-red" : "text-seal",
-        )}
-      >
-        {formatDelta(delta)}
+      <div className="mt-1 flex items-center justify-end gap-2">
+        {delta !== 0 && <Badge tone={delta < 0 ? "danger" : "brand"}>{delta < 0 ? "Down" : "Up"}</Badge>}
+        <span className="font-mono text-[20px] font-medium leading-none tabular text-ink-1">{formatDelta(delta)}</span>
       </div>
     </div>
   );
+}
+
+/** "21 Sep 2026, 23:02" in the viewer's time zone. */
+function formatDateTime(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return "on an unknown date";
+  const time = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${formatDayMonthYear(iso)}, ${time}`;
 }
 
 function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; original: Impact }) {
@@ -218,7 +228,7 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
       <form onSubmit={onSubmit} className="mt-6 space-y-5">
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-1.5">
-            <Label htmlFor="impactType" className="label">Impact type</Label>
+            <SectionLabel as="label" htmlFor="impactType">Impact type</SectionLabel>
             <select
               id="impactType"
               className="w-full h-9 rounded-sm border border-input bg-surface px-2.5 text-[13px] text-ink-primary"
@@ -227,13 +237,13 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
             >
               {IMPACT_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {formatImpactType(t)}
+                  {humanizeImpactType(t)}
                 </option>
               ))}
             </select>
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="delta" className="label">CRS delta</Label>
+            <SectionLabel as="label" htmlFor="delta">CRS delta</SectionLabel>
             <Input
               id="delta"
               type="number"
@@ -246,7 +256,7 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="reasoning" className="label">Your reasoning · required</Label>
+          <SectionLabel as="label" htmlFor="reasoning">Your reasoning · required</SectionLabel>
           <Textarea
             id="reasoning"
             required
@@ -259,7 +269,7 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
         </div>
 
         <div className="space-y-1.5">
-          <Label htmlFor="narrative" className="label">Corrected summary</Label>
+          <SectionLabel as="label" htmlFor="narrative">Corrected summary</SectionLabel>
           <Textarea
             id="narrative"
             rows={2}
@@ -271,7 +281,7 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
 
         <div className="grid grid-cols-[1fr_140px] gap-4 items-end">
           <div className="space-y-1.5">
-            <Label htmlFor="action" className="label">Recommended action</Label>
+            <SectionLabel as="label" htmlFor="action">Recommended action</SectionLabel>
             <Input
               id="action"
               className="h-9 text-[13px]"
@@ -280,7 +290,7 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
             />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="conf" className="label">Confidence</Label>
+            <SectionLabel as="label" htmlFor="conf">Confidence</SectionLabel>
             <select
               id="conf"
               className="w-full h-9 rounded-sm border border-input bg-surface px-2.5 text-[13px] text-ink-primary"
@@ -316,17 +326,4 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
       </form>
     </div>
   );
-}
-
-function formatImpactType(t: string): string {
-  const map: Record<string, string> = {
-    "crs-delta": "CRS points changed",
-    "eligibility-flip": "Eligibility changed",
-    "deadline-shift": "Deadline shifted",
-    "lmia-implication": "LMIA implication",
-    "french-bonus": "French bonus affected",
-    "procedural": "Procedural change",
-    "none": "No impact",
-  };
-  return map[t] ?? t;
 }

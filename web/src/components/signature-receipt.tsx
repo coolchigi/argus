@@ -9,6 +9,7 @@ import type { AuditSignature } from "@/lib/argus-types";
 import { verifyAssessmentSignature } from "@/lib/signature-verify";
 import { VERIFY_TIMELINE, prefersReducedMotion } from "@/lib/motion";
 import { cn } from "@/lib/utils";
+import { humanizeSignatureAlgorithm } from "@/lib/humanize";
 
 type Props = {
   assessmentKey: string;
@@ -289,7 +290,7 @@ export function SignatureReceipt({
         </button>
         {detailsOpen && (
           <div className="px-6 pb-5 space-y-3 border-t border-border pt-4">
-            <TechRow label="Algorithm" value={sig?.signatureAlgorithm ?? "ECDSA_SHA_256"} />
+            <TechRow label="Algorithm" value={humanizeSignatureAlgorithm(sig?.signatureAlgorithm ?? "ECDSA_SHA_256")} />
             <TechRow label="Curve" value={sig?.verification?.curve ?? "P-256"} />
             <TechRow label="Key id" value={sig?.signingKeyId ?? "loaded on verify"} mono />
             <TechRow label="Full hash" value={sig?.canonicalHash ?? "loaded on verify"} mono wrap />

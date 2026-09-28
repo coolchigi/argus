@@ -1,249 +1,230 @@
 "use client";
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { ruleClientKey, sentRuleClientKeys } from "@/lib/current-assessments";
+import { useQueries, type UseQueryResult } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { Impact } from "@/lib/argus-types";
-import { Input } from "@/components/ui/input";
-import { Seal } from "@/components/seal";
-import { EmptyState } from "@/components/empty-state";
+import type { PolicyEventImpactsResponse } from "@/lib/types/policy-events";
+import { queryKeys, useBriefs, useImpacts } from "@/lib/queries";
+import { humanizeTopic } from "@/lib/humanize";
 import { formatDelta, formatRelative } from "@/lib/format";
-import { cn } from "@/lib/utils";
-import { Search } from "lucide-react";
+import { PageHeader } from "@/components/argus/page-header";
+import { DataTable, type Column } from "@/components/argus/data-table";
+import { FilterBar } from "@/components/argus/filter-bar";
+import { StatusBadge } from "@/components/argus/status-badge";
+import { ClientChip } from "@/components/argus/client-chip";
+import { Fingerprint } from "@/components/argus/fingerprint";
+import { InlineError } from "@/components/argus/inline-error";
+import { ProgressLine } from "@/components/argus/progress-line";
+import { EmptyState } from "@/components/empty-state";
 
-type Filter = "all" | "signed" | "pending" | "corrected";
+type AssessmentStatus = "action-required" | "corrected" | "done" | "no-impact";
+type Filter = "all" | AssessmentStatus;
+
+type Row = Impact & { status: AssessmentStatus; title: string };
+
+const FILTERS: Array<{ value: Filter; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "action-required", label: "Action required" },
+  { value: "corrected", label: "Corrected" },
+  { value: "done", label: "Done" },
+  { value: "no-impact", label: "No impact" },
+];
+
+/**
+ * Every stored assessment is signed, so the status column shows what the
+ * consultant still has to do. A correction wins over everything else.
+ */
+/** Keys are (rule, client), so a brief or correction on any run of the rule counts. */
+function deriveStatus(i: Impact, sentKeys: ReadonlySet<string>, correctedKeys: ReadonlySet<string>): AssessmentStatus {
+  const key = ruleClientKey(i);
+  if (correctedKeys.has(key)) return "corrected";
+  if (!i.isAffected) return "no-impact";
+  return sentKeys.has(key) ? "done" : "action-required";
+}
+
+/** Primitives only, so the combined result stays stable between renders. */
+function combineCorrections(results: Array<UseQueryResult<PolicyEventImpactsResponse>>) {
+  const keys: string[] = [];
+  for (const q of results) {
+    for (const c of q.data?.clients ?? []) {
+      if (c.correctionsFiled > 0) keys.push(c.assessmentKey);
+      for (const p of c.priorAssessments) if (p.correctionsFiled > 0) keys.push(p.assessmentKey);
+    }
+  }
+  return { pending: results.some((q) => q.isPending), keys: keys.sort().join("\n") };
+}
+
+const COLUMNS: Column<Row>[] = [
+  {
+    key: "title",
+    header: "Change",
+    cell: (r) => <span className="font-medium text-ink-1">{r.title}</span>,
+  },
+  {
+    key: "client",
+    header: "Client",
+    cell: (r) => <ClientChip clientId={r.clientId} />,
+  },
+  {
+    key: "status",
+    header: "Status",
+    cell: (r) => <StatusBadge kind="assessment" status={r.status} />,
+  },
+  {
+    key: "delta",
+    header: "CRS delta",
+    align: "right",
+    cell: (r) => (
+      <span className="font-mono text-[12px] tabular whitespace-nowrap text-ink-1">
+        {r.numericDelta === null || r.impactType === "none" ? (
+          <span className="text-ink-3">n/a</span>
+        ) : (
+          formatDelta(r.numericDelta)
+        )}
+      </span>
+    ),
+  },
+  {
+    key: "fingerprint",
+    header: "Signature",
+    cell: (r) =>
+      r.canonicalHash ? (
+        <Fingerprint hash={r.canonicalHash} signed={!!r.signatureAlgorithm} chars={8} />
+      ) : (
+        <span className="font-mono text-[12px] text-ink-3">n/a</span>
+      ),
+  },
+  {
+    key: "when",
+    header: "Signed",
+    align: "right",
+    cell: (r) => (
+      <time dateTime={r.timestamp} className="font-mono text-[12px] tabular whitespace-nowrap text-ink-2">
+        {formatRelative(r.timestamp)}
+      </time>
+    ),
+  },
+];
 
 export default function ImpactsPage() {
-  const q = useQuery({
-    queryKey: ["impacts"],
-    queryFn: () => api<{ impacts: Impact[] }>("/impacts"),
+  const impacts = useImpacts();
+  const briefs = useBriefs();
+  const all = useMemo(() => impacts.data?.impacts ?? [], [impacts.data]);
+
+  // Corrections aren't on the assessment row. The per-event endpoint joins them,
+  // and the event screen reads the same cache. Events are keyed by rule, and
+  // each response covers every run of that rule through priorAssessments.
+  const eventIds = useMemo(() => Array.from(new Set(all.map((i) => i.ruleHash || i.policyEventId))), [all]);
+  const corrections = useQueries({
+    queries: eventIds.map((id) => ({
+      queryKey: queryKeys.policyEventImpacts(id),
+      queryFn: () => api<PolicyEventImpactsResponse>(`/policy-events/${encodeURIComponent(id)}/impacts`),
+    })),
+    combine: combineCorrections,
   });
-  const all = q.data?.impacts ?? [];
+  // Corrections come back per assessmentKey (any run). Map them to (rule, client).
+  const correctedKeys = useMemo(() => {
+    const byAssessment = new Map((impacts.data?.allImpacts ?? []).map((i) => [i.assessmentKey, ruleClientKey(i)]));
+    const keys = corrections.keys ? corrections.keys.split("\n") : [];
+    return new Set(keys.map((k) => byAssessment.get(k)).filter((k): k is string => Boolean(k)));
+  }, [corrections.keys, impacts.data]);
+
+  const rowsAll = useMemo<Row[]>(() => {
+    const sent = sentRuleClientKeys(briefs.data?.briefs ?? []);
+    return all.map((i) => ({ ...i, status: deriveStatus(i, sent, correctedKeys), title: humanizeTopic(i.topic) }));
+  }, [all, briefs.data, correctedKeys]);
+
   const [filter, setFilter] = useState<Filter>("all");
   const [search, setSearch] = useState("");
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase();
-    return all.filter((i) => {
-      if (filter === "signed" && !i.signatureAlgorithm) return false;
-      if (filter === "pending" && i.signatureAlgorithm) return false;
-      if (filter === "corrected") return false; // reserved for a future correction-status field
+    return rowsAll.filter((r) => {
+      if (filter !== "all" && r.status !== filter) return false;
       if (!term) return true;
       return (
-        i.clientId.toLowerCase().includes(term) ||
-        i.topic.toLowerCase().includes(term) ||
-        (i.narrative ?? "").toLowerCase().includes(term)
+        r.clientId.toLowerCase().includes(term) ||
+        r.title.toLowerCase().includes(term) ||
+        r.topic.toLowerCase().includes(term) ||
+        (r.narrative ?? "").toLowerCase().includes(term)
       );
     });
-  }, [all, filter, search]);
+  }, [rowsAll, filter, search]);
 
-  return (
-    <div className="space-y-8">
-      <header className="space-y-1">
-        <div className="label">Assessments</div>
-        <h1
-          className="text-[24px] font-medium tracking-tight text-ink-primary leading-tight"
-          style={{ fontFamily: "var(--font-newsreader), serif" }}
-        >
-          Signed policy-impact assessments
-        </h1>
-        <p className="text-[13px] text-ink-secondary">
-          Every row was reviewed by Analyst and Auditor from different model families, then anchored with an
-          ECDSA signature you can verify in your browser.
-        </p>
-      </header>
+  const loading = impacts.isPending || briefs.isPending || corrections.pending;
+  const counts = useMemo(() => {
+    const c: Record<Filter, number> = { all: rowsAll.length, "action-required": 0, corrected: 0, done: 0, "no-impact": 0 };
+    for (const r of rowsAll) c[r.status] += 1;
+    return c;
+  }, [rowsAll]);
 
-      <div className="flex items-center gap-3">
-        <FilterPills value={filter} onChange={setFilter} counts={counts(all)} />
-        <div className="ml-auto relative w-[280px]">
-          <Search className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-ink-tertiary" strokeWidth={1.75} />
-          <Input
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search client, topic, wording"
-            className="h-8 pl-8 text-[13px]"
-          />
-        </div>
-      </div>
-
-      {all.length === 0 && !q.isLoading ? (
-        <div className="rounded-md border border-border bg-surface">
-          <EmptyState
-            headline="Nothing to review yet."
-            body="Argus starts watching IRCC the moment your first client is imported. Assessments land here as soon as Sentinel sees a change."
-          />
-        </div>
-      ) : (
-      <div className="rounded-md border border-border bg-surface overflow-hidden">
-        <table className="w-full">
-          <thead>
-            <tr className="border-b border-border">
-              <Th className="w-[110px]">Status</Th>
-              <Th>Topic</Th>
-              <Th>Client</Th>
-              <Th align="right">Delta</Th>
-              <Th className="w-[120px]">Fingerprint</Th>
-              <Th align="right" className="w-[120px]">When</Th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-divider">
-            {q.isLoading ? (
-              <tr>
-                <td colSpan={6} className="py-16 text-center label">Loading</td>
-              </tr>
-            ) : rows.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="py-16 text-center">
-                  <div className="label">Nothing matches</div>
-                  <p className="mt-2 text-[12px] text-ink-tertiary">Adjust the filter or clear the search.</p>
-                </td>
-              </tr>
-            ) : (
-              rows.map((i) => (
-                <tr key={i.assessmentKey} className="h-11 hover:bg-surface-alt/50 transition-colors">
-                  <Td>
-                    <StatusPill impact={i} />
-                  </Td>
-                  <Td>
-                    <Link
-                      href={`/impacts/${encodeURIComponent(i.assessmentKey)}`}
-                      className="text-[13px] font-medium text-ink-primary hover:underline underline-offset-4 decoration-border"
-                    >
-                      {i.topic}
-                    </Link>
-                  </Td>
-                  <Td>
-                    <span className="client-chip">{i.clientId}</span>
-                  </Td>
-                  <Td align="right">
-                    <DeltaChip delta={i.numericDelta} type={i.impactType} />
-                  </Td>
-                  <Td>
-                    {i.canonicalHash ? (
-                      <span className="fingerprint">{i.canonicalHash.slice(0, 8)}</span>
-                    ) : (
-                      <span className="text-[11px] text-ink-tertiary">—</span>
-                    )}
-                  </Td>
-                  <Td align="right">
-                    <span className="text-[11px] text-ink-tertiary tabular">{formatRelative(i.timestamp)}</span>
-                  </Td>
-                </tr>
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-      )}
-    </div>
+  const header = (
+    <PageHeader
+      title="Assessments"
+      meta="Reviewed by Analyst and Auditor from different model families, then signed by Anchor."
+    />
   );
-}
 
-function counts(impacts: Impact[]) {
-  return {
-    all: impacts.length,
-    signed: impacts.filter((i) => i.signatureAlgorithm).length,
-    pending: impacts.filter((i) => !i.signatureAlgorithm).length,
-    corrected: 0,
-  };
-}
-
-function FilterPills({
-  value,
-  onChange,
-  counts,
-}: {
-  value: Filter;
-  onChange: (f: Filter) => void;
-  counts: Record<Filter, number>;
-}) {
-  const OPTIONS: Array<{ v: Filter; label: string }> = [
-    { v: "all", label: "All" },
-    { v: "signed", label: "Signed" },
-    { v: "pending", label: "Pending" },
-    { v: "corrected", label: "Corrections" },
-  ];
-  return (
-    <div className="inline-flex items-center gap-0.5 rounded-md border border-border p-0.5">
-      {OPTIONS.map((o) => (
-        <button
-          key={o.v}
-          type="button"
-          onClick={() => onChange(o.v)}
-          className={cn(
-            "flex h-7 items-center gap-1.5 rounded-sm px-2.5 text-[12px] transition-colors",
-            value === o.v
-              ? "bg-surface-alt text-ink-primary font-medium"
-              : "text-ink-secondary hover:text-ink-primary",
-          )}
-        >
-          {o.label}
-          <span className="text-[11px] tabular text-ink-tertiary">{counts[o.v]}</span>
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function StatusPill({ impact }: { impact: Impact }) {
-  if (impact.signatureAlgorithm) {
+  if (impacts.error) {
     return (
-      <span className="inline-flex items-center gap-1.5 text-[12px] text-seal">
-        <Seal className="h-3 w-3" />
-        Signed
-      </span>
+      <div className="space-y-6">
+        {header}
+        <InlineError
+          message="Couldn't load your assessments."
+          detail={impacts.error instanceof Error ? impacts.error.message : null}
+          retrying={impacts.isFetching}
+          onRetry={() => void impacts.refetch()}
+        />
+      </div>
     );
   }
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[12px] text-amber">
-      <span className="h-2 w-2 rounded-full bg-amber" />
-      Pending
-    </span>
-  );
-}
 
-function Th({
-  children,
-  align = "left",
-  className = "",
-}: {
-  children: React.ReactNode;
-  align?: "left" | "right";
-  className?: string;
-}) {
-  return (
-    <th
-      className={cn(
-        "px-4 py-2.5 label",
-        align === "right" ? "text-right" : "text-left",
-        className,
-      )}
-    >
-      {children}
-    </th>
-  );
-}
-
-function Td({ children, align = "left" }: { children: React.ReactNode; align?: "left" | "right" }) {
-  return (
-    <td className={cn("px-4", align === "right" ? "text-right" : "text-left")}>{children}</td>
-  );
-}
-
-function DeltaChip({ delta, type }: { delta: number | null; type: string }) {
-  if (delta === null || type === "none") {
-    return <span className="text-[11px] text-ink-tertiary">—</span>;
+  if (impacts.data && all.length === 0) {
+    return (
+      <div className="space-y-6">
+        {header}
+        <EmptyState
+          headline="Nothing to review yet."
+          body="Argus starts watching IRCC the moment your first client is imported. Assessments land here as soon as Sentinel sees a change."
+        />
+      </div>
+    );
   }
-  const negative = delta < 0;
+
   return (
-    <span
-      className={cn(
-        "inline-block rounded-sm px-1.5 py-0.5 text-[12px] font-medium tabular",
-        negative ? "bg-red-subtle text-red" : "bg-seal-subtle text-seal",
-      )}
-    >
-      {formatDelta(delta)}
-    </span>
+    <div className="space-y-6">
+      <ProgressLine active={loading} fixed label="Loading assessments" />
+      {header}
+
+      <div>
+        <FilterBar
+          className="border border-b-0 border-hairline"
+          search={search}
+          onSearchChange={setSearch}
+          searchLabel="Search assessments"
+          searchPlaceholder="Search client, change, wording"
+          filters={FILTERS.map((f) => ({
+            value: f.value,
+            label: loading ? f.label : `${f.label} ${counts[f.value]}`,
+          }))}
+          filter={filter}
+          onFilterChange={(v) => setFilter(v as Filter)}
+          filterLabel="Filter by status"
+          count={loading ? undefined : `${rows.length} of ${rowsAll.length}`}
+        />
+        <DataTable
+          caption="Signed assessments"
+          columns={COLUMNS}
+          rows={rows}
+          getRowKey={(r) => r.assessmentKey}
+          rowHref={(r) => `/impacts/${encodeURIComponent(r.assessmentKey)}`}
+          rowLinkLabel={(r) => `${r.title} for ${r.clientId}`}
+          loading={loading}
+          empty="Nothing matches. Change the filter or clear the search."
+        />
+      </div>
+    </div>
   );
 }
