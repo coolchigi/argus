@@ -9,6 +9,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "isolatedModules": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
     "types": ["node"],
     "lib": ["ES2022"]
   },
