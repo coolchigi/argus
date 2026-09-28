@@ -281,7 +281,7 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
         { text: instructions },
       ],
     }],
-    inferenceConfig: { maxTokens: 800, temperature: 0.1 },
+    inferenceConfig: { maxTokens: 1200, temperature: 0.1 },
     guardrailConfig: guardrailConfig(),
   };
 }
