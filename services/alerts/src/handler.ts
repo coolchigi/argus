@@ -49,7 +49,15 @@ export const handler = async (event: EventBridgeInput | BriefReadyDetail): Promi
     return { dispatched: false, reason: 'severity-below-threshold' };
   }
 
-  const recipient = await resolveRecipient(detail.rcicId);
+  const user = await loadUser(detail.rcicId);
+  // The consultant turned real-time email off in Settings (PATCH /me). The
+  // brief is still drafted and waits in the app.
+  if (realtimeAlertsOff(user)) {
+    log('info', 'alert-skipped-preference-off', { runId, briefId: detail.briefId, rcicId: detail.rcicId });
+    return { dispatched: false, reason: 'realtime-alerts-off' };
+  }
+
+  const recipient = resolveRecipient(user);
   if (!recipient) {
     log('error', 'alert-no-recipient', { runId, rcicId: detail.rcicId });
     return { dispatched: false, reason: 'no-recipient-configured' };
@@ -90,9 +98,19 @@ function classify(detail: BriefReadyDetail): 'high' | 'medium' | 'low' {
   return 'medium';
 }
 
-async function resolveRecipient(rcicId: string): Promise<string | null> {
+async function loadUser(rcicId: string): Promise<Record<string, unknown> | null> {
   const res = await ddb.send(new GetCommand({ TableName: RCIC_USERS_TABLE, Key: { rcicId } }));
-  const email = res.Item?.email;
+  return (res.Item as Record<string, unknown> | undefined) ?? null;
+}
+
+/** Only an explicit false turns alerts off. A row without preferences keeps them on. */
+function realtimeAlertsOff(user: Record<string, unknown> | null): boolean {
+  const prefs = user?.preferences;
+  return prefs !== null && typeof prefs === 'object' && (prefs as Record<string, unknown>).realtimeAlerts === false;
+}
+
+function resolveRecipient(user: Record<string, unknown> | null): string | null {
+  const email = user?.email;
   if (typeof email === 'string' && email.includes('@')) return email;
   if (DEMO_RCIC_EMAIL) return DEMO_RCIC_EMAIL;
   return null;
