@@ -1,7 +1,14 @@
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import {
+  BatchGetCommand,
+  type BatchGetCommandOutput,
+  DynamoDBDocumentClient,
+  GetCommand,
+  QueryCommand,
+  ScanCommand,
+} from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 
 const bedrock = new BedrockRuntimeClient({});
@@ -40,6 +47,7 @@ type PolicyDelta = {
   newHash: string;
   s3Key: string;
   contentLengthDelta: number;
+  targetRcicIds?: string[];
 };
 
 type EventBridgeInput = { source?: string; 'detail-type'?: string; detail?: PolicyDelta };
@@ -116,8 +124,16 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
     return { hypothesesEmitted: 0 };
   }
 
-  const rcicIds = await loadActiveRcicIds();
-  log('info', 'rcics-loaded', { runId, activeRcicCount: rcicIds.length });
+  const targeted = Array.isArray(delta.targetRcicIds) && delta.targetRcicIds.length > 0;
+  const rcicIds = targeted
+    ? await loadActiveTargetRcicIds(delta.targetRcicIds as string[])
+    : await loadActiveRcicIds();
+  log('info', 'rcics-loaded', {
+    runId,
+    mode: targeted ? 'targeted' : 'all-active',
+    requestedRcicCount: targeted ? delta.targetRcicIds!.length : null,
+    activeRcicCount: rcicIds.length,
+  });
   if (rcicIds.length === 0) {
     log('info', 'no-active-rcics', { runId });
     return { hypothesesEmitted: 0 };
@@ -189,6 +205,34 @@ async function loadActiveRcicIds(): Promise<string[]> {
     ExclusiveStartKey = res.LastEvaluatedKey;
   } while (ExclusiveStartKey);
   return out;
+}
+
+// Reads only the named tenants from RcicUsers and keeps the ones that
+// exist and are not marked inactive.
+async function loadActiveTargetRcicIds(requested: string[]): Promise<string[]> {
+  const ids = [...new Set(requested.filter((id) => typeof id === 'string' && id.length > 0))];
+  const active = new Set<string>();
+  for (let i = 0; i < ids.length; i += 100) {
+    let keys: Record<string, unknown>[] | undefined = ids.slice(i, i + 100).map((rcicId) => ({ rcicId }));
+    for (let attempt = 0; keys && keys.length > 0; attempt++) {
+      if (attempt >= 5) throw new Error('BatchGet on RcicUsers left unprocessed keys after 5 attempts');
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 100 * 2 ** attempt));
+      const res: BatchGetCommandOutput = await ddb.send(
+        new BatchGetCommand({
+          RequestItems: {
+            [RCIC_USERS_TABLE]: { Keys: keys, ProjectionExpression: 'rcicId, active' },
+          },
+        }),
+      );
+      for (const item of res.Responses?.[RCIC_USERS_TABLE] ?? []) {
+        if (typeof item.rcicId !== 'string') continue;
+        if (item.active === false) continue;
+        active.add(item.rcicId);
+      }
+      keys = res.UnprocessedKeys?.[RCIC_USERS_TABLE]?.Keys;
+    }
+  }
+  return ids.filter((id) => active.has(id));
 }
 
 async function queryCaseload(rcicId: string): Promise<ClientProfile[]> {
