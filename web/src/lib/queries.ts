@@ -11,6 +11,7 @@ import type {
   PolicyEventStatus,
   PolicyEventsListResponse,
 } from "@/lib/types/policy-events";
+import type { MeResponse, PatchMeRequest } from "@/lib/types/me";
 import type {
   BulkRequest,
   BulkResponse,
@@ -36,6 +37,7 @@ export const queryKeys = {
   activity: (params: ActivityParams = {}) => ["activity", params] as const,
   profiles: () => ["profiles"] as const,
   profile: (clientId: string) => ["profile", clientId] as const,
+  me: () => ["me"] as const,
 };
 
 export type PolicyEventsParams = {
@@ -189,7 +191,11 @@ export function useBulkImport() {
   return useMutation({
     mutationFn: (body: BulkRequest) => api<BulkResponse>("/profiles/bulk", { method: "POST", body }),
     onSuccess: (res) => {
-      if (!res.dryRun) void qc.invalidateQueries({ queryKey: queryKeys.profiles() });
+      if (!res.dryRun) {
+        void qc.invalidateQueries({ queryKey: queryKeys.profiles() });
+        // The setup guide's caseload count comes from /me.
+        void qc.invalidateQueries({ queryKey: queryKeys.me() });
+      }
     },
   });
 }
@@ -198,7 +204,10 @@ export function useCreateProfile() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (body: CreateProfileRequest) => api<{ client: ClientProfile }>("/profiles", { method: "POST", body }),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: queryKeys.profiles() }),
+    onSuccess: () => {
+      void qc.invalidateQueries({ queryKey: queryKeys.profiles() });
+      void qc.invalidateQueries({ queryKey: queryKeys.me() });
+    },
   });
 }
 
@@ -211,5 +220,23 @@ export function usePatchProfile(clientId: string) {
       void qc.invalidateQueries({ queryKey: queryKeys.profiles() });
       void qc.invalidateQueries({ queryKey: queryKeys.profile(clientId) });
     },
+  });
+}
+
+/** GET /me. The consultant, their preferences, the signing key and setup counts. */
+export function useMe(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.me(),
+    queryFn: () => api<MeResponse>("/me"),
+    enabled: options.enabled ?? true,
+  });
+}
+
+/** PATCH /me. The response is the full /me body, so it replaces the cache without a refetch. */
+export function usePatchMe() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PatchMeRequest) => api<MeResponse>("/me", { method: "PATCH", body }),
+    onSuccess: (me) => qc.setQueryData(queryKeys.me(), me),
   });
 }
