@@ -70,10 +70,24 @@ export type CorrectionRow = {
   correctedAt: string;
 };
 
+export type EventOrigin = 'sentinel' | 'recall' | 'demo';
+
+/**
+ * What sent a run into the pipeline, from its id. Recall replays are
+ * `recall-...` and demo triggers `demo-${ms}-${hash8}` (services/demo). The
+ * delta's demoOrigin flag never reaches an assessment row, so the id is it.
+ */
+export function originOf(policyEventId: string): EventOrigin {
+  if (policyEventId.startsWith('recall-')) return 'recall';
+  if (policyEventId.startsWith('demo-')) return 'demo';
+  return 'sentinel';
+}
+
 export type PolicyEvent = {
   eventId: string;
   ref: string;
-  origin: 'sentinel' | 'recall';
+  /** From the first run's id: `recall-` is a Recall replay, `demo-` a demo trigger. */
+  origin: EventOrigin;
   ruleHash: string;
   topic: string;
   title: string;
@@ -142,8 +156,61 @@ export const EVENTS_MAX_LIMIT = 200;
 export const ACTIVITY_DEFAULT_LIMIT = 20;
 export const ACTIVITY_MAX_LIMIT = 100;
 
-// Display-only casing for kebab-case topic words. Not policy data.
-const ACRONYMS = new Set(['crs', 'ee', 'pnp', 'lmia', 'noc', 'teer', 'clb', 'nclc', 'ircc', 'fsw', 'fst', 'cec', 'pgp', 'pgwp', 'pr', 'eca', 'cip', 'gcms']);
+// Display-only casing for kebab-case topic words. Not policy data. A copy of
+// web/src/lib/humanize.ts, since services don't share code. The test pins the
+// same labels as web/src/lib/humanize.test.ts, so keep both in step.
+const ACRONYMS: Record<string, string> = {
+  crs: 'CRS',
+  ee: 'EE',
+  ircc: 'IRCC',
+  ita: 'ITA',
+  lmia: 'LMIA',
+  noc: 'NOC',
+  teer: 'TEER',
+  pgwp: 'PGWP',
+  sowp: 'SOWP',
+  pgp: 'PGP',
+  pnp: 'PNP',
+  cec: 'CEC',
+  fsw: 'FSW',
+  fst: 'FST',
+  clb: 'CLB',
+  nclc: 'NCLC',
+  ielts: 'IELTS',
+  tef: 'TEF',
+  cicc: 'CICC',
+  rcic: 'RCIC',
+  gcms: 'GCMS',
+  eta: 'eTA',
+  trv: 'TRV',
+  sds: 'SDS',
+  pal: 'PAL',
+  tal: 'TAL',
+  dli: 'DLI',
+  sin: 'SIN',
+  pr: 'PR',
+  eca: 'ECA',
+  cip: 'CIP',
+};
+
+// Proper nouns keep their capitals inside a sentence-case label.
+const PROPER: Record<string, string> = {
+  express: 'Express',
+  entry: 'Entry',
+  french: 'French',
+  canada: 'Canada',
+  canadian: 'Canadian',
+  quebec: 'Quebec',
+  atlantic: 'Atlantic',
+};
+
+// Acronym pairs IRCC names as alternatives, written with a slash: the
+// provincial or territorial attestation letter, and the English or French
+// language benchmark.
+const SLASH_PAIRS = new Set(['pal/tal', 'clb/nclc']);
+
+// Words that close a compound modifier and keep the hyphen before them.
+const COMPOUND_TAILS = new Set(['based', 'specific', 'related']);
 
 // ---------------------------------------------------------------------------
 // Grouping
@@ -270,7 +337,7 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
     events.push({
       eventId,
       ref: refFor(eventId, rule?.policyDomain ?? null, detectedAt),
-      origin: earliest.policyEventId.startsWith('recall-') ? 'recall' : 'sentinel',
+      origin: originOf(earliest.policyEventId),
       ruleHash: earliest.ruleHash,
       topic,
       title: humanizeTopic(topic),
@@ -367,16 +434,24 @@ function domainCode(policyDomain: string | null): string {
   return initials || 'GEN';
 }
 
+/**
+ * "pal-tal-requirements" becomes "PAL/TAL requirements".
+ * "ee-category-based-selection" becomes "EE category-based selection".
+ */
 export function humanizeTopic(topic: string): string {
   if (!topic) return 'Untitled policy change';
-  const words = topic.split(/[-_\s]+/).filter(Boolean);
-  return words
-    .map((w, i) => {
-      const lower = w.toLowerCase();
-      if (ACRONYMS.has(lower)) return lower.toUpperCase();
-      return i === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
-    })
-    .join(' ');
+  const raw = topic.split(/[-_\s]+/).filter(Boolean).map((w) => w.toLowerCase());
+  const words = raw.map((lower, i) => {
+    if (ACRONYMS[lower]) return ACRONYMS[lower];
+    if (PROPER[lower]) return PROPER[lower];
+    if (/^p\d+$/.test(lower)) return lower.toUpperCase();
+    return i === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+  });
+  return words.reduce((out, word, i) => {
+    if (i === 0) return word;
+    const sep = SLASH_PAIRS.has(`${raw[i - 1]}/${raw[i]}`) ? '/' : COMPOUND_TAILS.has(raw[i]) ? '-' : ' ';
+    return out + sep + word;
+  }, '');
 }
 
 // ---------------------------------------------------------------------------
