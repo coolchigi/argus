@@ -261,6 +261,11 @@ export class ArgusApiStack extends cdk.Stack {
         TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         SIGNING_KEY_ID: props.signingKey.keyId,
+        // Corrections are checked against the same guardrail the Auditor
+        // applies when it reads them back, so a client name is refused at
+        // filing time instead of blocking later audits.
+        BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
+        BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: impactsServiceLogGroup,
@@ -775,7 +780,9 @@ export class ArgusApiStack extends cdk.Stack {
       actions: ['bedrock:ApplyGuardrail'],
       resources: [props.guardrail.attrGuardrailArn],
     });
-    for (const h of [sentinelHandler, analystHandler, auditorHandler, composerHandler, recallHandler]) {
+    // impacts-service invokes no model. It only runs ApplyGuardrail on
+    // correction text before storing it.
+    for (const h of [sentinelHandler, analystHandler, auditorHandler, composerHandler, recallHandler, impactsHandler]) {
       h.addToRolePolicy(guardrailApply);
     }
 
