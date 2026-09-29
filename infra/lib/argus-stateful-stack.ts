@@ -10,7 +10,13 @@ import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import { Construct } from 'constructs';
-import { CA_SIN_PATTERN, US_SSN_PATTERN } from './guardrail-patterns';
+import {
+  CA_SIN_PATTERN,
+  INTL_PHONE_PATTERN,
+  NA_PHONE_PATTERN,
+  TRUNK_PHONE_PATTERN,
+  US_SSN_PATTERN,
+} from './guardrail-patterns';
 
 /**
  * Stateful resources for Argus.
@@ -293,7 +299,6 @@ export class ArgusStatefulStack extends cdk.Stack {
         piiEntitiesConfig: [
           { type: 'NAME', action: 'BLOCK' },
           { type: 'EMAIL', action: 'BLOCK' },
-          { type: 'PHONE', action: 'BLOCK' },
           // No built-in ADDRESS entity: it flags "Canada", "Quebec" and
           // "British Columbia", which every IRCC page and brief contains.
           // Real street addresses and postal codes are caught by the regexes below.
@@ -301,6 +306,10 @@ export class ArgusStatefulStack extends cdk.Stack {
           // entity: both flag any number near the words SIN or SSN, which
           // blocked client file numbers and NOC codes. The ca-sin and us-ssn
           // regexes below match the number formats instead.
+          // No built-in PHONE entity, for the same reason: it flagged client
+          // IDs like 2026-042 next to "call", "contact" or "client". The
+          // na-phone, intl-phone and trunk-phone regexes below match the
+          // number formats instead.
           { type: 'DRIVER_ID', action: 'BLOCK' },
           { type: 'CA_HEALTH_NUMBER', action: 'BLOCK' },
           { type: 'CREDIT_DEBIT_CARD_NUMBER', action: 'BLOCK' },
@@ -335,6 +344,24 @@ export class ArgusStatefulStack extends cdk.Stack {
             name: 'us-ssn',
             description: 'US SSN, 9 digits as 3-2-4 with spaces or dashes, e.g. 123-45-6789',
             pattern: US_SSN_PATTERN,
+            action: 'BLOCK',
+          },
+          {
+            name: 'na-phone',
+            description: 'North American phone number, e.g. 613-555-0142, (416) 555-0199, +1 604 555 0123. Toll-free 8XX numbers are left out.',
+            pattern: NA_PHONE_PATTERN,
+            action: 'BLOCK',
+          },
+          {
+            name: 'intl-phone',
+            description: 'International phone number with a + or 00 prefix, e.g. +44 20 7946 0958',
+            pattern: INTL_PHONE_PATTERN,
+            action: 'BLOCK',
+          },
+          {
+            name: 'trunk-phone',
+            description: 'Domestic phone number with a leading trunk 0 in space-separated groups, e.g. 020 7946 0958',
+            pattern: TRUNK_PHONE_PATTERN,
             action: 'BLOCK',
           },
         ],
