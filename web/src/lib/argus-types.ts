@@ -46,13 +46,21 @@ export type Brief = {
   editedBodyMarkdown?: string;
   suggestedActions?: string[];
   citationSourceUrl?: string;
-  status: "draft" | "edited" | "sent";
+  /** sent-externally: the consultant copied it into their own mail client. */
+  status: BriefStatus;
   createdAt: string;
   updatedAt?: string;
   sentAt?: string;
   sentBodyMarkdown?: string;
   sentRecipientDomain?: string;
+  /** The public receipt fingerprint of a brief Argus sent. */
+  sentBodyHash?: string;
+  copiedAt?: string;
+  /** Sentinel's severity for the rule. Only on GET /briefs. */
+  severity?: "high" | "medium" | "low" | null;
 };
+
+export type BriefStatus = "draft" | "edited" | "sent" | "sent-externally";
 
 export type AuditSignature = {
   assessmentKey: string;
