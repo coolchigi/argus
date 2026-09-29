@@ -280,8 +280,15 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
   const parsed = JSON.parse(match[0]) as Partial<BriefDraft>;
   const draft = {
     subject: typeof parsed.subject === 'string' && parsed.subject.trim() ? parsed.subject : FALLBACK_SUBJECT,
-    bodyMarkdown: parsed.bodyMarkdown ?? assessment.narrative,
-    suggestedActions: Array.isArray(parsed.suggestedActions) ? parsed.suggestedActions.slice(0, 3) : [assessment.recommendedAction],
+    // The fallbacks are Analyst text, which names the client by id. The
+    // client reads these, so the id becomes "the client".
+    bodyMarkdown:
+      typeof parsed.bodyMarkdown === 'string' && parsed.bodyMarkdown.trim()
+        ? parsed.bodyMarkdown
+        : withoutClientId(assessment.narrative, assessment.clientId),
+    suggestedActions: Array.isArray(parsed.suggestedActions)
+      ? parsed.suggestedActions.slice(0, 3)
+      : [withoutClientId(assessment.recommendedAction, assessment.clientId)],
   };
 
   // A warning, never a failure: the consultant reads and edits every draft

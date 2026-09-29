@@ -229,6 +229,27 @@ describe('Composer brief voice', () => {
     });
   }
 
+  for (const [label, reply] of [
+    ['no body', { subject: 'PGP intake paused' }],
+    ['a blank body', { subject: 'PGP intake paused', bodyMarkdown: ' \n ' }],
+    ['a null body', { subject: 'PGP intake paused', bodyMarkdown: null, suggestedActions: null }],
+  ] as const) {
+    it(`falls back to the Analyst text without the client id when the model returns ${label}`, async () => {
+      modelReply = JSON.stringify(reply);
+      await compose([insert(pgp)]);
+      assert.equal(briefs.length, 1);
+      const body = String(briefs[0].bodyMarkdown);
+      assert.equal(body, 'the client cannot submit a new interest to sponsor form while PGP intake is paused.');
+      assert.doesNotMatch(body, /2026-042/);
+      const actions = briefs[0].suggestedActions as string[];
+      if (!('suggestedActions' in reply) || reply.suggestedActions === null) {
+        assert.deepEqual(actions, ['Tell the client to wait for the next intake.']);
+      }
+      assert.doesNotMatch(actions.join(' '), /2026-042/);
+      assert.equal(logLines.some((l) => l.msg === 'composer-voice-check'), false);
+    });
+  }
+
   it('logs no voice warning for a draft written to the client', async () => {
     const body = "You can't submit a new interest to sponsor form right now. I recommend we wait for the next intake.";
     modelReply = JSON.stringify({ subject: 'PGP intake paused', bodyMarkdown: body, suggestedActions: ['Wait'] });
