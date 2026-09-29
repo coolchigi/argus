@@ -66,6 +66,8 @@ before(async () => {
     SIGNING_KEY_ID: 'key',
     BEDROCK_GUARDRAIL_ID: 'gr-test',
     BEDROCK_GUARDRAIL_VERSION: '7',
+    RCIC_USERS_TABLE: 'users',
+    PUBLIC_COUNTERS_TABLE: 'counters',
     AWS_REGION: 'us-east-1',
   });
 

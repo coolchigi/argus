@@ -34,6 +34,7 @@ new ArgusApiStack(app, 'ArgusApiDev', {
   policyRulesTable: stateful.policyRulesTable,
   ruleIndexTable: stateful.ruleIndexTable,
   briefsTable: stateful.briefsTable,
+  publicCountersTable: stateful.publicCountersTable,
   guardrail: stateful.guardrail,
   policyCorpusBucket: stateful.policyCorpusBucket,
   generatedArtifactsBucket: stateful.generatedArtifactsBucket,

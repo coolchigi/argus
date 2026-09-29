@@ -41,6 +41,7 @@ export class ArgusStatefulStack extends cdk.Stack {
   public readonly policyRulesTable: dynamodb.Table;
   public readonly ruleIndexTable: dynamodb.Table;
   public readonly briefsTable: dynamodb.Table;
+  public readonly publicCountersTable: dynamodb.Table;
 
   public readonly guardrail: bedrock.CfnGuardrail;
 
@@ -236,6 +237,17 @@ export class ArgusStatefulStack extends cdk.Stack {
       indexName: 'bySentBodyHash',
       partitionKey: { name: 'sentBodyHash', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.KEYS_ONLY,
+    });
+
+    // Public counters for the landing page. One row per kind per UTC day
+    // (`assessments#2026-09-29`, `briefs#2026-09-29`). Anchor and
+    // briefs-service ADD to them, and GET /public/stats sums the last 7 days.
+    // Counts and a timestamp only: no tenant, client or location.
+    this.publicCountersTable = new dynamodb.Table(this, 'PublicCountersTable', {
+      tableName: 'argus-public-counters',
+      partitionKey: { name: 'counterKey', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
     // Policy corpus. Snapshots of IRCC pages plus embedding-source markdown.
