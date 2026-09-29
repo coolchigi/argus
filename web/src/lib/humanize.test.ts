@@ -1,6 +1,6 @@
 import { describe, test } from "node:test";
 import assert from "node:assert/strict";
-import { humanizeTopic } from "./humanize.ts";
+import { humanizeOrigin, humanizeTopic } from "./humanize.ts";
 
 describe("humanizeTopic", () => {
   // Every topic in the live PolicyRules table on 2026-09-29
@@ -36,6 +36,18 @@ describe("humanizeTopic", () => {
   test("keeps the hyphen in a compound modifier and nowhere else", () => {
     assert.equal(humanizeTopic("dli-specific-caps"), "DLI-specific caps");
     assert.equal(humanizeTopic("study-permit-cap"), "Study permit cap");
+  });
+
+  test("uppercases the acronyms services/policy-events also knows", () => {
+    assert.equal(humanizeTopic("pr-card-renewal"), "PR card renewal");
+    assert.equal(humanizeTopic("eca-requirements"), "ECA requirements");
+    assert.equal(humanizeTopic("cip-code-list"), "CIP code list");
+  });
+
+  test("humanizeOrigin names what sent the change in", () => {
+    assert.equal(humanizeOrigin("sentinel"), "Sentinel");
+    assert.equal(humanizeOrigin("recall"), "Recall replay");
+    assert.equal(humanizeOrigin("demo"), "Demo trigger");
   });
 
   test("falls back when there's no topic", () => {
