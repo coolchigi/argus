@@ -25,7 +25,7 @@ import {
 import { RecommendedActions } from "@/components/policy-events/recommended-actions";
 import { SignedRecords } from "@/components/policy-events/signed-records";
 import { SourceCitation } from "@/components/policy-events/source-citation";
-import { humanizeCategory, humanizePolicyDomain, humanizeTopic } from "@/lib/humanize";
+import { humanizeCategory, humanizeOrigin, humanizePolicyDomain, humanizeTopic } from "@/lib/humanize";
 import type { PolicyEventDetailResponse, PolicyEventImpactsResponse } from "@/lib/types/policy-events";
 import type { Lineage } from "@/lib/types/lineage";
 
@@ -202,7 +202,7 @@ export function EventDetail({
               </div>
               <div>
                 <dt className="label mb-0.5">Found by</dt>
-                <dd className="text-[12px] text-ink-1">{e.origin === "recall" ? "Recall replay" : "Sentinel"}</dd>
+                <dd className="text-[12px] text-ink-1">{humanizeOrigin(e.origin)}</dd>
               </div>
               <div>
                 <dt className="label mb-0.5">Rule version</dt>
