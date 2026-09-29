@@ -52,6 +52,11 @@ type Assessment = {
   timestamp: string;
 };
 
+// Used when the model returns no subject. Fixed text on purpose: it goes to
+// the client, so it carries no client id, and a topic slug like
+// "ee-crs-grid" doesn't read well humanized.
+export const FALLBACK_SUBJECT = 'An immigration policy update that affects your file';
+
 type BriefDraft = {
   subject: string;
   bodyMarkdown: string;
@@ -274,7 +279,7 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
   }
   const parsed = JSON.parse(match[0]) as Partial<BriefDraft>;
   const draft = {
-    subject: parsed.subject ?? `Policy update relevant to ${assessment.clientId}`,
+    subject: typeof parsed.subject === 'string' && parsed.subject.trim() ? parsed.subject : FALLBACK_SUBJECT,
     bodyMarkdown: parsed.bodyMarkdown ?? assessment.narrative,
     suggestedActions: Array.isArray(parsed.suggestedActions) ? parsed.suggestedActions.slice(0, 3) : [assessment.recommendedAction],
   };

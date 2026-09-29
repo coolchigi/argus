@@ -214,6 +214,21 @@ describe('Composer brief voice', () => {
     assert.equal(warn.clientId, '2026-042');
   });
 
+  for (const [label, reply] of [
+    ['no subject', { bodyMarkdown: 'You can wait.', suggestedActions: ['Wait'] }],
+    ['a blank subject', { subject: '  ', bodyMarkdown: 'You can wait.', suggestedActions: ['Wait'] }],
+    ['a null subject', { subject: null, bodyMarkdown: 'You can wait.', suggestedActions: ['Wait'] }],
+  ] as const) {
+    it(`falls back to a neutral subject with no client id when the model returns ${label}`, async () => {
+      modelReply = JSON.stringify(reply);
+      await compose([insert(pgp)]);
+      assert.equal(briefs.length, 1);
+      const subject = String(briefs[0].subject);
+      assert.equal(subject, 'An immigration policy update that affects your file');
+      assert.doesNotMatch(subject, /2026-042/);
+    });
+  }
+
   it('logs no voice warning for a draft written to the client', async () => {
     const body = "You can't submit a new interest to sponsor form right now. I recommend we wait for the next intake.";
     modelReply = JSON.stringify({ subject: 'PGP intake paused', bodyMarkdown: body, suggestedActions: ['Wait'] });
