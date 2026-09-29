@@ -6,6 +6,7 @@ import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCom
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { createHash, randomUUID } from 'node:crypto';
+import { bumpPublicCounter } from './public-counter';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
@@ -18,6 +19,7 @@ const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const POLICY_CORPUS_BUCKET = requiredEnv('POLICY_CORPUS_BUCKET');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
+const PUBLIC_COUNTERS_TABLE = process.env.PUBLIC_COUNTERS_TABLE;
 const DEFAULT_FROM_EMAIL = requiredEnv('DEFAULT_FROM_EMAIL');
 const BATCH_SEND_MAX = Number(process.env.BATCH_SEND_MAX ?? '25');
 const ARCHIVE_LINK_TTL_SECONDS = Number(process.env.ARCHIVE_LINK_TTL_SECONDS ?? String(7 * 24 * 60 * 60));
@@ -241,6 +243,8 @@ async function sendOneInternal(rcicId: string, briefId: string, recipient: strin
       },
     }),
   );
+
+  await bumpPublicCounter(ddb, PUBLIC_COUNTERS_TABLE, 'briefs', canonical.sentAt);
 
   log('info', 'brief-sent', {
     rcicId,
