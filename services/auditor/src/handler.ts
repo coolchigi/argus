@@ -35,7 +35,7 @@ function guardrailConfig() {
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
 
-type ImpactHypothesis = {
+export type ImpactHypothesis = {
   hypothesisId: string;
   timestamp: string;
   rcicId: string;
@@ -142,7 +142,7 @@ async function loadRuleContent(ruleHash: string): Promise<string> {
 
 // One TrainingCorrections row, as impacts-service writes it. The original
 // action and confidence are absent on rows filed before they were stored.
-type Correction = {
+export type Correction = {
   correctedAt: string;
   policyDomain: string;
   topic: string;
@@ -169,15 +169,23 @@ async function loadRecentCorrections(rcicId: string, policyDomain: string, topic
       ExpressionAttributeValues: { ':r': rcicId, ':cutoff': cutoff },
     }),
   );
-  const all = (res.Items ?? []) as Correction[];
-  // Score by topical proximity: same topic > same policyDomain > other. Same topic
-  // teaches most; other corrections still carry consultant priors worth showing.
-  const scored = all
-    .map((c) => ({ c, score: c.topic === topic ? 3 : c.policyDomain === policyDomain ? 2 : 1 }))
+  return rankCorrections((res.Items ?? []) as Correction[], policyDomain, topic);
+}
+
+// Only a correction on the same topic or the same policy domain applies. A
+// correction from an unrelated program teaches the wrong rule: one Express
+// Entry correction flipped a study-permit audit 5 of 5 times. Same topic ranks
+// first, then same domain, newest first within each. An empty domain never
+// counts as a match, since rows filed before policyDomain was stored have "".
+export function rankCorrections(all: Correction[], policyDomain: string, topic: string): Correction[] {
+  const score = (c: Correction) =>
+    topic && c.topic === topic ? 2 : policyDomain && c.policyDomain === policyDomain ? 1 : 0;
+  return all
+    .map((c) => ({ c, score: score(c) }))
+    .filter((x) => x.score > 0)
     .sort((a, b) => b.score - a.score || b.c.correctedAt.localeCompare(a.c.correctedAt))
     .slice(0, FEW_SHOT_MAX)
     .map((x) => x.c);
-  return scored;
 }
 
 export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[]): ConverseCommandInput {
