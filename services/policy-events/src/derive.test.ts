@@ -5,7 +5,9 @@ import {
   buildEventImpacts,
   buildEvents,
   eventIdOf,
+  humanizeTopic,
   listView,
+  originOf,
   parseActivityBefore,
   resolveEventId,
   toAssessment,
@@ -542,5 +544,45 @@ describe('activity pagination across identical timestamps', () => {
     assert.equal(parseActivityBefore('c1.!!!'), null);
     assert.equal(parseActivityBefore(`c1.${Buffer.from('["only-one"]').toString('base64url')}`), null);
     assert.equal(parseActivityBefore(`c1.${Buffer.from('{"at":"x","id":"y"}').toString('base64url')}`), null);
+  });
+});
+
+describe('origin', () => {
+  it('reads each run id prefix', () => {
+    assert.equal(originOf(RUN_A1), 'sentinel');
+    assert.equal(originOf(RECALL_A), 'recall');
+    assert.equal(originOf(`demo-${Date.parse('2026-09-29T10:00:00.000Z')}-${RULE_A.slice(0, 8)}`), 'demo');
+  });
+
+  it('labels an event first sent in by the demo trigger as demo', () => {
+    const demo = `demo-${Date.parse('2026-09-19T10:00:00.000Z')}-${RULE_A.slice(0, 8)}`;
+    const rows = [row(demo, RULE_A, 'C-1', '2026-09-19T10:01:00.000Z'), ...TWO_RUNS];
+    assert.equal(only(events(rows, rules(rule(RULE_A)))).origin, 'demo');
+  });
+});
+
+describe('humanizeTopic', () => {
+  // Same labels as web/src/lib/humanize.test.ts, for every topic in the live
+  // PolicyRules table on 2026-09-29. If one copy changes, both tests must.
+  const live: Array<[string, string]> = [
+    ['crs-scorecard-p5-test', 'CRS scorecard P5 test'],
+    ['crs-scorecheck', 'CRS scorecheck'],
+    ['ee-category-based-selection', 'EE category-based selection'],
+    ['field-of-study-requirement', 'Field of study requirement'],
+    ['ircc-newsroom', 'IRCC newsroom'],
+    ['open-work-permit-eligibility', 'Open work permit eligibility'],
+    ['pal-tal-requirements', 'PAL/TAL requirements'],
+    ['pgp-program-pause', 'PGP program pause'],
+    ['pnp-express-entry', 'PNP Express Entry'],
+  ];
+  for (const [topic, label] of live) {
+    it(`${topic} reads "${label}"`, () => assert.equal(humanizeTopic(topic), label));
+  }
+
+  it('names the change the same way in the event title and the activity feed', () => {
+    const rows = [row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { topic: 'pal-tal-requirements' })];
+    assert.equal(only(events(rows, rules(rule(RULE_A, { topic: 'pal-tal-requirements' })))).title, 'PAL/TAL requirements');
+    const { items } = buildActivity(rows.map(toAssessment), [], [], [], { limit: 10, before: null });
+    assert.ok(items.some((i) => i.title === 'Assessment signed for PAL/TAL requirements'));
   });
 });

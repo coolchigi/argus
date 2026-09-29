@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { CLIENT_NAME_TOKEN, batchStatesFromResults, buildCopyText, findNamedSalutation, isDelivered } from "./briefs.ts";
+import {
+  CLIENT_NAME_TOKEN,
+  batchStatesFromResults,
+  buildCopyText,
+  confirmManualCopy,
+  copyBrief,
+  findNamedSalutation,
+  isDelivered,
+  tryLegacyCopy,
+} from "./briefs.ts";
 
 describe("isDelivered", () => {
   it("counts an Argus send and a copy-out, and nothing else", () => {
@@ -88,5 +97,106 @@ describe("findNamedSalutation", () => {
   it("ignores capitalised words that don't follow a greeting", () => {
     assert.equal(findNamedSalutation("Express Entry draws resumed. Your CRS score is 481."), null);
     assert.equal(findNamedSalutation("This changes the Chipotle schedule."), null);
+  });
+});
+
+/** Records every call so a test can check order and count. */
+function fakeDeps(opts: { clipboard: "ok" | "reject" | "throw-sync" | "missing"; mark?: "ok" | "reject" }) {
+  const calls: string[] = [];
+  const clipboard: { writeText?: (t: string) => Promise<void> } | undefined =
+    opts.clipboard === "missing"
+      ? undefined
+      : {
+          writeText: (t: string) => {
+            calls.push(`clipboard:${t}`);
+            if (opts.clipboard === "throw-sync") throw new TypeError("writeText is not allowed");
+            if (opts.clipboard === "reject") return Promise.reject(new DOMException("Write permission denied.", "NotAllowedError"));
+            return Promise.resolve();
+          },
+        };
+  return {
+    calls,
+    deps: {
+      // Same shape the page passes: reads navigator.clipboard at call time.
+      writeClipboard: (t: string) => clipboard!.writeText!(t),
+      markCopied: () => {
+        calls.push("mark");
+        return opts.mark === "reject" ? Promise.reject(new Error("500")) : Promise.resolve({});
+      },
+    },
+  };
+}
+
+describe("copyBrief", () => {
+  const text = buildCopyText({ subject: "Update for C-7", body: "C-7 news.", actions: [], clientId: "C-7" });
+
+  it("copies with the async clipboard, then marks the brief copied", async () => {
+    const { calls, deps } = fakeDeps({ clipboard: "ok" });
+    assert.deepEqual(await copyBrief(text, deps), { kind: "copied" });
+    assert.deepEqual(calls, [`clipboard:${text}`, "mark"]);
+  });
+
+  for (const clipboard of ["reject", "throw-sync", "missing"] as const) {
+    it(`falls back to the manual dialog and marks nothing when the clipboard is ${clipboard}`, async () => {
+      const { calls, deps } = fakeDeps({ clipboard });
+      const out = await copyBrief(text, deps);
+      assert.deepEqual(out, { kind: "manual", text });
+      assert.ok(!calls.includes("mark"));
+    });
+  }
+
+  it("hands the manual dialog the same text the clipboard would get, token and all", async () => {
+    const { deps } = fakeDeps({ clipboard: "reject" });
+    const out = await copyBrief(text, deps);
+    assert.equal(out.kind, "manual");
+    if (out.kind !== "manual") return;
+    assert.ok(out.text.includes(CLIENT_NAME_TOKEN));
+    assert.ok(!out.text.includes("C-7"));
+  });
+
+  it("reports a copy that landed even when marking it fails", async () => {
+    const { calls, deps } = fakeDeps({ clipboard: "ok", mark: "reject" });
+    assert.deepEqual(await copyBrief(text, deps), { kind: "copied-unmarked" });
+    assert.deepEqual(calls, [`clipboard:${text}`, "mark"]);
+  });
+});
+
+describe("confirmManualCopy", () => {
+  it("marks the brief copied exactly once", async () => {
+    let n = 0;
+    assert.equal(await confirmManualCopy(async () => void n++), "marked");
+    assert.equal(n, 1);
+  });
+
+  it("says so when marking fails, so the dialog can stay open for a retry", async () => {
+    assert.equal(await confirmManualCopy(() => Promise.reject(new Error("500"))), "mark-failed");
+  });
+});
+
+describe("tryLegacyCopy", () => {
+  it("selects the text before asking the browser to copy", () => {
+    const calls: string[] = [];
+    const ok = tryLegacyCopy(
+      () => calls.push("select"),
+      () => {
+        calls.push("exec");
+        return true;
+      },
+    );
+    assert.equal(ok, true);
+    assert.deepEqual(calls, ["select", "exec"]);
+  });
+
+  it("reports failure when the browser refuses or throws", () => {
+    assert.equal(tryLegacyCopy(() => {}, () => false), false);
+    assert.equal(
+      tryLegacyCopy(
+        () => {},
+        () => {
+          throw new DOMException("denied", "SecurityError");
+        },
+      ),
+      false,
+    );
   });
 });
