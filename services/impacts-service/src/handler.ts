@@ -1,9 +1,10 @@
 import { ApplyGuardrailCommand, BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { KMSClient, GetPublicKeyCommand } from '@aws-sdk/client-kms';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { readGuardrailVerdict } from './guardrail';
+import { COUNTER_KINDS, counterKey, jwkFromSpki, publicConsultant, sumStats, windowDays, type CounterRow, type Jwk, type PublicConsultant, type PublicStats } from './public';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
@@ -12,13 +13,21 @@ const bedrock = new BedrockRuntimeClient({});
 const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
 const TRAINING_CORRECTIONS_TABLE = requiredEnv('TRAINING_CORRECTIONS_TABLE');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
+const BRIEFS_TABLE = requiredEnv('BRIEFS_TABLE');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
 const GUARDRAIL_ID = requiredEnv('BEDROCK_GUARDRAIL_ID');
 const GUARDRAIL_VERSION = requiredEnv('BEDROCK_GUARDRAIL_VERSION');
+const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
+const PUBLIC_COUNTERS_TABLE = requiredEnv('PUBLIC_COUNTERS_TABLE');
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
 
-let cachedPublicKey: { pem: string; keyId: string } | null = null;
+// Anchor and briefs-service both call KMS Sign with MessageType DIGEST over
+// the SHA-256 of the canonical payload. Public receipts name the scheme so a
+// later signing change can't be confused with this one.
+const SIGNATURE_SCHEME = 'kms-digest-v1';
+
+let cachedPublicKey: { pem: string; keyId: string; der: Uint8Array } | null = null;
 
 export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> => {
   const method = event.requestContext.http.method;
@@ -29,11 +38,15 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
 
   try {
     if (routeKey === 'GET /public/verify/{hash}') return json(200, await publicVerify(decodePathParam(event, 'hash')));
+    if (routeKey === 'GET /public/jwks') return json(200, await publicJwks(), { 'cache-control': 'public, max-age=3600' });
+    if (routeKey === 'GET /public/stats') return json(200, await publicStats(), { 'cache-control': 'public, max-age=300' });
     if (!rcicId) throw httpError(403, 'missing-tenant-claim');
     if (routeKey === 'GET /impacts') return json(200, await listImpacts(rcicId));
     if (routeKey === 'GET /impacts/{id}') return json(200, await getImpact(rcicId, decodePathParam(event, 'id')));
     if (routeKey === 'GET /impacts/{id}/audit-signature') return json(200, await getAuditSignature(rcicId, decodePathParam(event, 'id')));
     if (routeKey === 'POST /impacts/{id}/correction') return json(200, await postCorrection(rcicId, decodePathParam(event, 'id'), parseBody(event)));
+    if (routeKey === 'GET /impacts/{id}/corrections') return json(200, await listCorrections(rcicId, decodePathParam(event, 'id')));
+    if (routeKey === 'GET /corrections') return json(200, await listCorrections(rcicId, null));
     return json(404, { error: 'route-not-found', routeKey });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -140,6 +153,32 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
   return { correction: item };
 }
 
+/**
+ * The consultant's own corrections, newest first. With an assessmentKey, only
+ * the ones filed on that assessment: correctionKey is
+ * `${assessmentKey}#${correctedAt}`, so a begins_with on the sort key inside
+ * the tenant partition finds them without a scan.
+ */
+async function listCorrections(rcicId: string, assessmentKey: string | null): Promise<{ corrections: Record<string, unknown>[] }> {
+  const items: Record<string, unknown>[] = [];
+  let startKey: Record<string, unknown> | undefined;
+  do {
+    const res = await ddb.send(
+      new QueryCommand({
+        TableName: TRAINING_CORRECTIONS_TABLE,
+        KeyConditionExpression: assessmentKey === null ? 'rcicId = :r' : 'rcicId = :r AND begins_with(correctionKey, :p)',
+        ExpressionAttributeValues: assessmentKey === null ? { ':r': rcicId } : { ':r': rcicId, ':p': `${assessmentKey}#` },
+        ScanIndexForward: false,
+        ExclusiveStartKey: startKey,
+      }),
+    );
+    items.push(...(res.Items ?? []));
+    startKey = res.LastEvaluatedKey;
+  } while (startKey);
+  items.sort((a, b) => String(b.correctedAt ?? '').localeCompare(String(a.correctedAt ?? '')));
+  return { corrections: items };
+}
+
 // The Auditor sends every stored correction to Bedrock inside a guarded
 // block, and the guardrail blocks client names. A correction that names a
 // client would block every audit for this consultant until it ages out, so
@@ -193,7 +232,9 @@ async function publicVerify(canonicalHash: string): Promise<Record<string, unkno
   );
   const gsiHit = (gsi.Items ?? [])[0];
   if (!gsiHit || typeof gsiHit.rcicId !== 'string' || typeof gsiHit.assessmentKey !== 'string') {
-    throw httpError(404, 'assessment-not-found');
+    // Not an assessment. The link in a sent brief's email footer carries the
+    // brief's sent-body hash, so look there next.
+    return publicVerifyBrief(cleanHash);
   }
 
   const full = await ddb.send(
@@ -207,6 +248,8 @@ async function publicVerify(canonicalHash: string): Promise<Record<string, unkno
 
   const publicKey = await loadPublicKey();
   return {
+    kind: 'assessment',
+    scheme: SIGNATURE_SCHEME,
     fingerprint: cleanHash,
     topic: String(item.topic ?? ''),
     signedAt: String(item.timestamp ?? ''),
@@ -222,19 +265,110 @@ async function publicVerify(canonicalHash: string): Promise<Record<string, unkno
       messageIsHash: true,
       how: 'Decode signatureBase64 from base64; decode canonicalHash from hex; verify with the P-256 public key.',
     },
+    // The signing consultant, only when they opted in. Never the client.
+    consultant: await loadPublicConsultant(gsiHit.rcicId),
     // Deliberately omitted: rcicId, clientId, assessmentKey, narrative,
     // recommendedAction, ruleHash. This endpoint is for signature proof only.
   };
 }
 
-async function loadPublicKey(): Promise<{ pem: string; keyId: string }> {
+/** The signing key as a JWK set, for /.well-known/jwks.json on the web. */
+async function publicJwks(): Promise<{ keys: Jwk[] }> {
+  const publicKey = await loadPublicKey();
+  return { keys: [jwkFromSpki(publicKey.der, publicKey.keyId)] };
+}
+
+// The landing counter can lag by a few minutes, so a warm container answers
+// from memory instead of reading DynamoDB on every page view.
+const STATS_TTL_MS = 60_000;
+let cachedStats: { at: number; stats: PublicStats } | null = null;
+
+async function publicStats(): Promise<PublicStats> {
+  const now = new Date();
+  if (cachedStats && now.getTime() - cachedStats.at < STATS_TTL_MS) return cachedStats.stats;
+  const keys = COUNTER_KINDS.flatMap((kind) => windowDays(now).map((day) => ({ counterKey: counterKey(kind, day) })));
+  const res = await ddb.send(new BatchGetCommand({ RequestItems: { [PUBLIC_COUNTERS_TABLE]: { Keys: keys } } }));
+  // 14 small rows never exceed BatchGet's size limit, so anything unprocessed
+  // is throttling. Report what came back rather than retry on a public route.
+  const rows = (res.Responses?.[PUBLIC_COUNTERS_TABLE] ?? []) as CounterRow[];
+  const stats = sumStats(rows, now);
+  cachedStats = { at: now.getTime(), stats };
+  return stats;
+}
+
+// A receipt still verifies when the consultant row can't be read. It just
+// shows no name.
+async function loadPublicConsultant(rcicId: string): Promise<PublicConsultant | null> {
+  try {
+    const res = await ddb.send(
+      new GetCommand({
+        TableName: RCIC_USERS_TABLE,
+        Key: { rcicId },
+        ProjectionExpression: 'displayName, rcicLicense, preferences',
+      }),
+    );
+    return publicConsultant(res.Item);
+  } catch (err) {
+    log('error', 'public-consultant-unavailable', { error: err instanceof Error ? err.message : String(err) });
+    return null;
+  }
+}
+
+/**
+ * Public receipt for a sent brief, found by its sent-body hash. Same shape
+ * as the assessment receipt. Never returns the body, the recipient hash or
+ * domain, the client or the sender's email. The consultant's name and
+ * licence appear only when they opted in.
+ */
+async function publicVerifyBrief(cleanHash: string): Promise<Record<string, unknown>> {
+  const gsi = await ddb.send(
+    new QueryCommand({
+      TableName: BRIEFS_TABLE,
+      IndexName: 'bySentBodyHash',
+      KeyConditionExpression: 'sentBodyHash = :h',
+      ExpressionAttributeValues: { ':h': cleanHash },
+      Limit: 1,
+    }),
+  );
+  const hit = (gsi.Items ?? [])[0];
+  if (!hit || typeof hit.rcicId !== 'string' || typeof hit.briefId !== 'string') throw httpError(404, 'receipt-not-found');
+
+  const full = await ddb.send(new GetCommand({ TableName: BRIEFS_TABLE, Key: { rcicId: hit.rcicId, briefId: hit.briefId } }));
+  const item = full.Item;
+  if (!item || item.sentBodyHash !== cleanHash || typeof item.sentSignature !== 'string') throw httpError(404, 'receipt-not-found');
+
+  const publicKey = await loadPublicKey();
+  return {
+    kind: 'brief',
+    scheme: SIGNATURE_SCHEME,
+    fingerprint: cleanHash,
+    topic: String(item.topic ?? ''),
+    signedAt: String(item.sentAt ?? ''),
+    signatureAlgorithm: String(item.sentSignatureAlgorithm ?? 'ECDSA_SHA_256'),
+    canonicalHash: cleanHash,
+    signatureBase64: item.sentSignature,
+    signingKeyId: typeof item.sentSigningKeyId === 'string' ? item.sentSigningKeyId : publicKey.keyId,
+    publicKeyPem: publicKey.pem,
+    verification: {
+      algorithm: 'ECDSA_SHA_256',
+      curve: 'P-256',
+      messageIsHex: true,
+      messageIsHash: true,
+      how: 'Decode signatureBase64 from base64; decode canonicalHash from hex; verify with the P-256 public key.',
+    },
+    // Same opt-in as assessment receipts: the sending consultant, never the client.
+    consultant: await loadPublicConsultant(hit.rcicId),
+  };
+}
+
+async function loadPublicKey(): Promise<{ pem: string; keyId: string; der: Uint8Array }> {
   if (cachedPublicKey) return cachedPublicKey;
   const res = await kms.send(new GetPublicKeyCommand({ KeyId: SIGNING_KEY_ID }));
   const raw = res.PublicKey;
   if (!raw) throw new Error('kms returned no public key');
   const b64 = Buffer.from(raw).toString('base64');
   const pem = `-----BEGIN PUBLIC KEY-----\n${b64.match(/.{1,64}/g)?.join('\n') ?? b64}\n-----END PUBLIC KEY-----\n`;
-  cachedPublicKey = { pem, keyId: SIGNING_KEY_ID };
+  cachedPublicKey = { pem, keyId: SIGNING_KEY_ID, der: raw };
   return cachedPublicKey;
 }
 
@@ -310,10 +444,10 @@ function stripInternal(item: Record<string, unknown>): Record<string, unknown> {
   return out;
 }
 
-function json(statusCode: number, body: unknown): APIGatewayProxyStructuredResultV2 {
+function json(statusCode: number, body: unknown, headers: Record<string, string> = {}): APIGatewayProxyStructuredResultV2 {
   return {
     statusCode,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
     body: JSON.stringify(body),
   };
 }

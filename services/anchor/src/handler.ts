@@ -2,6 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { KMSClient, SignCommand } from '@aws-sdk/client-kms';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { createHash } from 'node:crypto';
+import { bumpPublicCounter } from './public-counter';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
@@ -9,6 +10,7 @@ const kms = new KMSClient({});
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
+const PUBLIC_COUNTERS_TABLE = process.env.PUBLIC_COUNTERS_TABLE;
 
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
@@ -87,6 +89,7 @@ export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{
   const canonicalHash = sha256Canonical(payload);
   const signature = await signHash(canonicalHash);
 
+  let written = true;
   await ddb.send(
     new PutCommand({
       TableName: IMPACT_ASSESSMENTS_TABLE,
@@ -103,10 +106,14 @@ export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{
   ).catch((err: unknown) => {
     if ((err as { name?: string }).name === 'ConditionalCheckFailedException') {
       log('info', 'anchor-already-exists', { assessmentId });
+      written = false;
       return;
     }
     throw err;
   });
+
+  // Only a new signature counts. A replayed verdict hits the condition above.
+  if (written) await bumpPublicCounter(ddb, PUBLIC_COUNTERS_TABLE, 'assessments', payload.timestamp);
 
   log('info', 'anchor-signed-and-written', {
     verdictId: verdict.verdictId,

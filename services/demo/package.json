@@ -1,6 +1,6 @@
 {
-  "name": "argus-sentinel",
-  "version": "0.2.0",
+  "name": "argus-demo",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,11 +8,10 @@
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
   },
   "devDependencies": {
-    "@aws-sdk/client-bedrock-runtime": "^3.700.0",
     "@aws-sdk/client-dynamodb": "^3.700.0",
     "@aws-sdk/client-eventbridge": "^3.700.0",
-    "@aws-sdk/client-s3": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
+    "@types/aws-lambda": "^8.10.145",
     "@types/node": "^24",
     "typescript": "~5.7.0"
   }
