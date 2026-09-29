@@ -34,6 +34,9 @@ type AuditVerdict = {
   correctedRecommendedAction: string;
   correctedConfidence: Confidence;
   auditorReasoning: string;
+  // Absent on verdicts from an Auditor older than ADR-0004.
+  affectedStance?: unknown;
+  affectedStanceReason?: unknown;
   originalHypothesis: {
     isAffected: boolean;
     impactType: ImpactType;
@@ -42,6 +45,17 @@ type AuditVerdict = {
     topic: string;
   };
 };
+
+type AuditorStance = { stance: 'agree' | 'disagree' | 'uncertain'; reason: string };
+
+// The Auditor's view of the Analyst's isAffected, signed next to it (ADR-0004).
+// A verdict without a usable stance signs exactly the fields it signed before
+// ADR-0004, so the payload only gains the key when there's something to sign.
+export function auditorStanceOf(verdict: Pick<AuditVerdict, 'affectedStance' | 'affectedStanceReason'>): AuditorStance | null {
+  const s = verdict.affectedStance;
+  if (s !== 'agree' && s !== 'disagree' && s !== 'uncertain') return null;
+  return { stance: s, reason: typeof verdict.affectedStanceReason === 'string' ? verdict.affectedStanceReason : '' };
+}
 
 type EventBridgeInput = { source?: string; 'detail-type'?: string; detail?: AuditVerdict };
 
@@ -89,6 +103,7 @@ async function anchor(verdict: AuditVerdict): Promise<{ anchored: boolean; outco
   }
 
   const assessmentId = `${verdict.policyEventId}#${verdict.clientId}`;
+  const auditorStance = auditorStanceOf(verdict);
   const payload = {
     assessmentId,
     rcicId: verdict.rcicId,
@@ -107,6 +122,7 @@ async function anchor(verdict: AuditVerdict): Promise<{ anchored: boolean; outco
     citationSourceS3Key: citation.source_s3_key,
     auditorReasoning: verdict.auditorReasoning,
     auditIssues: verdict.issues,
+    ...(auditorStance ? { auditorStance } : {}),
     timestamp: new Date().toISOString(),
   };
 
@@ -144,6 +160,7 @@ async function anchor(verdict: AuditVerdict): Promise<{ anchored: boolean; outco
     assessmentId,
     canonicalHash,
     signatureLength: signature.length,
+    auditorStance: auditorStance?.stance ?? null,
   });
 
   return { anchored: true, outcome: alreadySigned ? 'already-signed' : 'signed' };

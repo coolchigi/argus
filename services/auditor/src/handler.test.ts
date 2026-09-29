@@ -322,3 +322,62 @@ describe('Auditor sees the whole client profile', () => {
     assert.deepEqual(JSON.parse(text), clientProfile);
   });
 });
+
+describe('Auditor stance on isAffected (ADR-0004)', () => {
+  it('puts the stance and its reason on the verdict and leaves isAffected alone', async () => {
+    modelReply = JSON.stringify({
+      passed: true,
+      issues: [],
+      correctedImpactType: 'procedural',
+      affectedStance: 'disagree',
+      affectedStanceReason: '  The profile shows c1 meets the condition the rule sets.  ',
+    });
+    await audit({ isAffected: false });
+    assert.equal(verdicts.length, 1);
+    const v = verdicts[0];
+    assert.equal(v.affectedStance, 'disagree');
+    assert.equal(v.affectedStanceReason, 'The profile shows c1 meets the condition the rule sets.');
+    // The Analyst's answer is still what Anchor reads, and no override field exists.
+    assert.equal((v.originalHypothesis as Item).isAffected, false);
+    assert.equal('correctedIsAffected' in v, false);
+  });
+
+  const unusable: Array<[string, Item]> = [
+    ['a missing stance', { passed: true, issues: [] }],
+    ['an unknown stance', { passed: true, issues: [], affectedStance: 'strongly-disagree', affectedStanceReason: 'x' }],
+    ['a stance of the wrong type', { passed: true, issues: [], affectedStance: true }],
+  ];
+  for (const [label, reply] of unusable) {
+    it(`reads ${label} as uncertain, never as a dissent`, async () => {
+      modelReply = JSON.stringify(reply);
+      await audit();
+      assert.equal(verdicts[0].affectedStance, 'uncertain');
+      assert.equal(verdicts[0].affectedStanceReason, '(no stance returned)');
+    });
+  }
+
+  it('caps a long reason so the signed row stays small', async () => {
+    modelReply = JSON.stringify({ passed: true, issues: [], affectedStance: 'agree', affectedStanceReason: 'y'.repeat(5000) });
+    await audit();
+    assert.equal(String(verdicts[0].affectedStanceReason).length, 600);
+  });
+
+  it('asks for the stance in the plain instructions, with an explicit token cap', async () => {
+    const req = await audit();
+    const content = req.messages?.[0].content ?? [];
+    const plain = content.flatMap((b) => (typeof b.text === 'string' ? [b.text] : [])).join('\n');
+    assert.match(plain, /"affectedStance": "agree" \| "disagree" \| "uncertain"/);
+    assert.match(plain, /"affectedStanceReason"/);
+    assert.equal(req.inferenceConfig?.maxTokens, 1500);
+  });
+
+  it("shows the consultant's verdict in a few-shot when the correction set one", async () => {
+    corrections.push(
+      row('flip', 'ee-category-draws', 'express-entry', daysAgo(1), { originalIsAffected: false, correctedIsAffected: true }),
+      row('narrative-only', 'ee-category-draws', 'express-entry', daysAgo(2)),
+    );
+    const [flip, narrativeOnly] = fewShotBodies(await audit());
+    assert.match(flip, /Consultant verdict: affected \(original: not affected\)/);
+    assert.doesNotMatch(narrativeOnly, /Consultant verdict/);
+  });
+});
