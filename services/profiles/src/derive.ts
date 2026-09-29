@@ -9,6 +9,10 @@
 // - earlier ones are history
 // Counts read the current assessment only, so a replay never double counts.
 // A brief sent on any run of the rule covers the client for that rule.
+//
+// ADR-0004: a consultant review (recordKind "consultant-review") beats every
+// agent row for the same (rule, client), newest review first. An agent row
+// the Auditor disagrees with needs the consultant.
 
 export type Row = Record<string, unknown>;
 
@@ -26,7 +30,16 @@ export type AssessmentRow = {
   timestamp: string;
   canonicalHash: string | null;
   signatureAlgorithm: string | null;
+  recordKind: RecordKind;
+  supersedes: string | null;
+  /** Agent rows signed after ADR-0004. null on older rows and on consultant reviews. */
+  auditorStance: AuditorStance | null;
 };
+
+export type RecordKind = 'agent' | 'consultant-review';
+export type AuditorStance = { stance: 'agree' | 'disagree' | 'uncertain'; reason: string };
+/** Disagreement comes first: review the verdict before briefing on it. */
+export type ActionReason = 'auditor-disagrees' | 'brief-needed';
 
 export type BriefRow = {
   briefId: string;
@@ -54,6 +67,8 @@ export type ClientCounts = {
   affectedCount: number;
   /** Rules whose current assessment is affected and that have no sent brief on any run. */
   unsentBriefs: number;
+  /** Rules whose current verdict is the agent's and the Auditor disagrees with it. */
+  auditorDisagrees: number;
   /** ISO. Newest current assessment. null when never assessed. */
   lastAssessedAt: string | null;
   /** Newest affected current assessment. null when nothing is affected. */
@@ -67,6 +82,12 @@ export type ClientAssessment = {
   policyEventId: string;
   ruleHash: string;
   topic: string;
+  /** 'consultant-review' when the consultant's signed verdict is current. */
+  recordKind: RecordKind;
+  /** On a consultant review, the assessment it replaced. */
+  supersedes: string | null;
+  auditorStance: AuditorStance | null;
+  actionReason: ActionReason | null;
   isAffected: boolean;
   impactType: string;
   numericDelta: number | null;
@@ -78,7 +99,7 @@ export type ClientAssessment = {
   /** Assessments of this rule for this client, current included. */
   runs: number;
   /** Newest first. */
-  priorAssessments: Array<{ assessmentKey: string; signedAt: string; isAffected: boolean; canonicalHash: string | null }>;
+  priorAssessments: Array<{ assessmentKey: string; recordKind: RecordKind; signedAt: string; isAffected: boolean; canonicalHash: string | null }>;
   /** A sent brief from any run, else a brief on the current assessment, else null. */
   brief: { briefId: string; status: string; sentAt: string | null } | null;
   /** Affected and no sent brief on any run. */
@@ -102,6 +123,7 @@ export const EMPTY_COUNTS: ClientCounts = {
   assessedCount: 0,
   affectedCount: 0,
   unsentBriefs: 0,
+  auditorDisagrees: 0,
   lastAssessedAt: null,
   latestAffected: null,
 };
@@ -114,9 +136,21 @@ function newestFirst(a: AssessmentRow, b: AssessmentRow): number {
   return b.timestamp.localeCompare(a.timestamp) || b.assessmentKey.localeCompare(a.assessmentKey);
 }
 
+/** The current-verdict order (ADR-0004): consultant reviews first, then newest first. */
+export function currentFirst(a: AssessmentRow, b: AssessmentRow): number {
+  const review = (x: AssessmentRow) => (x.recordKind === 'consultant-review' ? 1 : 0);
+  return review(b) - review(a) || newestFirst(a, b);
+}
+
+export function actionReasonOf(current: AssessmentRow, briefSent: boolean): ActionReason | null {
+  if (current.recordKind === 'agent' && current.auditorStance?.stance === 'disagree') return 'auditor-disagrees';
+  if (current.isAffected && !briefSent) return 'brief-needed';
+  return null;
+}
+
 type RuleRuns = { ruleId: string; current: AssessmentRow; prior: AssessmentRow[] };
 
-/** Per client, per rule: current plus history. Ties on timestamp break on assessmentKey. */
+/** Per client, per rule: current (see currentFirst) plus history, newest first. */
 export function groupRuns(assessments: AssessmentRow[]): Map<string, RuleRuns[]> {
   const byClientRule = new Map<string, Map<string, AssessmentRow[]>>();
   for (const a of assessments) {
@@ -133,8 +167,9 @@ export function groupRuns(assessments: AssessmentRow[]): Map<string, RuleRuns[]>
   for (const [clientId, rules] of byClientRule) {
     const runs: RuleRuns[] = [];
     for (const [ruleId, list] of rules) {
-      list.sort(newestFirst);
-      runs.push({ ruleId, current: list[0], prior: list.slice(1) });
+      list.sort(currentFirst);
+      const [current, ...prior] = list;
+      runs.push({ ruleId, current, prior: prior.sort(newestFirst) });
     }
     out.set(clientId, runs);
   }
@@ -170,6 +205,7 @@ export function countsByClient(assessments: AssessmentRow[], briefs: BriefRow[])
       assessedCount: current.length,
       affectedCount: affected.length,
       unsentBriefs: affected.filter((a) => !sent.has(`${ruleIdOf(a)}#${clientId}`)).length,
+      auditorDisagrees: current.filter((a) => a.recordKind === 'agent' && a.auditorStance?.stance === 'disagree').length,
       lastAssessedAt: current[0]?.timestamp ?? null,
       latestAffected: latest ? { assessmentKey: latest.assessmentKey, policyEventId: latest.policyEventId, topic: latest.topic } : null,
     });
@@ -207,6 +243,10 @@ export function clientAssessments(assessments: AssessmentRow[], briefs: BriefRow
         policyEventId: current.policyEventId,
         ruleHash: current.ruleHash,
         topic: current.topic,
+        recordKind: current.recordKind,
+        supersedes: current.supersedes,
+        auditorStance: current.auditorStance,
+        actionReason: actionReasonOf(current, sentBrief !== null),
         isAffected: current.isAffected,
         impactType: current.impactType,
         numericDelta: current.numericDelta,
@@ -216,7 +256,7 @@ export function clientAssessments(assessments: AssessmentRow[], briefs: BriefRow
         signed: current.canonicalHash !== null && current.signatureAlgorithm !== null,
         signedAt: current.timestamp,
         runs: all.length,
-        priorAssessments: prior.map((p) => ({ assessmentKey: p.assessmentKey, signedAt: p.timestamp, isAffected: p.isAffected, canonicalHash: p.canonicalHash })),
+        priorAssessments: prior.map((p) => ({ assessmentKey: p.assessmentKey, recordKind: p.recordKind, signedAt: p.timestamp, isAffected: p.isAffected, canonicalHash: p.canonicalHash })),
         brief: brief ? { briefId: brief.briefId, status: brief.status, sentAt: brief.sentAt } : null,
         needsBrief: current.isAffected && !sentBrief,
       });
@@ -251,6 +291,7 @@ export function clientBriefs(assessments: AssessmentRow[], briefs: BriefRow[]): 
 // ---------------------------------------------------------------------------
 
 export function toAssessment(r: Row): AssessmentRow {
+  const review = r.recordKind === 'consultant-review';
   return {
     assessmentKey: str(r.assessmentKey),
     policyEventId: str(r.policyEventId),
@@ -265,7 +306,17 @@ export function toAssessment(r: Row): AssessmentRow {
     timestamp: str(r.timestamp),
     canonicalHash: strOrNull(r.canonicalHash),
     signatureAlgorithm: strOrNull(r.signatureAlgorithm),
+    recordKind: review ? 'consultant-review' : 'agent',
+    supersedes: review ? strOrNull(r.supersedes) : null,
+    auditorStance: review ? null : stanceOf(r.auditorStance),
   };
+}
+
+function stanceOf(v: unknown): AuditorStance | null {
+  if (!v || typeof v !== 'object') return null;
+  const { stance, reason } = v as Row;
+  if (stance !== 'agree' && stance !== 'disagree' && stance !== 'uncertain') return null;
+  return { stance, reason: typeof reason === 'string' ? reason : '' };
 }
 
 export function toBrief(r: Row): BriefRow {
