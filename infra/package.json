@@ -6,7 +6,8 @@
     "watch": "tsc -w",
     "test": "jest",
     "test:guardrail": "node --import tsx --test lib/guardrail-patterns.test.ts lib/guardrail-stack.test.ts",
-    "cdk": "cdk"
+    "cdk": "cdk",
+    "test:budget": "node --import tsx --test lib/budget-stack.test.ts"
   },
   "devDependencies": {
     "@swc/core": "^1.15.0",

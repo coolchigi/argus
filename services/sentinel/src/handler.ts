@@ -1,11 +1,12 @@
-import { BedrockRuntimeClient, ConverseCommand, type ConverseCommandInput } from '@aws-sdk/client-bedrock-runtime';
+import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createHash, randomUUID } from 'node:crypto';
+import { buildClassifierRequest, parseClassification, type Category, type Classification, type RuleKind, type Severity } from './classify';
 import { extractMainText } from './extract';
-import { describeGuardrailBlock, guarded } from './guardrail';
+import { describeGuardrailBlock } from './guardrail';
 
 const s3 = new S3Client({});
 const eb = new EventBridgeClient({});
@@ -20,7 +21,6 @@ const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const SEED_URLS = JSON.parse(process.env.IRCC_SEED_URLS ?? '[]') as string[];
 const FETCH_TIMEOUT_MS = 15_000;
-const CLASSIFIER_MAX_INPUT_CHARS = 12_000;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -30,19 +30,6 @@ function guardrailConfig() {
     trace: 'enabled' as const,
   };
 }
-
-type Category = 'ministerial-instruction' | 'news-release' | 'rounds-of-invitations' | 'policy-page-change';
-type Severity = 'low' | 'medium' | 'high';
-type RuleKind = 'scoring' | 'interpretation' | 'procedural';
-
-type Classification = {
-  category: Category;
-  policyDomain: string;
-  severity: Severity;
-  summary: string;
-  topic: string;
-  ruleKind: RuleKind;
-};
 
 type PolicyDelta = {
   eventId: string;
@@ -214,59 +201,10 @@ async function fetchWithTimeout(url: string): Promise<string> {
   }
 }
 
-export function buildClassifierRequest(url: string, pageText: string): ConverseCommandInput {
-  const snippet = pageText.slice(0, CLASSIFIER_MAX_INPUT_CHARS);
-  const intro = [
-    'Classify this IRCC page change. Return valid JSON only, no prose.',
-    '',
-    `URL: ${url}`,
-    'Content (may be truncated):',
-  ].join('\n');
-  const instructions = [
-    'Return this exact JSON shape:',
-    '{',
-    '  "category": "ministerial-instruction" | "news-release" | "rounds-of-invitations" | "policy-page-change",',
-    '  "policyDomain": "express-entry" | "pgwp" | "sowp" | "pgp" | "pnp" | "study-permit" | "general" | "other",',
-    '  "severity": "low" | "medium" | "high",',
-    '  "summary": "one sentence describing what changed or what this page is",',
-    '  "topic": "short kebab-case topic id, e.g. crs-scorecard or ee-category-list",',
-    '  "ruleKind": "scoring" | "interpretation" | "procedural"',
-    '}',
-    '',
-    'policyDomain definitions. Pick the program whose applicants the page\'s rules are about. A program the page only mentions in passing does not decide the domain.',
-    '- express-entry: Express Entry profiles, the Comprehensive Ranking System (CRS), rounds of invitations, and the federal skilled worker, federal skilled trades and Canadian experience classes.',
-    '- pgwp: post-graduation work permits for international students who graduated from a Canadian school.',
-    '- sowp: open work permits for the spouse, common-law partner or dependent children of a worker, student or permanent residence applicant.',
-    '- pgp: sponsoring parents and grandparents for permanent residence, including interest to sponsor forms and invitations to apply.',
-    '- pnp: the Provincial Nominee Program and provincial nominations.',
-    '- study-permit: study permits, including acceptance letters and provincial or territorial attestation letters.',
-    '- general: a change that applies across several of the programs above.',
-    '- other: none of the above.',
-    '',
-    'Severity rules:',
-    '- high: eligibility flip, program or intake open, pause or close, a change to how points are awarded (a points factor added, removed or re-weighted).',
-    '- medium: category-based-draw change, procedural rule change.',
-    '- low: news release, statistics, minor form-version bump.',
-    'Judge severity from what the page says. Do not use point values, dates or program rules from memory.',
-  ].join('\n');
-
-  // The IRCC page text is the only outside content, so it's the only
-  // guarded block. See guardrail.ts for the tagging rule.
-  return {
-    modelId: CLASSIFIER_MODEL,
-    system: [
-      {
-        text: 'You classify Canadian IRCC (Immigration, Refugees and Citizenship Canada) policy pages. Return valid JSON only. No preamble, no explanation.',
-      },
-    ],
-    messages: [{ role: 'user', content: [{ text: intro + '\n' }, guarded(snippet + '\n\n'), { text: instructions }] }],
-    inferenceConfig: { maxTokens: 512, temperature: 0.1 },
-    guardrailConfig: guardrailConfig(),
-  };
-}
-
 async function classifyWithBedrock(url: string, pageText: string, runId: string): Promise<Classification> {
-  const res = await bedrock.send(new ConverseCommand(buildClassifierRequest(url, pageText)));
+  const res = await bedrock.send(
+    new ConverseCommand(buildClassifierRequest({ modelId: CLASSIFIER_MODEL, url, pageText, guardrailConfig: guardrailConfig() })),
+  );
 
   if (res.stopReason === 'guardrail_intervened') {
     const block = describeGuardrailBlock(res);
@@ -281,19 +219,21 @@ async function classifyWithBedrock(url: string, pageText: string, runId: string)
     throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
   }
   const raw = res.output?.message?.content?.[0]?.text ?? '';
-  const match = raw.match(/\{[\s\S]*\}/);
-  if (!match) {
-    throw new Error(`classifier returned non-JSON: ${raw.slice(0, 200)}`);
+  const { classification, coerced } = parseClassification(raw);
+  if (coerced.length > 0) {
+    // A value outside the taxonomy is a classifier miss worth seeing. Log
+    // the model's label, capped, or just its type when it isn't a string.
+    log('error', 'classifier-value-coerced', {
+      runId,
+      url,
+      coerced: coerced.map((c) => ({
+        field: c.field,
+        received: typeof c.received === 'string' ? c.received.slice(0, 80) : c.received === undefined ? null : typeof c.received,
+        used: c.used,
+      })),
+    });
   }
-  const parsed = JSON.parse(match[0]) as Partial<Classification>;
-  return {
-    category: (parsed.category ?? 'policy-page-change') as Category,
-    policyDomain: parsed.policyDomain ?? 'other',
-    severity: (parsed.severity ?? 'low') as Severity,
-    summary: parsed.summary ?? '(no summary)',
-    topic: parsed.topic ?? 'unknown',
-    ruleKind: (parsed.ruleKind ?? 'procedural') as RuleKind,
-  };
+  return classification;
 }
 
 async function writePolicyRule(

@@ -98,10 +98,14 @@ jobs:
       # Guardrail regexes against the probe matrix, read from the stack source.
       - run: npm run test:guardrail
         working-directory: infra
+      # Budget alarm amounts, thresholds and window, from the synthesized stack.
+      - run: npm run test:budget
+        working-directory: infra
       # The app has no context lookups, so synth runs without an AWS account.
-      # The emails are placeholders for the two env vars the API stack reads.
+      # The emails are placeholders for the env vars the API and budget stacks read.
       - run: npx cdk synth --quiet --no-notices
         working-directory: infra
         env:
           ARGUS_SES_FROM: ci@example.com
           ARGUS_DEMO_RCIC_EMAIL: ci@example.com
+          ARGUS_BUDGET_EMAIL: ci@example.com
