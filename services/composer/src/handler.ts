@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { describeGuardrailBlock, guarded } from './guardrail';
 import { ruleWindow } from './rule-window';
 import { elapsedMs, recordStep } from './telemetry';
+import { checkBriefVoice, withoutClientId } from './voice';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -50,6 +51,11 @@ type Assessment = {
   auditorReasoning?: string;
   timestamp: string;
 };
+
+// Used when the model returns no subject. Fixed text on purpose: it goes to
+// the client, so it carries no client id, and a topic slug like
+// "ee-crs-grid" doesn't read well humanized.
+export const FALLBACK_SUBJECT = 'An immigration policy update that affects your file';
 
 type BriefDraft = {
   subject: string;
@@ -186,21 +192,24 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
 
   const system = [
     'You are the Composer agent in Argus, an IRCC policy-impact platform for Regulated Canadian Immigration Consultants (RCICs).',
-    'You draft a short client-update email that the RCIC will personalize and send.',
-    'You never refer to the client by name. Client is referenced as "your client" or by their opaque id.',
+    'You draft a short email that the RCIC sends to their own client. The RCIC is the sender and the client is the reader.',
+    'Write to the client directly, in second person: "you", "your application". Write in the consultant\'s voice, first person: "I recommend".',
+    'Never write "your client" and never describe the client in the third person. The assessment below calls the reader "the client". Turn that into "you".',
+    'Never write a name, a client id or a placeholder like [CLIENT NAME]. No greeting and no sign-off: the RCIC adds both when they send it.',
     'You never invent facts. Every claim must come from the assessment or the rule content.',
     'You match the professional tone RCICs use with their clients: plain language, honest about uncertainty, one clear next step.',
     'Return valid JSON only. No preamble.',
   ].join('\n');
 
+  // The client id stays out of the prompt entirely. The model has no use for
+  // it, and a body that carries it reads as a note about the client.
   const assessmentJson = JSON.stringify(
     {
-      clientId: assessment.clientId,
       topic: assessment.topic,
       impactType: assessment.impactType,
       numericDelta: assessment.numericDelta,
-      narrative: assessment.narrative,
-      recommendedAction: assessment.recommendedAction,
+      narrative: withoutClientId(assessment.narrative, assessment.clientId),
+      recommendedAction: withoutClientId(assessment.recommendedAction, assessment.clientId),
       confidence: assessment.confidence,
       citation: assessment.citationSourceUrl,
     },
@@ -212,7 +221,7 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
     'Return this exact JSON shape:',
     '{',
     '  "subject": "one line, under 80 chars, no exclamation marks",',
-    '  "bodyMarkdown": "3 short paragraphs. Paragraph 1: what changed. Paragraph 2: what it means for the client (use client_id as placeholder for their name). Paragraph 3: what you recommend as their consultant. Include the citation URL inline as a markdown link once.",',
+    '  "bodyMarkdown": "3 short paragraphs. Paragraph 1: what changed. Paragraph 2: what it means for you, the reader. Paragraph 3: what I, your consultant, recommend you do next. Include the citation URL inline as a markdown link once.",',
     '  "suggestedActions": ["one action", "another action", "at most 3 actions total, each a single imperative sentence"]',
     '}',
     '',
@@ -269,11 +278,32 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
     throw new Error(`composer returned non-JSON: ${raw.slice(0, 200)}`);
   }
   const parsed = JSON.parse(match[0]) as Partial<BriefDraft>;
-  return {
-    subject: parsed.subject ?? `Policy update relevant to ${assessment.clientId}`,
-    bodyMarkdown: parsed.bodyMarkdown ?? assessment.narrative,
-    suggestedActions: Array.isArray(parsed.suggestedActions) ? parsed.suggestedActions.slice(0, 3) : [assessment.recommendedAction],
+  const draft = {
+    subject: typeof parsed.subject === 'string' && parsed.subject.trim() ? parsed.subject : FALLBACK_SUBJECT,
+    // The fallbacks are Analyst text, which names the client by id. The
+    // client reads these, so the id becomes "the client".
+    bodyMarkdown:
+      typeof parsed.bodyMarkdown === 'string' && parsed.bodyMarkdown.trim()
+        ? parsed.bodyMarkdown
+        : withoutClientId(assessment.narrative, assessment.clientId),
+    suggestedActions: Array.isArray(parsed.suggestedActions)
+      ? parsed.suggestedActions.slice(0, 3)
+      : [withoutClientId(assessment.recommendedAction, assessment.clientId)],
   };
+
+  // A warning, never a failure: the consultant reads and edits every draft
+  // before it goes out, and a draft in the wrong voice beats no draft.
+  const findings = checkBriefVoice(draft.bodyMarkdown, assessment.clientId);
+  if (findings.length > 0) {
+    log('warn', 'composer-voice-check', {
+      runId,
+      assessmentKey: assessment.assessmentKey,
+      clientId: assessment.clientId,
+      modelId: COMPOSER_MODEL,
+      findings,
+    });
+  }
+  return draft;
 }
 
 async function emitBriefReady(detail: Record<string, unknown>): Promise<void> {
@@ -290,7 +320,7 @@ async function emitBriefReady(detail: Record<string, unknown>): Promise<void> {
   );
 }
 
-function log(level: 'debug' | 'info' | 'error', msg: string, fields: Record<string, unknown>): void {
+function log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ level, msg, timestamp: new Date().toISOString(), ...fields }));
 }
 
