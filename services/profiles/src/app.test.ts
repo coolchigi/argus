@@ -281,6 +281,14 @@ describe('GET /profiles derived counts', () => {
     assert.equal(c1.unsentBriefs, 0);
   });
 
+  it('counts a brief the consultant copied out as delivered', async () => {
+    store.assessments.push(assessment('C-1', RULE_A, 'run-a1', '2026-09-20T10:00:00.000Z', true));
+    store.briefs.push(brief('C-1', RULE_A, 'run-a1', 'sent-externally'));
+    const res = await call(event('GET /profiles'));
+    const c1 = res.body.clients.find((c: any) => c.clientId === 'C-1');
+    assert.equal(c1.unsentBriefs, 0);
+  });
+
   it('gives never-assessed clients zero counts and filters on needsAction, status and program', async () => {
     store.assessments.push(assessment('C-1', RULE_A, 'run-a1', '2026-09-20T10:00:00.000Z', true));
     const all = await call(event('GET /profiles'));

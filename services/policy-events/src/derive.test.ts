@@ -288,6 +288,14 @@ describe('briefs across runs', () => {
     assert.equal(c.brief?.status, 'sent');
   });
 
+  it('treats a brief the consultant copied out as covering the client', () => {
+    const e = only(events(affectedTwice, rules(rule(RULE_A)), [brief(NEW, 'sent-externally')]));
+    assert.equal(e.awaitingBrief, 0);
+    assert.equal(e.status, 'done');
+    const [c] = buildEventImpacts(affectedTwice, [brief(OLD, 'draft'), brief(NEW, 'sent-externally')], [], new Map());
+    assert.equal(c.brief?.status, 'sent-externally');
+  });
+
   it('does not let a brief on another rule cover this one', () => {
     const other = row(`${Date.parse('2026-09-21T00:00:00.000Z')}-${RULE_B.slice(0, 8)}`, RULE_B, 'C-1', '2026-09-21T00:01:00.000Z');
     const list = events([...affectedTwice, other], rules(rule(RULE_A), rule(RULE_B)), [brief(String(other.assessmentKey), 'sent')]);
@@ -448,6 +456,15 @@ describe('activity feed', () => {
     assert.equal(items.filter((i) => i.kind === 'assessment-signed').length, 4);
     assert.equal(items.length, 7);
     for (const i of items) assert.equal(i.eventId, RULE_A, `${i.id} should belong to ${RULE_A}`);
+  });
+
+  it("offers a sent brief's receipt fingerprint and leaves copied briefs out of the alert rows", () => {
+    const hash = 'b'.repeat(64);
+    const sent = [brief(`${RUN_A1}#C-1`, 'sent', { sentAt: '2026-09-21T00:00:00.000Z', sentBodyHash: hash })];
+    const copyRow: Row = { timestamp: '2026-09-21T00:00:02.000Z', briefId: 'x', clientId: 'C-2', channel: 'consultant-copy' };
+    const { items } = buildActivity(rows, sent, [], [copyRow], { limit: 100, before: null });
+    assert.equal(items.find((i) => i.kind === 'brief-sent')?.fingerprint, hash);
+    assert.equal(items.filter((i) => i.kind === 'alert-emailed').length, 0);
   });
 
   it('pages newest first with nextBefore', () => {
