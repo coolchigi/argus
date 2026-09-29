@@ -53,6 +53,7 @@ before(async () => {
     POLICY_RULES_TABLE: 'rules',
     RCIC_USERS_TABLE: 'users',
     PUBLIC_COUNTERS_TABLE: 'counters',
+    BRIEFS_TABLE: 'briefs',
     SIGNING_KEY_ID: KMS_KEY_ID,
     BEDROCK_GUARDRAIL_ID: 'gr-test',
     BEDROCK_GUARDRAIL_VERSION: '7',
