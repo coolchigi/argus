@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { use } from "react";
+import { use, useState } from "react";
 import { ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { InlineError } from "@/components/argus/inline-error";
@@ -11,47 +11,23 @@ import { ProgressLine } from "@/components/argus/progress-line";
 import { Badge, StatusBadge } from "@/components/argus/status-badge";
 import { AssessmentList, BriefList } from "@/components/caseload/client-history";
 import { buttonSecondary } from "@/components/caseload/copy";
+import { EditProfileDialog } from "@/components/caseload/edit-profile-dialog";
+import { PROFILE_FIELDS, formatValue, isMono } from "@/components/caseload/profile-fields";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { EmptyState } from "@/components/empty-state";
 import { useBreadcrumbLabel } from "@/components/nav/breadcrumb-context";
 import { ApiError } from "@/lib/api";
 import { humanizePolicyDomain, humanizeTopic } from "@/lib/humanize";
 import { usePatchProfile, useProfile } from "@/lib/queries";
-import type { ClientProfile } from "@/lib/types/profiles";
 
-type Field = { key: keyof ClientProfile; label: string; format?: (v: unknown) => string };
-
-const yesNo = (v: unknown) => (v === true ? "Yes" : v === false ? "No" : String(v));
-const slug = (v: unknown) => humanizeTopic(String(v));
-
-/** Display order. Only fields on the profile are shown. notes and age never reach the browser. */
-const FIELDS: Field[] = [
-  { key: "currentCrsScore", label: "CRS score" },
-  { key: "nocCode", label: "NOC" },
-  { key: "teerLevel", label: "TEER" },
-  { key: "educationLevel", label: "Education", format: slug },
-  { key: "clbEnglishWorst", label: "CLB English, lowest" },
-  { key: "clbFrenchWorst", label: "CLB French, lowest" },
-  { key: "canadianWorkYears", label: "Canadian work, years" },
-  { key: "foreignWorkYears", label: "Foreign work, years" },
-  { key: "hasJobOffer", label: "Job offer", format: yesNo },
-  { key: "jobOfferTeer", label: "Job offer TEER" },
-  { key: "principalPermitTeer", label: "Principal permit TEER" },
-  { key: "principalPermitRemainingMonths", label: "Principal permit, months left" },
-  { key: "cipCode", label: "CIP code" },
-  { key: "graduationDate", label: "Graduation", format: (v) => formatDayMonthYear(`${String(v)}T12:00:00Z`) },
-  { key: "pgpSponsor2020Form", label: "2020 PGP interest form", format: yesNo },
-  { key: "pgpLicoYearsMet", label: "LICO years met" },
-  { key: "pnpProvince", label: "PNP province" },
-  { key: "intendedStudyLevel", label: "Intended study level", format: slug },
-  { key: "palOnFile", label: "PAL on file", format: yesNo },
-];
+const FORMATTERS = { date: formatDayMonthYear, slug: humanizeTopic };
 
 export default function ClientDetailPage({ params }: { params: Promise<{ clientId: string }> }) {
   const { clientId: raw } = use(params);
   const clientId = decodeURIComponent(raw);
   const detail = useProfile(clientId);
   const patch = usePatchProfile(clientId);
+  const [editing, setEditing] = useState(false);
   useBreadcrumbLabel(clientId);
 
   const back = (
@@ -105,9 +81,14 @@ export default function ClientDetailPage({ params }: { params: Promise<{ clientI
         }
         actions={
           client && (
-            <button type="button" className={buttonSecondary} disabled={patch.isPending} onClick={() => void setStatus(closed ? "active" : "closed")}>
-              {closed ? "Reopen file" : "Close file"}
-            </button>
+            <div className="flex gap-2">
+              <button type="button" className={buttonSecondary} onClick={() => setEditing(true)}>
+                Edit details
+              </button>
+              <button type="button" className={buttonSecondary} disabled={patch.isPending} onClick={() => void setStatus(closed ? "active" : "closed")}>
+                {closed ? "Reopen file" : "Close file"}
+              </button>
+            </div>
           )
         }
       />
@@ -142,14 +123,21 @@ export default function ClientDetailPage({ params }: { params: Promise<{ clientI
             </div>
             <dl className="grid grid-cols-1 gap-px border border-hairline bg-hairline sm:grid-cols-2 lg:grid-cols-3">
               <Item label="Program" value={humanizePolicyDomain(client.program)} />
-              {FIELDS.filter((f) => client[f.key] !== undefined && client[f.key] !== null).map((f) => (
-                <Item key={f.key} label={f.label} value={f.format ? f.format(client[f.key]) : String(client[f.key])} mono={!f.format} />
+              {PROFILE_FIELDS.filter((f) => client[f.attr] !== undefined && client[f.attr] !== null).map((f) => (
+                <Item
+                  key={f.attr}
+                  label={f.label}
+                  value={formatValue(f, client[f.attr], FORMATTERS)}
+                  mono={isMono(f)}
+                />
               ))}
             </dl>
             <p className="mt-3 text-[12px] text-ink-3">
               Argus holds scoring details only, never names or contact details. Age is used for scoring and isn&apos;t shown here.
             </p>
           </NumberedSection>
+
+          {editing && <EditProfileDialog client={client} onClose={() => setEditing(false)} />}
 
           <NumberedSection number={2} title="Assessments">
             <AssessmentList assessments={data.assessments} />
