@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { DURATIONS, prefersReducedMotion } from "@/lib/motion";
 import {
   buildChain,
+  chainProgress,
   describeOutcomes,
   formatDuration,
   hasTelemetry,
@@ -15,7 +16,7 @@ import {
   runStartedAt,
   type ChainLink,
 } from "@/lib/lineage";
-import type { Lineage, LineageAgentName } from "@/lib/types/lineage";
+import type { Lineage } from "@/lib/types/lineage";
 
 /**
  * The agent chain behind an assessment or a pipeline run, as a chip row.
@@ -47,10 +48,10 @@ export function AgentLineage({
   const chain = buildChain(policyEventId, lineage);
   const recorded = hasTelemetry(lineage);
   const crossFamily = isCrossFamily(chain);
-  const done = chain.filter((c) => c.step !== null).length;
+  const { done, total } = chainProgress(chain);
 
   // The steps already recorded on the first response. Those never animate.
-  const [baseline, setBaseline] = useState<Set<LineageAgentName> | null>(null);
+  const [baseline, setBaseline] = useState<Set<ChainLink["agent"]> | null>(null);
   useEffect(() => {
     if (baseline === null && lineage) setBaseline(new Set(lineage.agents.map((a) => a.agent)));
   }, [baseline, lineage]);
@@ -63,17 +64,17 @@ export function AgentLineage({
     <div className="rounded-md border border-border bg-surface">
       <div className="flex flex-wrap items-start gap-y-2 px-4 py-3">
         {chain.map((link, i) => {
-          const landed = link.step !== null;
+          const pending = pendingLook && link.expected && link.step === null;
           const animate = live && baseline !== null && !baseline.has(link.agent);
           return (
             <div key={link.agent} className="flex items-start">
-              <Chip link={link} dim={pendingLook && !landed} animate={animate} showTime={pendingLook} />
+              <Chip link={link} dim={pending} animate={animate} showTime={pendingLook} />
               {i < chain.length - 1 && (
                 <span
                   aria-hidden
                   className={cn(
                     "mx-2 pt-[1px] text-[12px] text-ink-3 transition-opacity duration-[220ms] delay-[80ms] motion-reduce:duration-[120ms] motion-reduce:delay-0",
-                    pendingLook && !landed ? "opacity-35" : "opacity-100",
+                    pending ? "opacity-35" : "opacity-100",
                   )}
                 >
                   ▸
@@ -92,7 +93,7 @@ export function AgentLineage({
       <p className="border-t border-border px-4 py-2 text-[11px] text-ink-2">
         {live ? (
           <span>
-            Live. {done} of {chain.length} steps done{scope === "run" ? " for at least one client" : ""}.
+            Live. {done} of {total} steps done{scope === "run" ? " for at least one client" : ""}.
           </span>
         ) : recorded ? (
           scope === "run" ? (
@@ -105,7 +106,7 @@ export function AgentLineage({
         )}
       </p>
       <span className="sr-only" aria-live="polite">
-        {live ? `${done} of ${chain.length} pipeline steps done` : ""}
+        {live ? `${done} of ${total} pipeline steps done` : ""}
       </span>
 
       <button
@@ -165,6 +166,8 @@ export function useLiveRun(policyEventId: string | null, lineage: Lineage | unde
 }
 
 function modelLabel(link: ChainLink, recorded: boolean): string {
+  // The demo trigger runs no model and records no step. It emits the change.
+  if (link.agent === "demo-trigger") return "No model. Not a pipeline step";
   if (link.step?.modelId) return link.step.modelId;
   // Anchor runs no model. It signs with the Argus KMS key.
   if (link.step && link.agent === "anchor") return "AWS KMS, ECDSA P-256";

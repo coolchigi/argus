@@ -3,7 +3,7 @@ import { DataTable, type Column } from "@/components/argus/data-table";
 import { StatusBadge } from "@/components/argus/status-badge";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { eventNote } from "@/components/policy-events/derive";
-import { humanizePolicyDomain } from "@/lib/humanize";
+import { humanizePolicyDomain, humanizeTopic } from "@/lib/humanize";
 import type { PolicyEvent } from "@/lib/types/policy-events";
 
 const COLUMNS: Column<PolicyEvent>[] = [
@@ -20,7 +20,7 @@ const COLUMNS: Column<PolicyEvent>[] = [
       const note = eventNote(e);
       return (
         <>
-          <span className="block font-medium leading-snug text-ink-1">{e.title}</span>
+          <span className="block font-medium leading-snug text-ink-1">{humanizeTopic(e.topic)}</span>
           {note && (
             <span className="mt-0.5 block font-mono text-[11px] text-ink-3">
               <span aria-hidden>↳ </span>
@@ -89,7 +89,7 @@ export function EventsTable({
       rows={events}
       getRowKey={(e) => e.eventId}
       rowHref={(e) => `/policy-events/${encodeURIComponent(e.eventId)}`}
-      rowLinkLabel={(e) => `${e.ref}, ${e.title}`}
+      rowLinkLabel={(e) => `${e.ref}, ${humanizeTopic(e.topic)}`}
       loading={loading}
       placeholderRows={6}
       empty={empty}

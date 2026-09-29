@@ -29,6 +29,9 @@ const ACRONYMS: Record<string, string> = {
   trv: "TRV",
   sds: "SDS",
   pal: "PAL",
+  tal: "TAL",
+  dli: "DLI",
+  sin: "SIN",
 };
 
 // Proper nouns keep their capitals inside a sentence-case label.
@@ -42,20 +45,34 @@ const PROPER: Record<string, string> = {
   atlantic: "Atlantic",
 };
 
-/** "crs-scorecard" becomes "CRS scorecard". "express-entry-draws" becomes "Express Entry draws". */
+// Acronym pairs IRCC names as alternatives, written with a slash: the
+// provincial or territorial attestation letter, and the English or French
+// language benchmark.
+const SLASH_PAIRS = new Set(["pal/tal", "clb/nclc"]);
+
+// Words that close a compound modifier and keep the hyphen before them:
+// "category-based", "program-specific".
+const COMPOUND_TAILS = new Set(["based", "specific", "related"]);
+
+/**
+ * "crs-scorecard" becomes "CRS scorecard". "express-entry-draws" becomes
+ * "Express Entry draws". "pal-tal-requirements" becomes "PAL/TAL requirements".
+ * "ee-category-based-selection" becomes "EE category-based selection".
+ */
 export function humanizeTopic(topic: string | null | undefined): string {
   if (!topic) return "Untitled change";
-  const words = topic
-    .split(/[-_\s]+/)
-    .filter(Boolean)
-    .map((w, i) => {
-      const lower = w.toLowerCase();
-      if (ACRONYMS[lower]) return ACRONYMS[lower];
-      if (PROPER[lower]) return PROPER[lower];
-      if (/^p\d+$/.test(lower)) return lower.toUpperCase();
-      return i === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
-    });
-  return words.join(" ");
+  const raw = topic.split(/[-_\s]+/).filter(Boolean).map((w) => w.toLowerCase());
+  const words = raw.map((lower, i) => {
+    if (ACRONYMS[lower]) return ACRONYMS[lower];
+    if (PROPER[lower]) return PROPER[lower];
+    if (/^p\d+$/.test(lower)) return lower.toUpperCase();
+    return i === 0 ? lower.charAt(0).toUpperCase() + lower.slice(1) : lower;
+  });
+  return words.reduce((out, word, i) => {
+    if (i === 0) return word;
+    const sep = SLASH_PAIRS.has(`${raw[i - 1]}/${raw[i]}`) ? "/" : COMPOUND_TAILS.has(raw[i]) ? "-" : " ";
+    return out + sep + word;
+  }, "");
 }
 
 export type PolicyDomain =

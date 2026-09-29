@@ -2,7 +2,9 @@ import { describe, test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildChain,
+  chainProgress,
   describeOutcomes,
+  detectedAtFromEventId,
   formatDuration,
   isCrossFamily,
   isLive,
@@ -10,6 +12,7 @@ import {
   LIVE_WINDOW_MS,
   modelFamily,
   parseCorrectionKey,
+  runOrigin,
 } from "./lineage.ts";
 import type { Lineage, LineageAgent } from "./types/lineage.ts";
 
@@ -47,6 +50,53 @@ describe("buildChain", () => {
 
   test("puts Recall first when Recall recorded a step, whatever the id", () => {
     assert.equal(buildChain("pe1", lineage([agent({ agent: "recall" })]))[0].name, "Recall");
+  });
+});
+
+describe("run origin and progress", () => {
+  const perClient = ["analyst", "auditor", "anchor", "composer"] as const;
+  const all = (head: "sentinel" | "recall" | null) =>
+    lineage([...(head ? [agent({ agent: head })] : []), ...perClient.map((a) => agent({ agent: a }))]);
+
+  test("a Sentinel run expects 5 steps and is done only when Sentinel landed too", () => {
+    const id = "1759147200000-ab12cd34";
+    assert.equal(runOrigin(id, undefined), "sentinel");
+    const full = buildChain(id, all("sentinel"));
+    assert.equal(full[0].name, "Sentinel");
+    assert.deepEqual(chainProgress(full), { done: 5, total: 5, complete: true });
+    assert.deepEqual(chainProgress(buildChain(id, all(null))), { done: 4, total: 5, complete: false });
+  });
+
+  test("a Recall replay expects Recall at the head, not Sentinel", () => {
+    const id = "recall-1cbb49854167";
+    assert.equal(runOrigin(id, undefined), "recall");
+    const full = buildChain(id, all("recall"));
+    assert.deepEqual(full.map((c) => c.agent), ["recall", ...perClient]);
+    assert.deepEqual(chainProgress(full), { done: 5, total: 5, complete: true });
+    assert.deepEqual(chainProgress(buildChain(id, all(null))), { done: 4, total: 5, complete: false });
+  });
+
+  test("a demo run is headed by the demo trigger, which isn't a step, so 4 of 4 is done", () => {
+    const id = "demo-1759147200000-22222222";
+    assert.equal(runOrigin(id, undefined), "demo");
+    const chain = buildChain(id, all(null));
+    assert.equal(chain[0].agent, "demo-trigger");
+    assert.equal(chain[0].name, "Demo trigger");
+    assert.equal(chain[0].expected, false);
+    assert.ok(!chain.some((c) => c.agent === "sentinel" || c.agent === "recall"));
+    assert.deepEqual(chainProgress(chain), { done: 4, total: 4, complete: true });
+  });
+
+  test("a demo run with Composer still out isn't done", () => {
+    const partial = lineage(perClient.slice(0, 3).map((a) => agent({ agent: a })));
+    assert.deepEqual(chainProgress(buildChain("demo-1759147200000-22222222", partial)), { done: 3, total: 4, complete: false });
+  });
+
+  test("a demo run starts its live window at the trigger time in its id", () => {
+    const at = 1759147200000;
+    assert.equal(detectedAtFromEventId(`demo-${at}-22222222`), at);
+    assert.equal(isLive(`demo-${at}-22222222`, undefined, at + 60_000), true);
+    assert.equal(isLive(`demo-${at}-22222222`, undefined, at + LIVE_WINDOW_MS), false);
   });
 });
 

@@ -25,7 +25,7 @@ import {
 import { RecommendedActions } from "@/components/policy-events/recommended-actions";
 import { SignedRecords } from "@/components/policy-events/signed-records";
 import { SourceCitation } from "@/components/policy-events/source-citation";
-import { humanizeCategory, humanizePolicyDomain } from "@/lib/humanize";
+import { humanizeCategory, humanizePolicyDomain, humanizeTopic } from "@/lib/humanize";
 import type { PolicyEventDetailResponse, PolicyEventImpactsResponse } from "@/lib/types/policy-events";
 import type { Lineage } from "@/lib/types/lineage";
 
@@ -145,7 +145,7 @@ export function EventDetail({
       {e ? (
         <header className="space-y-2">
           <div className="font-mono text-[12px] text-brand-ink tabular">{e.ref}</div>
-          <h1 className="font-display text-[28px] leading-tight text-ink-1">{e.title}</h1>
+          <h1 className="font-display text-[28px] leading-tight text-ink-1">{humanizeTopic(e.topic)}</h1>
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 font-mono text-[11px] text-ink-3">
             <StatusBadge kind="event" status={e.status} />
             {e.severity && (
