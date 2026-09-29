@@ -1,5 +1,5 @@
 {
-  "name": "argus-briefs-service",
+  "name": "argus-demo",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,14 +9,10 @@
   },
   "devDependencies": {
     "@aws-sdk/client-dynamodb": "^3.700.0",
-    "@aws-sdk/client-kms": "^3.700.0",
-    "@aws-sdk/client-s3": "^3.700.0",
-    "@aws-sdk/client-sesv2": "^3.700.0",
+    "@aws-sdk/client-eventbridge": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
-    "@aws-sdk/s3-request-presigner": "^3.700.0",
     "@types/aws-lambda": "^8.10.145",
     "@types/node": "^24",
-    "esbuild": "^0.28.2",
     "typescript": "~5.7.0"
   }
 }

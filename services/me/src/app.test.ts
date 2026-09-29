@@ -108,13 +108,13 @@ beforeEach(() => {
 });
 
 describe('GET /me', () => {
-  it('fills defaults for a fresh row: every area on, alerts on, onboarding at step 1', async () => {
+  it('fills defaults for a fresh row: every area on, alerts on, identity off on public receipts, onboarding at step 1', async () => {
     const res = await call('GET /me');
     assert.equal(res.status, 200);
     assert.deepEqual(res.body.preferences, {
       policyDomains: { 'express-entry': true, pgwp: true, sowp: true, pgp: true, pnp: true, 'study-permit': true },
       realtimeAlerts: true,
-      showIdentityOnPublicReceipts: true,
+      showIdentityOnPublicReceipts: false,
     });
     assert.deepEqual(res.body.onboarding, { step: 1, completedAt: null, skippedAt: null });
     assert.deepEqual(res.body.setup, { provisioned: true, profileComplete: false, domainsChosen: false, clientCount: 0, hasAssessments: false });
@@ -229,6 +229,25 @@ describe('PATCH /me validation', () => {
       assert.equal(res.status, 400);
       assert.equal(res.body.error, 'invalid-preference-value');
     }
+  });
+
+  it('shows identity on public receipts only after an explicit opt-in', async () => {
+    for (const stored of ['true', 1, null]) {
+      store.users.get(TENANT)!.preferences = { showIdentityOnPublicReceipts: stored };
+      assert.equal((await call('GET /me')).body.preferences.showIdentityOnPublicReceipts, false, String(stored));
+    }
+    const on = await patch({ preferences: { showIdentityOnPublicReceipts: true } });
+    assert.equal(on.status, 200);
+    assert.equal(on.body.preferences.showIdentityOnPublicReceipts, true);
+    assert.equal((store.users.get(TENANT)!.preferences as Row).showIdentityOnPublicReceipts, true);
+    const off = await patch({ preferences: { showIdentityOnPublicReceipts: false } });
+    assert.equal(off.body.preferences.showIdentityOnPublicReceipts, false);
+  });
+
+  it('rejects a non-boolean identity preference', async () => {
+    const res = await patch({ preferences: { showIdentityOnPublicReceipts: 'yes' } });
+    assert.equal(res.status, 400);
+    assert.deepEqual(res.body.fields, ['showIdentityOnPublicReceipts']);
   });
 
   it('rejects an unknown preference key', async () => {

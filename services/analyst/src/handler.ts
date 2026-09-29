@@ -83,6 +83,12 @@ type ClientProfile = {
   pnpProvince?: string;
   intendedStudyLevel?: string;
   palOnFile?: boolean;
+  pgpSponsorStatus?: string;
+  dliType?: string;
+  studyStartDate?: string;
+  studyPermitAppliedDate?: string;
+  principalPrPathway?: string;
+  principalPrApplied?: boolean;
   notes?: string;
 };
 

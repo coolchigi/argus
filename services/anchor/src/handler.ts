@@ -3,6 +3,7 @@ import { KMSClient, SignCommand } from '@aws-sdk/client-kms';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { createHash } from 'node:crypto';
 import { elapsedMs, recordStep } from './telemetry';
+import { bumpPublicCounter } from './public-counter';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
@@ -12,6 +13,7 @@ const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
 // Optional on purpose: a missing telemetry table must never stop signing.
 const AUDIT_TRAIL_TABLE = process.env.AUDIT_TRAIL_TABLE;
+const PUBLIC_COUNTERS_TABLE = process.env.PUBLIC_COUNTERS_TABLE;
 
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
@@ -133,6 +135,9 @@ async function anchor(verdict: AuditVerdict): Promise<{ anchored: boolean; outco
     }
     throw err;
   });
+
+  // Only a new signature counts. A replayed verdict hits the condition above.
+  if (!alreadySigned) await bumpPublicCounter(ddb, PUBLIC_COUNTERS_TABLE, 'assessments', payload.timestamp);
 
   log('info', 'anchor-signed-and-written', {
     verdictId: verdict.verdictId,
