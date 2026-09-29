@@ -27,12 +27,56 @@ type Props = {
   onOpenChange: (open: boolean) => void;
 };
 
+/** The caseload page's import. Each opening starts from a clean panel. */
+export function ImportDialog({ open, onOpenChange }: Props) {
+  const [session, setSession] = useState(0);
+  const close = () => {
+    setSession((n) => n + 1);
+    onOpenChange(false);
+  };
+  return (
+    <Dialog open={open} onOpenChange={(next) => (next ? onOpenChange(true) : close())}>
+      <DialogContent className="max-h-[calc(100dvh-2rem)] gap-5 overflow-y-auto rounded-md border border-hairline bg-surface p-6 sm:max-w-2xl">
+        <div className="space-y-1.5 pr-8">
+          <DialogTitle className="font-display text-[20px] font-medium leading-tight text-ink-1">Import clients</DialogTitle>
+          <DialogDescription className="text-[13px] leading-relaxed text-ink-2">
+            <ImportRequirements />
+          </DialogDescription>
+        </div>
+        <ImportPanel key={session} onDone={close} onCancel={close} />
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** What the CSV needs, with the template link. */
+export function ImportRequirements() {
+  const templateHref = useMemo(() => `data:text/csv;charset=utf-8,${encodeURIComponent(TEMPLATE_CSV)}`, []);
+  return (
+    <>
+      A CSV with one row per client. Required columns: client_id, program, status and consent_confirmed. Up to {MAX_IMPORT_ROWS} rows.{" "}
+      <a href={templateHref} download="argus-caseload-template.csv" className="text-brand-ink underline underline-offset-4">
+        Download a template
+      </a>
+    </>
+  );
+}
+
+type PanelProps = {
+  /** "Done" after a commit. */
+  onDone: () => void;
+  /** "Cancel" on the preview. */
+  onCancel: () => void;
+  doneLabel?: string;
+};
+
 /**
  * Pick a CSV, check it in the browser, dry-run it on the server, show what
  * would happen row by row, then commit once consent is confirmed. Nothing is
- * written until the consultant presses Import.
+ * written until the consultant presses Import. The caseload dialog wraps it,
+ * and onboarding step 3 shows it inline.
  */
-export function ImportDialog({ open, onOpenChange }: Props) {
+export function ImportPanel({ onDone, onCancel, doneLabel = "Done" }: PanelProps) {
   const fileId = useId();
   const consentId = useId();
   const updateId = useId();
@@ -110,139 +154,120 @@ export function ImportDialog({ open, onOpenChange }: Props) {
     () => (preview?.rejected ?? []).filter((r) => r.errors.includes("client-exists")).length,
     [preview],
   );
-  const templateHref = useMemo(() => `data:text/csv;charset=utf-8,${encodeURIComponent(TEMPLATE_CSV)}`, []);
 
   return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        if (!next) reset();
-        onOpenChange(next);
-      }}
-    >
-      <DialogContent className="max-h-[calc(100dvh-2rem)] gap-5 overflow-y-auto rounded-md border border-hairline bg-surface p-6 sm:max-w-2xl">
-        <div className="space-y-1.5 pr-8">
-          <DialogTitle className="font-display text-[20px] font-medium leading-tight text-ink-1">Import clients</DialogTitle>
-          <DialogDescription className="text-[13px] leading-relaxed text-ink-2">
-            A CSV with one row per client. Required columns: client_id, program, status and consent_confirmed. Up to {MAX_IMPORT_ROWS} rows.{" "}
-            <a href={templateHref} download="argus-caseload-template.csv" className="text-brand-ink underline underline-offset-4">
-              Download a template
-            </a>
-          </DialogDescription>
-        </div>
+    <div className="grid gap-5">
+      <p className="border-l-2 border-brand-ink bg-brand-subtle px-3 py-2 text-[13px] text-ink-1">{PII_WARNING}</p>
 
-        <p className="border-l-2 border-brand-ink bg-brand-subtle px-3 py-2 text-[13px] text-ink-1">{PII_WARNING}</p>
-
-        {result ? (
-          <div className="space-y-4">
-            <p className="text-[14px] text-ink-1">
-              {result.created > 0 && `${result.created} added. `}
-              {result.updated > 0 && `${result.updated} updated. `}
-              {result.rejected.length > 0
-                ? `${result.rejected.length} ${result.rejected.length === 1 ? "row was" : "rows were"} skipped.`
-                : "Every row went in."}
-            </p>
-            {result.rejected.length > 0 && <RejectedTable rows={result.rejected} />}
-            <div className="flex justify-end gap-2">
-              <button type="button" className={buttonSecondary} onClick={reset}>
-                Import another file
-              </button>
-              <button type="button" className={buttonPrimary} onClick={() => onOpenChange(false)}>
-                Done
-              </button>
-            </div>
+      {result ? (
+        <div className="space-y-4">
+          <p className="text-[14px] text-ink-1">
+            {result.created > 0 && `${result.created} added. `}
+            {result.updated > 0 && `${result.updated} updated. `}
+            {result.rejected.length > 0
+              ? `${result.rejected.length} ${result.rejected.length === 1 ? "row was" : "rows were"} skipped.`
+              : "Every row went in."}
+          </p>
+          {result.rejected.length > 0 && <RejectedTable rows={result.rejected} />}
+          <div className="flex justify-end gap-2">
+            <button type="button" className={buttonSecondary} onClick={reset}>
+              Import another file
+            </button>
+            <button type="button" className={buttonPrimary} onClick={onDone}>
+              {doneLabel}
+            </button>
           </div>
-        ) : (
-          <>
-            <div className="space-y-1.5">
-              <SectionLabel as="label" htmlFor={fileId}>
-                CSV file
-              </SectionLabel>
-              <input
-                id={fileId}
-                type="file"
-                accept=".csv,text/csv"
-                onChange={(e) => {
-                  const file = e.target.files?.[0];
-                  // Clear it so picking the same file again after a fix still fires.
-                  e.target.value = "";
-                  void onFile(file);
-                }}
-                className="block w-full text-[13px] text-ink-2 file:mr-3 file:h-9 file:cursor-pointer file:rounded-sm file:border file:border-control file:bg-sunk file:px-3 file:text-[13px] file:text-ink-1 hover:file:bg-surface"
-              />
-              {fileName && (
-                <p className="font-mono text-[11px] text-ink-3" role="status">
-                  {fileName}
-                  {!fileError && bulk.isPending && !preview ? `, checking ${rows?.length ?? 0} rows` : ""}
-                </p>
-              )}
-            </div>
-
-            {fileError && (
-              <InlineError
-                message={
-                  fileError.error === "too-large"
-                    ? "We didn't import this file. It's over 1 MB, which is far more than 500 rows should need."
-                    : describeFileError(fileError)
-                }
-              />
+        </div>
+      ) : (
+        <>
+          <div className="space-y-1.5">
+            <SectionLabel as="label" htmlFor={fileId}>
+              CSV file
+            </SectionLabel>
+            <input
+              id={fileId}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                // Clear it so picking the same file again after a fix still fires.
+                e.target.value = "";
+                void onFile(file);
+              }}
+              className="block w-full text-[13px] text-ink-2 file:mr-3 file:h-9 file:cursor-pointer file:rounded-sm file:border file:border-control file:bg-sunk file:px-3 file:text-[13px] file:text-ink-1 hover:file:bg-surface"
+            />
+            {fileName && (
+              <p className="font-mono text-[11px] text-ink-3" role="status">
+                {fileName}
+                {!fileError && bulk.isPending && !preview ? `, checking ${rows?.length ?? 0} rows` : ""}
+              </p>
             )}
-            {requestError && <InlineError message="Couldn't check this file." detail={requestError} onRetry={rows ? () => void runDryRun(rows, allowUpdate) : undefined} />}
+          </div>
 
-            {preview && rows && (
-              <div className="space-y-4">
-                <div className="grid grid-cols-3 gap-px border border-hairline bg-hairline">
-                  <Count label="Ready to add" value={preview.created} />
-                  <Count label="Ready to update" value={preview.updated} />
-                  <Count label="With problems" value={preview.rejected.length} danger={preview.rejected.length > 0} />
-                </div>
+          {fileError && (
+            <InlineError
+              message={
+                fileError.error === "too-large"
+                  ? "We didn't import this file. It's over 1 MB, which is far more than 500 rows should need."
+                  : describeFileError(fileError)
+              }
+            />
+          )}
+          {requestError && <InlineError message="Couldn't check this file." detail={requestError} onRetry={rows ? () => void runDryRun(rows, allowUpdate) : undefined} />}
 
-                {(existingRejected > 0 || allowUpdate) && (
-                  <label htmlFor={updateId} className="flex items-start gap-2.5 text-[13px] text-ink-1">
-                    <input
-                      id={updateId}
-                      type="checkbox"
-                      checked={allowUpdate}
-                      onChange={(e) => {
-                        setAllowUpdate(e.target.checked);
-                        void runDryRun(rows, e.target.checked);
-                      }}
-                      className="mt-0.5 h-4 w-4 accent-[var(--brand)]"
-                    />
-                    <span>
-                      Update clients already in your caseload with the values in this file.
-                      <span className="block text-[12px] text-ink-2">Left unticked, those rows are skipped and nothing about them changes.</span>
-                    </span>
-                  </label>
-                )}
+          {preview && rows && (
+            <div className="space-y-4">
+              <div className="grid grid-cols-3 gap-px border border-hairline bg-hairline">
+                <Count label="Ready to add" value={preview.created} />
+                <Count label="Ready to update" value={preview.updated} />
+                <Count label="With problems" value={preview.rejected.length} danger={preview.rejected.length > 0} />
+              </div>
 
-                {preview.rejected.length > 0 && <RejectedTable rows={preview.rejected} />}
-
-                <label htmlFor={consentId} className="flex items-start gap-2.5 border-t border-hairline pt-4 text-[13px] text-ink-1">
+              {(existingRejected > 0 || allowUpdate) && (
+                <label htmlFor={updateId} className="flex items-start gap-2.5 text-[13px] text-ink-1">
                   <input
-                    id={consentId}
+                    id={updateId}
                     type="checkbox"
-                    checked={consent}
-                    onChange={(e) => setConsent(e.target.checked)}
+                    checked={allowUpdate}
+                    onChange={(e) => {
+                      setAllowUpdate(e.target.checked);
+                      void runDryRun(rows, e.target.checked);
+                    }}
                     className="mt-0.5 h-4 w-4 accent-[var(--brand)]"
                   />
-                  <span>{CONSENT_LABEL}</span>
+                  <span>
+                    Update clients already in your caseload with the values in this file.
+                    <span className="block text-[12px] text-ink-2">Left unticked, those rows are skipped and nothing about them changes.</span>
+                  </span>
                 </label>
+              )}
 
-                <div className="flex flex-wrap items-center justify-end gap-2">
-                  <button type="button" className={buttonSecondary} onClick={() => onOpenChange(false)}>
-                    Cancel
-                  </button>
-                  <button type="button" className={buttonPrimary} disabled={!consent || ready === 0 || bulk.isPending} onClick={() => void commit()}>
-                    {bulk.isPending ? "Importing" : `Import ${ready} ${ready === 1 ? "client" : "clients"}`}
-                  </button>
-                </div>
+              {preview.rejected.length > 0 && <RejectedTable rows={preview.rejected} />}
+
+              <label htmlFor={consentId} className="flex items-start gap-2.5 border-t border-hairline pt-4 text-[13px] text-ink-1">
+                <input
+                  id={consentId}
+                  type="checkbox"
+                  checked={consent}
+                  onChange={(e) => setConsent(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-[var(--brand)]"
+                />
+                <span>{CONSENT_LABEL}</span>
+              </label>
+
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                <button type="button" className={buttonSecondary} onClick={onCancel}>
+                  Cancel
+                </button>
+                <button type="button" className={buttonPrimary} disabled={!consent || ready === 0 || bulk.isPending} onClick={() => void commit()}>
+                  {bulk.isPending ? "Importing" : `Import ${ready} ${ready === 1 ? "client" : "clients"}`}
+                </button>
               </div>
-            )}
-          </>
-        )}
-      </DialogContent>
-    </Dialog>
+            </div>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
