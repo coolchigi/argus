@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
+import { type ApplyGuardrailCommand, type ApplyGuardrailCommandOutput, BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { build } from 'esbuild';
 
@@ -17,6 +18,12 @@ const outfile = path.join(outDir, 'impacts-handler.mjs');
 
 type Item = Record<string, unknown>;
 const puts: Array<{ TableName: string; Item: Item }> = [];
+const guardrailCalls: ApplyGuardrailCommand['input'][] = [];
+const logs: string[] = [];
+
+// What the fake guardrail answers. A passing check by default.
+const passed: Partial<ApplyGuardrailCommandOutput> = { action: 'NONE', assessments: [{}] };
+let guardrailResponse: Partial<ApplyGuardrailCommandOutput> = passed;
 
 type Handler = (event: unknown) => Promise<{ statusCode: number; body: string }>;
 let handler: Handler;
@@ -55,6 +62,8 @@ before(async () => {
     TRAINING_CORRECTIONS_TABLE: 'argus-training-corrections',
     POLICY_RULES_TABLE: 'rules',
     SIGNING_KEY_ID: 'key',
+    BEDROCK_GUARDRAIL_ID: 'gr-test',
+    BEDROCK_GUARDRAIL_VERSION: '7',
     AWS_REGION: 'us-east-1',
   });
 
@@ -74,16 +83,24 @@ before(async () => {
     throw new Error(`unexpected command ${cmd.constructor.name} on ${input.TableName}`);
   };
 
+  (BedrockRuntimeClient.prototype as { send: unknown }).send = async (cmd: ApplyGuardrailCommand) => {
+    guardrailCalls.push(cmd.input);
+    return guardrailResponse;
+  };
+
   handler = (await import(outfile)).handler as Handler;
 });
 
 beforeEach(() => {
   puts.length = 0;
+  guardrailCalls.length = 0;
+  logs.length = 0;
+  guardrailResponse = passed;
 });
 
 async function postCorrection(body: Item) {
   const origLog = console.log;
-  console.log = () => {};
+  console.log = (line: string) => logs.push(line);
   try {
     return await handler({
       routeKey: 'POST /impacts/{id}/correction',
@@ -129,5 +146,71 @@ describe('POST /impacts/{id}/correction', () => {
     ]) {
       assert.ok(f in Item, `row has ${f}`);
     }
+  });
+});
+
+describe('POST /impacts/{id}/correction guardrail check', () => {
+  const body = {
+    correctorReasoning: 'Priya Sandhu is outside the French category',
+    correctedImpactType: 'eligibility-flip',
+    correctedNarrative: 'c1 is now outside the category',
+    correctedRecommendedAction: 'Book a language retest',
+  };
+  // The shape ApplyGuardrail returns when the NAME entity blocks, with the
+  // matched text in `match` the way Bedrock reports it.
+  const blockedName: Partial<ApplyGuardrailCommandOutput> = {
+    action: 'GUARDRAIL_INTERVENED',
+    outputs: [{ text: 'Sorry, Argus cannot process this request.' }],
+    assessments: [{ sensitiveInformationPolicy: { piiEntities: [{ type: 'NAME', match: 'Priya Sandhu', action: 'BLOCKED', detected: true }], regexes: [] } }],
+  };
+
+  it('checks every free-text field with the configured guardrail as input', async () => {
+    await postCorrection(body);
+    assert.equal(guardrailCalls.length, 1);
+    const call = guardrailCalls[0];
+    assert.equal(call.guardrailIdentifier, 'gr-test');
+    assert.equal(call.guardrailVersion, '7');
+    assert.equal(call.source, 'INPUT');
+    const texts = (call.content ?? []).map((c) => c.text?.text);
+    assert.deepEqual(texts, [body.correctorReasoning, body.correctedNarrative, body.correctedRecommendedAction]);
+  });
+
+  it('returns 422 and stores nothing when the guardrail blocks a client name', async () => {
+    guardrailResponse = blockedName;
+    const res = await postCorrection(body);
+    assert.equal(res.statusCode, 422);
+    assert.deepEqual(JSON.parse(res.body), { error: 'correction-contains-personal-information' });
+    assert.equal(puts.length, 0, 'nothing written to TrainingCorrections');
+  });
+
+  it('logs the policy names and never the matched text', async () => {
+    guardrailResponse = blockedName;
+    await postCorrection(body);
+    const all = logs.join('\n');
+    assert.match(all, /pii:NAME/);
+    assert.doesNotMatch(all, /Priya|Sandhu/);
+  });
+
+  it('returns 422 with a separate code when a non-personal policy blocks', async () => {
+    guardrailResponse = {
+      action: 'GUARDRAIL_INTERVENED',
+      assessments: [{ contentPolicy: { filters: [{ type: 'PROMPT_ATTACK', confidence: 'HIGH', action: 'BLOCKED' }] } }],
+    };
+    const res = await postCorrection(body);
+    assert.equal(res.statusCode, 422);
+    assert.deepEqual(JSON.parse(res.body), { error: 'correction-blocked-by-guardrail' });
+    assert.equal(puts.length, 0);
+  });
+
+  it('stores the correction when the guardrail passes it', async () => {
+    const res = await postCorrection({ ...body, correctorReasoning: 'c1 is outside the French category' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(puts.length, 1);
+    assert.equal(puts[0].Item.correctorReasoning, 'c1 is outside the French category');
+  });
+
+  it('skips empty optional fields rather than sending blank text', async () => {
+    await postCorrection({ correctorReasoning: 'c1 is outside the category', correctedImpactType: 'none' });
+    assert.deepEqual((guardrailCalls[0].content ?? []).map((c) => c.text?.text), ['c1 is outside the category']);
   });
 });

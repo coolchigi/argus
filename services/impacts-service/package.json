@@ -8,6 +8,7 @@
     "test": "node --experimental-strip-types --disable-warning=ExperimentalWarning --test 'src/**/*.test.ts'"
   },
   "devDependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.700.0",
     "@aws-sdk/client-dynamodb": "^3.700.0",
     "@aws-sdk/client-kms": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",

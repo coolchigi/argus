@@ -122,11 +122,11 @@ const hypothesis = {
   clientProfile: { clientId: 'c1', program: 'express-entry' },
 };
 
-async function audit(): Promise<ConverseCommandInput> {
+async function audit(overrides: Item = {}): Promise<ConverseCommandInput> {
   const origLog = console.log;
   console.log = () => {};
   try {
-    await handler({ detail: hypothesis });
+    await handler({ detail: { ...hypothesis, ...overrides } });
   } finally {
     console.log = origLog;
   }
@@ -148,13 +148,12 @@ describe('Auditor correction loader', () => {
     assert.equal((queries[0].ExpressionAttributeValues as Item)[':r'], 'R1');
   });
 
-  it('picks same topic, then same domain, then the newest other, capped at 5', async () => {
+  it('picks same topic, then same domain, newest first, capped at 5', async () => {
     corrections.push(
-      row('other-new', 'pgp-intake', 'family', daysAgo(1)),
-      row('other-old', 'caregiver', 'caregiver', daysAgo(20)),
-      row('other-older', 'study-cap', 'study', daysAgo(30)),
       row('domain-a', 'ee-crs-grid', 'express-entry', daysAgo(10)),
       row('domain-b', 'ee-proof-of-funds', 'express-entry', daysAgo(15)),
+      row('domain-c', 'ee-tie-break', 'express-entry', daysAgo(25)),
+      row('domain-d', 'ee-medical', 'express-entry', daysAgo(35)),
       row('topic-old', 'ee-category-draws', 'express-entry', daysAgo(40)),
       row('topic-new', 'ee-category-draws', 'express-entry', daysAgo(5)),
       row('expired', 'ee-category-draws', 'express-entry', daysAgo(120)),
@@ -162,7 +161,34 @@ describe('Auditor correction loader', () => {
     );
     const bodies = fewShotBodies(await audit());
     const keys = bodies.map((b) => /narrative (\S+?)"/.exec(b)?.[1]);
-    assert.deepEqual(keys, ['topic-new', 'topic-old', 'domain-a', 'domain-b', 'other-new']);
+    assert.deepEqual(keys, ['topic-new', 'topic-old', 'domain-a', 'domain-b', 'domain-c']);
+  });
+
+  it('never loads a correction from another topic and another domain, however recent', async () => {
+    // The case that went wrong: an Express Entry correction filed yesterday
+    // rewrote a study-permit audit. With only unrelated rows, nothing loads.
+    corrections.push(
+      row('ee-yesterday', 'ee-category-draws', 'express-entry', daysAgo(1)),
+      row('pgp-today', 'pgp-intake', 'family', daysAgo(0)),
+    );
+    const req = await audit({ topic: 'study-permit-cap', policyDomain: 'study-permits' });
+    assert.deepEqual(fewShotBodies(req), []);
+    assert.doesNotMatch(JSON.stringify(req.system), /PAST CORRECTIONS/);
+  });
+
+  it('leaves slots empty before it fills them with unrelated rows', async () => {
+    corrections.push(
+      row('topic', 'ee-category-draws', 'express-entry', daysAgo(3)),
+      row('unrelated-new', 'study-permit-cap', 'study-permits', daysAgo(0)),
+    );
+    const keys = fewShotBodies(await audit()).map((b) => /narrative (\S+?)"/.exec(b)?.[1]);
+    assert.deepEqual(keys, ['topic']);
+  });
+
+  it('does not treat two empty policy domains as a match', async () => {
+    corrections.push(row('blank-domain', 'pgp-intake', '', daysAgo(1)));
+    const req = await audit({ topic: 'study-permit-cap', policyDomain: '' });
+    assert.deepEqual(fewShotBodies(req), []);
   });
 
   it('adds no few-shot block when the consultant has no corrections', async () => {

@@ -1,15 +1,20 @@
+import { ApplyGuardrailCommand, BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { KMSClient, GetPublicKeyCommand } from '@aws-sdk/client-kms';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
+import { readGuardrailVerdict } from './guardrail';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
+const bedrock = new BedrockRuntimeClient({});
 
 const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
 const TRAINING_CORRECTIONS_TABLE = requiredEnv('TRAINING_CORRECTIONS_TABLE');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
+const GUARDRAIL_ID = requiredEnv('BEDROCK_GUARDRAIL_ID');
+const GUARDRAIL_VERSION = requiredEnv('BEDROCK_GUARDRAIL_VERSION');
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
 
@@ -89,6 +94,8 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
   const correctedRecommendedAction = optionalString(body, 'correctedRecommendedAction');
   const correctedConfidence = optionalEnum<Confidence>(body, 'correctedConfidence', ['low', 'medium', 'high']);
 
+  await rejectIfGuardrailIntervenes(rcicId, assessmentKey, [correctorReasoning, correctedNarrative, correctedRecommendedAction]);
+
   // The Auditor ranks corrections by topic, then by policyDomain. Anchor
   // doesn't write the domain onto the assessment, so read it from the rule
   // the assessment cites.
@@ -131,6 +138,28 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
     correctedDelta: correctedNumericDelta,
   });
   return { correction: item };
+}
+
+// The Auditor sends every stored correction to Bedrock inside a guarded
+// block, and the guardrail blocks client names. A correction that names a
+// client would block every audit for this consultant until it ages out, so
+// the same guardrail checks the free text here, before anything is stored.
+// Logs policy names only, never the text that matched.
+async function rejectIfGuardrailIntervenes(rcicId: string, assessmentKey: string, fields: Array<string | null>): Promise<void> {
+  const content = fields.filter((f): f is string => f !== null).map((text) => ({ text: { text } }));
+  const res = await bedrock.send(
+    new ApplyGuardrailCommand({
+      guardrailIdentifier: GUARDRAIL_ID,
+      guardrailVersion: GUARDRAIL_VERSION,
+      source: 'INPUT',
+      content,
+    }),
+  );
+  const verdict = readGuardrailVerdict(res);
+  if (!verdict.intervened) return;
+  const personal = verdict.policies.some((p) => p.startsWith('pii:') || p.startsWith('regex:'));
+  log('info', 'correction-rejected-by-guardrail', { rcicId, assessmentKey, policies: verdict.policies });
+  throw httpError(422, personal ? 'correction-contains-personal-information' : 'correction-blocked-by-guardrail');
 }
 
 async function loadPolicyDomain(ruleHash: string): Promise<string> {
