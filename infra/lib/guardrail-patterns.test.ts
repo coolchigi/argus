@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { CA_SIN_PATTERN, US_SSN_PATTERN } from './guardrail-patterns';
+import {
+  CA_SIN_PATTERN,
+  INTL_PHONE_PATTERN,
+  NA_PHONE_PATTERN,
+  TRUNK_PHONE_PATTERN,
+  US_SSN_PATTERN,
+} from './guardrail-patterns';
+import { phoneMustBlock, phoneMustPass } from './guardrail-phone-matrix';
 
 // Runs the guardrail patterns with JS RegExp. The patterns stick to syntax
 // that reads the same in any common regex engine (character classes, {n},
@@ -71,5 +78,70 @@ describe('guardrail ID patterns', () => {
   it('does not match a SIN glued to other digits', () => {
     assert.deepEqual(fired('Account 1046454286 is closed.'), []);
     assert.deepEqual(fired('Phone 613 555 0199.'), []);
+  });
+});
+
+describe('guardrail phone patterns', () => {
+  const phone = {
+    'na-phone': new RegExp(NA_PHONE_PATTERN),
+    'intl-phone': new RegExp(INTL_PHONE_PATTERN),
+    'trunk-phone': new RegExp(TRUNK_PHONE_PATTERN),
+  };
+  const phoneFired = (text: string) =>
+    Object.entries(phone).filter(([, re]) => re.test(text)).map(([name]) => name);
+
+  const expected: [string, string][] = [
+    ['613-555-0142', 'na-phone'],
+    ['(416) 555-0199', 'na-phone'],
+    ['(604)555-0123', 'na-phone'],
+    ['+1 604 555 0123', 'na-phone'],
+    ['+1-613-555-0142', 'na-phone'],
+    ['1-613-555-0142', 'na-phone'],
+    ['613.555.0142', 'na-phone'],
+    ['6135550142', 'na-phone'],
+    ['+16135550142', 'na-phone'],
+    ['+1 (613) 555-0142', 'na-phone'],
+    ['+44 20 7946 0958', 'intl-phone'],
+    ['+44 (0)20 7946 0958', 'intl-phone'],
+    ['0044 20 7946 0958', 'intl-phone'],
+    ['+33 1 42 68 53 00', 'intl-phone'],
+    ['+91 98765 43210', 'intl-phone'],
+    ['+7 912 345 67 89', 'intl-phone'],
+    ['020 7946 0958', 'trunk-phone'],
+    ['01 42 68 53 00', 'trunk-phone'],
+  ];
+  for (const [num, name] of expected) {
+    it(`${name} matches ${num} inside a sentence`, () => {
+      assert.ok(phoneFired(`Reach the client on ${num} today.`).includes(name));
+    });
+  }
+
+  for (const text of phoneMustBlock) {
+    it(`blocks: ${text}`, () => {
+      assert.notDeepEqual(phoneFired(text), []);
+    });
+  }
+  for (const text of phoneMustPass) {
+    it(`lets through: ${text}`, () => {
+      assert.deepEqual(phoneFired(text), []);
+    });
+  }
+
+  it('leaves out every toll-free area code, with or without +1', () => {
+    for (const code of ['800', '833', '844', '855', '866', '877', '888']) {
+      assert.deepEqual(phoneFired(`IRCC: 1-${code}-242-2100.`), [], code);
+      assert.deepEqual(phoneFired(`IRCC: +1 ${code} 242 2100.`), [], code);
+      assert.deepEqual(phoneFired(`IRCC: (${code}) 242-2100.`), [], code);
+    }
+  });
+  it('still matches the 8XX area codes that are not toll-free', () => {
+    for (const code of ['801', '819', '825', '873', '879']) {
+      assert.deepEqual(phoneFired(`Client line ${code}-555-0142.`), ['na-phone'], code);
+    }
+  });
+  it('does not match inside longer digit runs', () => {
+    assert.deepEqual(phoneFired('fb:pages 378967748836213, 10860597051, 209857686718'), []);
+    assert.deepEqual(phoneFired('Account 1046454286 is closed.'), []);
+    assert.deepEqual(phoneFired('Case E0016135550142.'), []);
   });
 });
