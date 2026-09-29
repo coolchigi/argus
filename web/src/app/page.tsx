@@ -1,9 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useQuery } from "@tanstack/react-query";
 import { humanizeTopic } from "@/lib/humanize";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { api } from "@/lib/api";
+import { statsLine } from "@/lib/public-stats";
+import { JWKS_PATH, SAMPLE_RECEIPT_HASH, SAMPLE_RECEIPT_TOPIC } from "@/lib/sample-receipt";
+import type { PublicStats } from "@/lib/types/public";
 import { useAuth } from "@/components/auth-context";
 import { Seal } from "@/components/seal";
 import { SiteHeader } from "@/components/site-header";
@@ -77,7 +82,7 @@ function Hero() {
             Argus watches IRCC for you. When something changes, six AI agents review the impact on your
             caseload and sign the finding. You get a draft brief per client and a receipt an auditor can verify.
           </p>
-          <div className="mt-8 flex items-center gap-3">
+          <div className="mt-8 flex flex-wrap items-center gap-3">
             <Link
               href="/signup"
               className="inline-flex h-10 items-center rounded-sm border border-brand-ink bg-brand px-4 text-[13px] font-medium text-on-brand transition-colors hover:bg-brand-hover"
@@ -91,6 +96,7 @@ function Hero() {
               Sign in
             </Link>
           </div>
+          <ActivityLine />
         </div>
 
         <div className="lg:pt-8">
@@ -101,11 +107,30 @@ function Hero() {
   );
 }
 
+/**
+ * "N assessments signed in the last 7 days", from GET /public/stats. Renders
+ * nothing while loading, on error, or when the 7-day number is zero.
+ */
+function ActivityLine() {
+  const stats = useQuery({
+    queryKey: ["public-stats"],
+    queryFn: () => api<PublicStats>("/public/stats", { requireAuth: false }),
+    staleTime: 5 * 60_000,
+    retry: false,
+  });
+  const line = statsLine(stats.data);
+  if (!line) return null;
+  return (
+    <p className="mt-6 flex items-center gap-2 text-[12px] text-ink-2">
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-brand" />
+      <span className="tabular">{line}</span>
+    </p>
+  );
+}
+
 function SampleReceipt() {
-  // A real signed assessment from the demo tenant (Express Entry category-based selection).
-  // It resolves through the public verify endpoint and exposes no client data.
-  const SAMPLE_HASH = "8be968886f7d6f6d9b1b0c1185f00f8e08032546dee5d8f3a1f00c0037c07d7b";
-  const SAMPLE_TOPIC = "ee-category-based-selection";
+  const SAMPLE_HASH = SAMPLE_RECEIPT_HASH;
+  const SAMPLE_TOPIC = SAMPLE_RECEIPT_TOPIC;
   return (
     <div className="rounded-[8px] border border-hairline bg-card p-6 space-y-5">
       <div className="flex items-center gap-2">
@@ -235,8 +260,16 @@ function TrustSection() {
               </Link>
             </div>
             <div className="border border-hairline bg-card p-4">
-              <div className="label">Signing algorithm</div>
-              <div className="mt-2 text-[13px] text-ink-1">ECDSA P-256 (SHA-256)</div>
+              <div className="label">Public key (JWKS)</div>
+              <a
+                href={JWKS_PATH}
+                className="mt-2 inline-block fingerprint text-ink-1 break-all underline-offset-4 decoration-hairline hover:underline"
+              >
+                tryargus.ca{JWKS_PATH}
+              </a>
+              <p className="mt-2 text-[12px] text-ink-2 leading-relaxed">
+                ECDSA P-256 (SHA-256), held in AWS KMS. Every receipt names this key by its ID.
+              </p>
             </div>
             <div className="border border-hairline bg-card p-4">
               <div className="label">Zero client PII</div>

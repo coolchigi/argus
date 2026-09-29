@@ -17,6 +17,7 @@ import {
   NotificationsSection,
   PolicyMonitorSection,
   ProfileSection,
+  PublicReceiptsSection,
   SettingsSection,
   SigningKeySection,
 } from "@/components/settings/sections";
@@ -106,6 +107,7 @@ export default function SettingsPage() {
           <ProfileSection me={me.data} draft={draft} errors={errors} onChange={update} />
           <PolicyMonitorSection draft={draft} onChange={update} />
           <NotificationsSection me={me.data} draft={draft} onChange={update} />
+          <PublicReceiptsSection me={me.data} draft={draft} onChange={update} />
           <SigningKeySection me={me.data} />
         </>
       )}
