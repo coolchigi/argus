@@ -155,7 +155,8 @@ export function ClientImpactTable({ clients, empty }: { clients: PolicyEventImpa
   }
 
   return (
-    <div className="overflow-x-auto border border-hairline bg-card">
+    // relative keeps the sr-only labels inside the scroller, or they widen the page on phones.
+    <div className="relative overflow-x-auto border border-hairline bg-card">
       <table className="w-full border-collapse text-[13px]">
         <caption className="sr-only">Clients assessed against this change</caption>
         <thead className="bg-surface">

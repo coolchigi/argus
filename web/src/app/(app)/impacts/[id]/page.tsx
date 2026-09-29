@@ -434,7 +434,7 @@ function CorrectionForm({
                 className="accent-brand-ink"
               />
               <span>{o.label}</span>
-              {o.value === current && <span className="ml-auto font-mono text-[11px] text-ink-3">now</span>}
+              {o.value === current && <span className="ml-auto font-mono text-[11px] text-ink-3">current</span>}
             </label>
           ))}
         </div>
