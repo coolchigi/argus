@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { X } from "lucide-react";
+import { humanizeTopic } from "@/lib/humanize";
 import type { PolicyEvent } from "@/lib/types/policy-events";
 import { bannerEvents, bannerImpactSentence, formatDayMonth } from "@/components/dashboard/derive";
 
@@ -61,7 +62,7 @@ export function AlertBanner({ events }: { events: PolicyEvent[] }) {
     >
       <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-brand" />
       <p className="min-w-0 flex-1 text-[13px] leading-relaxed text-ink-1">
-        IRCC changed <span className="font-medium">{top.title}</span> on {formatDayMonth(top.detectedAt)}.{" "}
+        IRCC changed <span className="font-medium">{humanizeTopic(top.topic)}</span> on {formatDayMonth(top.detectedAt)}.{" "}
         <span className="text-ink-2">{bannerImpactSentence(top)}</span>
       </p>
       <div className="flex shrink-0 items-center gap-3">
