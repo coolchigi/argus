@@ -42,6 +42,9 @@ before(async () => {
     BEDROCK_GUARDRAIL_ID: 'gr-test',
     BEDROCK_GUARDRAIL_VERSION: '7',
     AUDIT_TRAIL_TABLE: 'audit-trail',
+    BRIEFS_TABLE: 'briefs',
+    RCIC_USERS_TABLE: 'users',
+    PUBLIC_COUNTERS_TABLE: 'counters',
     AWS_REGION: 'us-east-1',
   });
 
