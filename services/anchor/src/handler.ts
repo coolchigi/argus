@@ -2,6 +2,7 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { KMSClient, SignCommand } from '@aws-sdk/client-kms';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { createHash } from 'node:crypto';
+import { elapsedMs, recordStep } from './telemetry';
 import { bumpPublicCounter } from './public-counter';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -10,6 +11,8 @@ const kms = new KMSClient({});
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
+// Optional on purpose: a missing telemetry table must never stop signing.
+const AUDIT_TRAIL_TABLE = process.env.AUDIT_TRAIL_TABLE;
 const PUBLIC_COUNTERS_TABLE = process.env.PUBLIC_COUNTERS_TABLE;
 
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
@@ -42,9 +45,30 @@ type AuditVerdict = {
 
 type EventBridgeInput = { source?: string; 'detail-type'?: string; detail?: AuditVerdict };
 
+type AnchorOutcome = 'signed' | 'already-signed' | 'dropped' | 'missing-citation' | 'failed';
+
 export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{ anchored: boolean }> => {
   const verdict: AuditVerdict = 'detail' in event && event.detail ? event.detail : (event as AuditVerdict);
+  const startedAt = performance.now();
+  let outcome: AnchorOutcome = 'failed';
+  try {
+    const res = await anchor(verdict);
+    outcome = res.outcome;
+    return { anchored: res.anchored };
+  } finally {
+    // Runs after the assessment is signed and stored, from values already
+    // computed. It never reads or changes the signed payload.
+    await recordStep(
+      ddb,
+      AUDIT_TRAIL_TABLE,
+      { kind: 'assessment', rcicId: verdict.rcicId, policyEventId: verdict.policyEventId, clientId: verdict.clientId },
+      { agent: 'anchor', modelId: null, durationMs: elapsedMs(startedAt), outcome },
+      log,
+    );
+  }
+};
 
+async function anchor(verdict: AuditVerdict): Promise<{ anchored: boolean; outcome: AnchorOutcome }> {
   log('info', 'anchor-start', {
     verdictId: verdict.verdictId,
     hypothesisId: verdict.hypothesisId,
@@ -55,13 +79,13 @@ export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{
 
   if (!verdict.passed) {
     log('info', 'anchor-dropped-failed-verdict', { verdictId: verdict.verdictId });
-    return { anchored: false };
+    return { anchored: false, outcome: 'dropped' };
   }
 
   const citation = await loadCitation(verdict.ruleHash);
   if (!citation) {
     log('error', 'anchor-missing-citation', { verdictId: verdict.verdictId, ruleHash: verdict.ruleHash });
-    return { anchored: false };
+    return { anchored: false, outcome: 'missing-citation' };
   }
 
   const assessmentId = `${verdict.policyEventId}#${verdict.clientId}`;
@@ -89,7 +113,7 @@ export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{
   const canonicalHash = sha256Canonical(payload);
   const signature = await signHash(canonicalHash);
 
-  let written = true;
+  let alreadySigned = false;
   await ddb.send(
     new PutCommand({
       TableName: IMPACT_ASSESSMENTS_TABLE,
@@ -106,14 +130,14 @@ export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{
   ).catch((err: unknown) => {
     if ((err as { name?: string }).name === 'ConditionalCheckFailedException') {
       log('info', 'anchor-already-exists', { assessmentId });
-      written = false;
+      alreadySigned = true;
       return;
     }
     throw err;
   });
 
   // Only a new signature counts. A replayed verdict hits the condition above.
-  if (written) await bumpPublicCounter(ddb, PUBLIC_COUNTERS_TABLE, 'assessments', payload.timestamp);
+  if (!alreadySigned) await bumpPublicCounter(ddb, PUBLIC_COUNTERS_TABLE, 'assessments', payload.timestamp);
 
   log('info', 'anchor-signed-and-written', {
     verdictId: verdict.verdictId,
@@ -122,8 +146,8 @@ export const handler = async (event: EventBridgeInput | AuditVerdict): Promise<{
     signatureLength: signature.length,
   });
 
-  return { anchored: true };
-};
+  return { anchored: true, outcome: alreadySigned ? 'already-signed' : 'signed' };
+}
 
 async function loadCitation(ruleHash: string): Promise<{ source_url: string; source_s3_key: string } | null> {
   const res = await ddb.send(new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash } }));

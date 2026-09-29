@@ -5,6 +5,7 @@ import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from '@aws-sdk/lib-
 import { randomUUID } from 'node:crypto';
 import { eligibleClients, tenantFromItem, TENANT_ATTRIBUTES, type Tenant } from './eligibility';
 import { describeGuardrailBlock, guarded } from './guardrail';
+import { elapsedMs, recordStep } from './telemetry';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -19,6 +20,8 @@ const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const LOOKBACK_DAYS = Number(process.env.RECALL_LOOKBACK_DAYS ?? '30');
 const MAX_PAIRS_PER_RUN = Number(process.env.RECALL_MAX_PAIRS ?? '200');
+// Optional on purpose: a missing telemetry table must never stop a replay.
+const AUDIT_TRAIL_TABLE = process.env.AUDIT_TRAIL_TABLE;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -112,7 +115,9 @@ export const handler = async (): Promise<{
           continue;
         }
 
+        const triageStartedAt = performance.now();
         const decision = await triage(rule, client, runId);
+        const triageMs = elapsedMs(triageStartedAt);
         pairsTriaged += 1;
         log('info', 'triage-decision', {
           runId,
@@ -126,6 +131,16 @@ export const handler = async (): Promise<{
         if (!decision.deserves_analysis) continue;
 
         await emitRecallDelta(rule, recallEventId);
+        // The replay is one event for every consultant, so the step is keyed by
+        // the event alone and carries no tenant or client data. Its duration is
+        // the triage call that decided to replay. Never throws.
+        await recordStep(
+          ddb,
+          AUDIT_TRAIL_TABLE,
+          { kind: 'event', policyEventId: recallEventId },
+          { agent: 'recall', modelId: TRIAGE_MODEL, durationMs: triageMs, outcome: 'replayed' },
+          log,
+        );
         deltasEmitted += 1;
         break; // one PolicyDelta per rule is enough; Analyst fans out to all clients for the rcicId.
       }

@@ -321,6 +321,7 @@ export class ArgusApiStack extends cdk.Stack {
         // filing time instead of blocking later audits.
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: impactsServiceLogGroup,
@@ -432,6 +433,7 @@ export class ArgusApiStack extends cdk.Stack {
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         IRCC_SEED_URLS: JSON.stringify(IRCC_SEED_URLS),
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: sentinelLogGroup,
@@ -484,6 +486,7 @@ export class ArgusApiStack extends cdk.Stack {
         CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         BEDROCK_REASONER_MODEL: 'us.amazon.nova-pro-v1:0',
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
@@ -554,6 +557,7 @@ export class ArgusApiStack extends cdk.Stack {
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         FEW_SHOT_MAX: '5',
         FEW_SHOT_MAX_AGE_DAYS: '90',
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: auditorLogGroup,
@@ -611,6 +615,7 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
         SIGNING_KEY_ID: props.signingKey.keyId,
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         PUBLIC_COUNTERS_TABLE: props.publicCountersTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
@@ -662,6 +667,7 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         BRIEFS_TABLE: props.briefsTable.tableName,
         BEDROCK_COMPOSER_MODEL: 'us.amazon.nova-lite-v1:0',
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         NODE_OPTIONS: '--enable-source-maps',
@@ -870,6 +876,7 @@ export class ArgusApiStack extends cdk.Stack {
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         RECALL_LOOKBACK_DAYS: '30',
         RECALL_MAX_PAIRS: '200',
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: recallLogGroup,
@@ -898,6 +905,19 @@ export class ArgusApiStack extends cdk.Stack {
         resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
       }),
     );
+
+    // Pipeline step telemetry. Each agent appends one AuditTrail row per step.
+    // PutItem only: no UpdateItem, DeleteItem or BatchWriteItem, so an agent
+    // can add a step and can never rewrite or remove one (ADR-0002).
+    const appendStep = new iam.PolicyStatement({
+      actions: ['dynamodb:PutItem'],
+      resources: [props.auditTrailTable.tableArn],
+    });
+    for (const h of [sentinelHandler, recallHandler, analystHandler, auditorHandler, anchorHandler, composerHandler]) {
+      h.addToRolePolicy(appendStep);
+    }
+    // The lineage routes read the steps back, by partition and by run.
+    props.auditTrailTable.grantReadData(impactsHandler);
 
     const orchestratorHandler = placeholder('OrchestratorHandler', 'orchestrator');
 
@@ -990,6 +1010,10 @@ export class ArgusApiStack extends cdk.Stack {
       { path: '/impacts', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}/audit-signature', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      { path: '/impacts/{id}/lineage', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      // {id} is one pipeline run (a policyEventId). Served by impacts-service,
+      // which owns the lineage reads.
+      { path: '/policy-events/{id}/lineage', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}/correction', methods: [apigwv2.HttpMethod.POST], handler: impactsHandler },
       { path: '/impacts/{id}/corrections', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/corrections', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },

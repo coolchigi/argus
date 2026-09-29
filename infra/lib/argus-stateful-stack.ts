@@ -180,6 +180,16 @@ export class ArgusStatefulStack extends cdk.Stack {
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
+    // Pipeline step telemetry. Each agent appends a row per step it runs (see
+    // services/*/src/telemetry.ts). Per-client rows carry tenantRunKey
+    // `${rcicId}#${policyEventId}`, so one Query lists a consultant's steps
+    // for a whole pipeline run without crossing tenants.
+    this.auditTrailTable.addGlobalSecondaryIndex({
+      indexName: 'byTenantRun',
+      partitionKey: { name: 'tenantRunKey', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'stepTimestamp', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
 
     // Consultant corrections stream in as few-shot examples for the Auditor.
     // ASET self-growing pattern, adapted.

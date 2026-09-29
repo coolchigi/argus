@@ -12,6 +12,7 @@
     "@aws-sdk/client-kms": "^3.700.0",
     "@aws-sdk/lib-dynamodb": "^3.700.0",
     "@types/node": "^24",
+    "esbuild": "^0.28.2",
     "typescript": "~5.7.0"
   }
 }
