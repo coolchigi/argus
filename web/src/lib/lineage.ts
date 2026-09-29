@@ -20,12 +20,21 @@ export const AGENT_INFO: Record<LineageAgentName, AgentInfo> = {
   composer: { name: "Composer", role: "Drafts the client email" },
 };
 
+/** What sent the change into the pipeline. */
+export type RunOrigin = "sentinel" | "recall" | "demo";
+
+/** Heads a demo run. It isn't a pipeline agent and records no step. */
+export const DEMO_TRIGGER: AgentInfo = { name: "Demo trigger", role: "Replayed a stored IRCC rule for this demo" };
+
 export type ChainLink = {
-  agent: LineageAgentName;
+  /** A pipeline agent, or "demo-trigger" at the head of a demo run. */
+  agent: LineageAgentName | "demo-trigger";
   name: string;
   role: string;
   /** null when this agent has no recorded step (yet, or ever for older records). */
   step: LineageAgent | null;
+  /** true when this run records a step for this link, so it counts toward "done". */
+  expected: boolean;
 };
 
 /** Recall replays carry a `recall-` event id. See services/recall. */
@@ -33,24 +42,57 @@ export function isRecallRun(policyEventId: string): boolean {
   return policyEventId.startsWith("recall-");
 }
 
+/** Demo triggers carry a `demo-${ms}-${hash8}` event id. See services/demo. */
+export function isDemoRun(policyEventId: string): boolean {
+  return policyEventId.startsWith("demo-");
+}
+
 /**
- * The chain that ran for this event. Recall takes Sentinel's place on a
- * replay, since Recall is what sent the change into the pipeline that time.
+ * Read from the run id, which the lineage API already returns as
+ * policyEventId. A recorded Recall step also marks a replay, whatever the id.
+ */
+export function runOrigin(policyEventId: string, lineage: Lineage | undefined): RunOrigin {
+  if (isRecallRun(policyEventId) || (lineage?.agents ?? []).some((a) => a.agent === "recall")) return "recall";
+  if (isDemoRun(policyEventId)) return "demo";
+  return "sentinel";
+}
+
+const PER_CLIENT: LineageAgentName[] = ["analyst", "auditor", "anchor", "composer"];
+
+/**
+ * The chain that ran for this event. Sentinel heads a live change and Recall
+ * heads a replay, since each is what sent the change into the pipeline. A demo
+ * run starts from the demo trigger, which writes no step, so only the 4
+ * per-client agents are expected.
  */
 export function buildChain(policyEventId: string, lineage: Lineage | undefined): ChainLink[] {
   const byAgent = new Map((lineage?.agents ?? []).map((a) => [a.agent, a]));
-  const origin: LineageAgentName = byAgent.has("recall") || isRecallRun(policyEventId) ? "recall" : "sentinel";
-  const order: LineageAgentName[] = [origin, "analyst", "auditor", "anchor", "composer"];
-  return order.map((agent) => ({ agent, ...AGENT_INFO[agent], step: byAgent.get(agent) ?? null }));
+  const origin = runOrigin(policyEventId, lineage);
+  const head: ChainLink =
+    origin === "demo"
+      ? { agent: "demo-trigger", ...DEMO_TRIGGER, step: null, expected: false }
+      : { agent: origin, ...AGENT_INFO[origin], step: byAgent.get(origin) ?? null, expected: true };
+  const rest = PER_CLIENT.map((agent) => ({ agent, ...AGENT_INFO[agent], step: byAgent.get(agent) ?? null, expected: true }));
+  return [head, ...rest];
+}
+
+/** Steps done out of steps expected. Complete means every expected step landed. */
+export function chainProgress(chain: ChainLink[]): { done: number; total: number; complete: boolean } {
+  const expected = chain.filter((c) => c.expected);
+  const done = expected.filter((c) => c.step !== null).length;
+  return { done, total: expected.length, complete: done === expected.length };
 }
 
 export function hasTelemetry(lineage: Lineage | undefined): boolean {
   return (lineage?.agents.length ?? 0) > 0;
 }
 
-/** Sentinel event ids start with the detection time in ms: `${Date.now()}-${hash8}`. */
+/**
+ * Sentinel event ids start with the detection time in ms: `${Date.now()}-${hash8}`.
+ * Demo ids carry the trigger time after their prefix: `demo-${ms}-${hash8}`.
+ */
 export function detectedAtFromEventId(policyEventId: string): number | null {
-  const m = /^(\d{13})-/.exec(policyEventId);
+  const m = /^(?:demo-)?(\d{13})-/.exec(policyEventId);
   return m ? Number(m[1]) : null;
 }
 
