@@ -66,10 +66,18 @@ export function inRange(iso: unknown, range: Pick<Range, 'fromIso' | 'toIsoExclu
 }
 
 /**
- * The exact fields Anchor signs (services/anchor/src/handler.ts, `payload`).
- * Keep this in step with Anchor, or recomputed hashes stop matching. Every
- * one is either consultant data, an opaque client ID, or model output that
- * the shared guardrail screens for personal details before it's stored.
+ * Every field a signed ImpactAssessments row can carry under its signature:
+ * Anchor's payload (services/anchor/src/handler.ts) and the consultant review
+ * payload (services/impacts-service/src/review.ts, ADR-0004). Keep this in
+ * step with both, or recomputed hashes stop matching.
+ *
+ * A field goes into signedPayload only when the row has it. So a row signed
+ * before ADR-0004 rehashes over exactly the 18 fields it was signed with, an
+ * agent row signed after it adds auditorStance, and a consultant review adds
+ * its own fields and has no auditorReasoning or auditIssues.
+ *
+ * Every one is consultant data, an opaque client ID, or model or consultant
+ * text that the shared guardrail screens for personal details before it's stored.
  */
 export const ASSESSMENT_SIGNED_FIELDS = [
   'assessmentId',
@@ -90,7 +98,24 @@ export const ASSESSMENT_SIGNED_FIELDS = [
   'auditorReasoning',
   'auditIssues',
   'timestamp',
+  // ADR-0004, agent rows: the Auditor's stance on the Analyst's isAffected.
+  'auditorStance',
+  // ADR-0004, consultant reviews.
+  'recordKind',
+  'supersedes',
+  'supersedesCanonicalHash',
+  'reviewedBy',
+  'reviewedAt',
+  'reviewReasoning',
 ] as const;
+
+export const RECORD_KIND_REVIEW = 'consultant-review';
+export type RecordKind = 'agent' | typeof RECORD_KIND_REVIEW;
+
+/** Rows without recordKind were all written by Anchor. */
+export function recordKindOf(row: Row): RecordKind {
+  return row.recordKind === RECORD_KIND_REVIEW ? RECORD_KIND_REVIEW : 'agent';
+}
 
 const ASSESSMENT_SIGNATURE_FIELDS = ['assessmentKey', 'canonicalHash', 'signatureBase64', 'signatureAlgorithm', 'signingKeyId'] as const;
 
@@ -123,6 +148,10 @@ export const BRIEF_PROJECTION: readonly string[] = [
 
 export type AssessmentRecord = {
   kind: 'assessment';
+  /** 'agent' for a pipeline assessment Anchor signed, 'consultant-review' for a consultant's signed verdict. */
+  recordKind: RecordKind;
+  /** On a consultant review, the assessment it replaces. That row stays in the export too. */
+  supersedes: string | null;
   id: string;
   clientId: string;
   policyEventId: string;
@@ -159,8 +188,11 @@ export function toAssessmentRecord(row: Row): AssessmentRecord {
   for (const k of ASSESSMENT_SIGNED_FIELDS) {
     if (k in row) signedPayload[k] = row[k];
   }
+  const recordKind = recordKindOf(row);
   return {
     kind: 'assessment',
+    recordKind,
+    supersedes: recordKind === RECORD_KIND_REVIEW ? str(row.supersedes) || null : null,
     id: str(row.assessmentKey),
     clientId: str(row.clientId),
     policyEventId: str(row.policyEventId),
@@ -199,6 +231,8 @@ export function toBriefRecord(row: Row, signingKeyId: string): BriefRecord {
 /** What the /records ledger shows. No payloads, no signatures. */
 export type LedgerEntry = {
   kind: 'assessment' | 'brief';
+  /** Assessments only. null on briefs. */
+  recordKind: RecordKind | null;
   id: string;
   clientId: string;
   policyEventId: string;
@@ -211,6 +245,7 @@ export type LedgerEntry = {
 export function toLedgerEntry(r: ExportRecord): LedgerEntry {
   return {
     kind: r.kind,
+    recordKind: r.kind === 'assessment' ? r.recordKind : null,
     id: r.id,
     clientId: r.clientId,
     policyEventId: r.policyEventId,

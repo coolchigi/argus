@@ -340,6 +340,18 @@ export class ArgusApiStack extends cdk.Stack {
         resources: [props.signingKey.keyArn],
       }),
     );
+    // ADR-0004: a correction that changes isAffected is stored as a new,
+    // signed consultant-review row. PutItem only (no Update, no Delete), and
+    // the handler's put is create-only, so no existing assessment can be
+    // changed. kms:Sign on the one signing key, the same grant Anchor and
+    // briefs-service hold.
+    impactsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:PutItem'],
+        resources: [props.impactAssessmentsTable.tableArn],
+      }),
+    );
+    props.signingKey.grantSign(impactsHandler);
     // One consultant row per public receipt, and the 14 counter rows.
     impactsHandler.addToRolePolicy(
       new iam.PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [props.rcicUsersTable.tableArn] }),

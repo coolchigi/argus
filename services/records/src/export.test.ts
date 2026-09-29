@@ -6,7 +6,7 @@ import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { p256 } from '@noble/curves/nist.js';
 import { createApp } from './app.ts';
-import { assessmentRow, event, localKey, MemoryBlobs, MemoryStore, OTHER_TENANT, publicKeyOf, sentBriefRow, signDigest, TENANT } from './fixtures.ts';
+import { assessmentRow, event, localKey, MemoryBlobs, MemoryStore, OTHER_TENANT, publicKeyOf, reviewRow, sentBriefRow, signDigest, TENANT } from './fixtures.ts';
 import { KEY_FILE, OPENSSL_COMMANDS, RECORDS_FILE, VERIFY_FILE } from './verify-doc.ts';
 
 // End to end: export September, unzip with the system unzip, pull the Node
@@ -38,8 +38,13 @@ function writeRecords(rs: Array<Record<string, unknown>>): void {
 before(async () => {
   const store = new MemoryStore();
   const blobs = new MemoryBlobs();
+  const c101 = assessmentRow(key, { rcicId: TENANT, clientId: 'C-101', timestamp: '2026-09-03T10:00:00.000Z', extra: { clientName: 'PII-SHOULD-NOT-LEAVE' } });
   store.assessmentRows.push(
-    assessmentRow(key, { rcicId: TENANT, clientId: 'C-101', timestamp: '2026-09-03T10:00:00.000Z', extra: { clientName: 'PII-SHOULD-NOT-LEAVE' } }),
+    c101,
+    // ADR-0004: an agent row signed with the Auditor's stance, and a
+    // consultant review of C-101 that flips it to not affected.
+    assessmentRow(key, { rcicId: TENANT, clientId: 'C-104', timestamp: '2026-09-20T08:00:00.000Z', auditorStance: { stance: 'disagree', reason: 'The profile meets the condition.' } }),
+    reviewRow(key, c101, { reviewedAt: '2026-09-22T12:00:00.000Z', isAffected: false }),
     assessmentRow(key, { rcicId: TENANT, clientId: 'C-102', timestamp: '2026-09-18T15:30:00.000Z', numericDelta: null, auditIssues: ['cutoff date unclear'] }, { highS: true }),
     assessmentRow(key, { rcicId: TENANT, clientId: 'C-103', timestamp: '2026-08-31T23:59:59.999Z' }),
     assessmentRow(key, { rcicId: OTHER_TENANT, clientId: 'C-900', timestamp: '2026-09-10T10:00:00.000Z' }),
@@ -75,7 +80,13 @@ describe('signed export', () => {
   it('holds only this tenant, in range, and a high-S signature', () => {
     assert.deepEqual(
       records.map((r) => `${r.kind}:${r.id}`),
-      ['assessment:evt-2026-09-12-ee-draw#C-102', 'brief:b-1', 'assessment:evt-2026-09-12-ee-draw#C-101'],
+      [
+        `assessment:review-${Date.parse('2026-09-22T12:00:00.000Z')}-evt-2026-09-12-ee-draw#C-101`,
+        'assessment:evt-2026-09-12-ee-draw#C-104',
+        'assessment:evt-2026-09-12-ee-draw#C-102',
+        'brief:b-1',
+        'assessment:evt-2026-09-12-ee-draw#C-101',
+      ],
     );
     const highS = records.find((r) => r.id.endsWith('C-102'))!;
     assert.ok(p256.Signature.fromBytes(Buffer.from(highS.signatureBase64, 'base64'), 'der').hasHighS(), 'fixture should carry a high-S signature');
@@ -106,14 +117,14 @@ describe('signed export', () => {
     const { status, out } = runScript();
     assert.equal(status, 0, out);
     const lines = out.trim().split('\n');
-    assert.equal(lines.length, 3, out);
+    assert.equal(lines.length, 5, out);
     assert.ok(lines.every((l) => l.startsWith('OK ')), out);
     assert.ok(out.includes('signature valid, payload matches'), out);
   });
 
   it('fails a record whose narrative was changed after signing', () => {
     const edited = structuredClone(records);
-    edited[0].signedPayload.narrative += ' Edited.';
+    edited.find((r) => r.id.endsWith('#C-102'))!.signedPayload.narrative += ' Edited.';
     writeRecords(edited);
     try {
       const { status, out } = runScript();
@@ -126,7 +137,8 @@ describe('signed export', () => {
 
   it('fails a signature made by a different key', () => {
     const forged = structuredClone(records);
-    forged[2].signatureBase64 = signDigest(localKey(), forged[2].canonicalHash);
+    const c101 = forged.find((r) => r.id === 'evt-2026-09-12-ee-draw#C-101')!;
+    c101.signatureBase64 = signDigest(localKey(), c101.canonicalHash);
     writeRecords(forged);
     try {
       const { status, out } = runScript();
@@ -147,6 +159,50 @@ describe('signed export', () => {
       assert.match(out, /FAIL key fingerprint/);
     } finally {
       writeFileSync(join(dir, KEY_FILE), original);
+    }
+  });
+
+  it('marks each assessment agent or consultant review, and signs the stance and the review', () => {
+    const byId = (suffix: string) => records.find((r) => r.id.endsWith(suffix))!;
+    const review = byId('-evt-2026-09-12-ee-draw#C-101');
+    assert.equal(review.recordKind, 'consultant-review');
+    assert.equal(review.supersedes, 'evt-2026-09-12-ee-draw#C-101');
+    assert.equal(review.signedPayload.isAffected, false);
+    assert.equal(review.signedPayload.reviewedBy, TENANT);
+    assert.equal('auditorReasoning' in review.signedPayload, false);
+    // The agent row it replaced is still exported, unchanged.
+    const agent = records.find((r) => r.id === 'evt-2026-09-12-ee-draw#C-101')!;
+    assert.equal(agent.recordKind, 'agent');
+    assert.equal(agent.supersedes, null);
+    assert.equal(agent.signedPayload.isAffected, true);
+    assert.deepEqual(byId('#C-104').signedPayload.auditorStance, { stance: 'disagree', reason: 'The profile meets the condition.' });
+    assert.match(verifyDoc, /4 signed assessments \(1 of them consultant reviews\)/);
+  });
+
+  it('fails a consultant review whose verdict was flipped after signing', () => {
+    const edited = structuredClone(records);
+    const review = edited.find((r) => r.recordKind === 'consultant-review')!;
+    review.signedPayload.isAffected = true;
+    writeRecords(edited);
+    try {
+      const { status, out } = runScript();
+      assert.equal(status, 1, out);
+      assert.match(out, /FAIL assessment review-\d+-evt-2026-09-12-ee-draw#C-101 signature valid, payload CHANGED/);
+    } finally {
+      writeRecords(records);
+    }
+  });
+
+  it("fails an agent record whose Auditor stance was dropped after signing", () => {
+    const edited = structuredClone(records);
+    delete edited.find((r) => r.id.endsWith('#C-104'))!.signedPayload.auditorStance;
+    writeRecords(edited);
+    try {
+      const { status, out } = runScript();
+      assert.equal(status, 1, out);
+      assert.match(out, /FAIL assessment evt-2026-09-12-ee-draw#C-104 signature valid, payload CHANGED/);
+    } finally {
+      writeRecords(records);
     }
   });
 

@@ -63,9 +63,53 @@ export function assessmentRow(key: LocalKey, over: Partial<Row> & { rcicId: stri
   return {
     ...payload,
     ...(over.extra as Row | undefined),
-    assessmentKey: assessmentId,
+    // A consultant review passes its own assessmentId (ADR-0004).
+    assessmentKey: payload.assessmentId,
     canonicalHash,
     signatureBase64: signDigest(key, canonicalHash, opts),
+    signingKeyId: key.keyId,
+    signatureAlgorithm: 'ECDSA_SHA_256',
+  };
+}
+
+/**
+ * A consultant review as impacts-service writes it (ADR-0004): the fields of
+ * services/impacts-service/src/review.ts buildReviewPayload, signed, plus the
+ * signature columns. It has no auditorReasoning or auditIssues.
+ */
+export function reviewRow(key: LocalKey, supersedes: Row, over: { reviewedAt: string; isAffected: boolean }): Row {
+  const policyEventId = String(supersedes.policyEventId);
+  const clientId = String(supersedes.clientId);
+  const payload: Row = {
+    assessmentId: `review-${Date.parse(over.reviewedAt)}-${policyEventId}#${clientId}`,
+    recordKind: 'consultant-review',
+    supersedes: supersedes.assessmentKey,
+    supersedesCanonicalHash: supersedes.canonicalHash,
+    rcicId: supersedes.rcicId,
+    clientId,
+    policyEventId,
+    ruleHash: supersedes.ruleHash,
+    topic: supersedes.topic,
+    isAffected: over.isAffected,
+    impactType: over.isAffected ? 'eligibility-flip' : 'none',
+    numericDelta: null,
+    narrative: 'The consultant reviewed the rule against the file.',
+    recommendedAction: 'No action needed.',
+    confidence: 'high',
+    rulesUsed: supersedes.rulesUsed,
+    citationSourceUrl: supersedes.citationSourceUrl,
+    citationSourceS3Key: supersedes.citationSourceS3Key,
+    reviewedBy: supersedes.rcicId,
+    reviewedAt: over.reviewedAt,
+    reviewReasoning: 'The profile has no attestation letter on file.',
+    timestamp: over.reviewedAt,
+  };
+  const canonicalHash = sha256Hex(canonicalize(payload));
+  return {
+    ...payload,
+    assessmentKey: payload.assessmentId,
+    canonicalHash,
+    signatureBase64: signDigest(key, canonicalHash),
     signingKeyId: key.keyId,
     signatureAlgorithm: 'ECDSA_SHA_256',
   };

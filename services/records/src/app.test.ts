@@ -101,7 +101,7 @@ describe('POST /exports', () => {
     assert.deepEqual([...blobs.objects.keys()], [`exports/${TENANT}/export-1.zip`]);
     assert.deepEqual(blobs.presigned, [{ key: `exports/${TENANT}/export-1.zip`, ttlSeconds: 3600 }]);
     assert.equal(body.expiresAt, '2026-10-01T13:00:00.000Z');
-    assert.deepEqual(body.counts, { assessments: 2, briefs: 1 });
+    assert.deepEqual(body.counts, { assessments: 2, consultantReviews: 0, briefs: 1 });
     assert.equal(body.fileName, 'argus-records-2026-09-01-to-2026-09-30.zip');
     assert.equal(blobs.objects.get(`exports/${TENANT}/export-1.zip`)?.contentType, 'application/zip');
   });
