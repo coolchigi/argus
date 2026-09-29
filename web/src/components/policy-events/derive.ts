@@ -1,3 +1,4 @@
+import type { ActionReason } from "@/lib/argus-types";
 import type {
   PolicyEvent,
   PolicyEventImpact,
@@ -67,13 +68,17 @@ export function reassessments(runs: number): number {
 }
 
 /** The ↳ line under an event title. null when there's nothing to say. */
-export function eventNote(e: Pick<PolicyEvent, "runs" | "correctionsFiled">): string | null {
+export function eventNote(e: Pick<PolicyEvent, "runs" | "correctionsFiled" | "auditorDisagrees" | "consultantReviewed">): string | null {
   const parts: string[] = [];
+  const disagrees = e.auditorDisagrees ?? 0;
+  const reviewed = e.consultantReviewed ?? 0;
+  if (disagrees > 0) parts.push(`Auditor disagrees on ${disagrees} ${disagrees === 1 ? "client" : "clients"}`);
   const again = reassessments(e.runs);
   if (again > 0) parts.push(`Reassessed ${again}x`);
   if (e.correctionsFiled > 0) {
     parts.push(`${e.correctionsFiled} ${e.correctionsFiled === 1 ? "correction" : "corrections"} filed`);
   }
+  if (reviewed > 0) parts.push(`${reviewed} reviewed by you`);
   return parts.length > 0 ? parts.join(" · ") : null;
 }
 
@@ -81,9 +86,13 @@ export function eventNote(e: Pick<PolicyEvent, "runs" | "correctionsFiled">): st
 // Detail: affected clients
 // ---------------------------------------------------------------------------
 
-/** Affected clients always. Unaffected clients only when asked for. Order is kept. */
+/**
+ * Affected clients and clients that need action always. An unaffected verdict
+ * the Auditor disagrees with needs the consultant, so it never hides. The
+ * rest only when asked for. Order is kept.
+ */
 export function visibleClients(clients: readonly PolicyEventImpact[], showUnaffected: boolean): PolicyEventImpact[] {
-  return showUnaffected ? [...clients] : clients.filter((c) => c.isAffected);
+  return showUnaffected ? [...clients] : clients.filter((c) => c.isAffected || clientNeedsAction(c));
 }
 
 export type ClientBriefState = "sent" | "sent-externally" | "edited" | "draft" | "missing" | "not-needed";
@@ -103,10 +112,19 @@ export function clientBriefState(c: Pick<PolicyEventImpact, "isAffected" | "brie
   return c.isAffected ? "missing" : "not-needed";
 }
 
-/** An affected client whose brief hasn't been sent or copied out. Mirrors the API's awaitingBrief. */
-export function clientNeedsAction(c: Pick<PolicyEventImpact, "isAffected" | "brief">): boolean {
+/**
+ * Why this client needs the consultant. The API works it out (ADR-0004:
+ * Auditor disagreement first, then a missing brief). Responses from before
+ * that fall back to the brief rule.
+ */
+export function clientActionReason(c: Pick<PolicyEventImpact, "isAffected" | "brief" | "actionReason">): ActionReason | null {
+  if (c.actionReason !== undefined) return c.actionReason;
   const state = clientBriefState(c);
-  return c.isAffected && state !== "sent" && state !== "sent-externally";
+  return c.isAffected && state !== "sent" && state !== "sent-externally" ? "brief-needed" : null;
+}
+
+export function clientNeedsAction(c: Pick<PolicyEventImpact, "isAffected" | "brief" | "actionReason">): boolean {
+  return clientActionReason(c) !== null;
 }
 
 // ---------------------------------------------------------------------------

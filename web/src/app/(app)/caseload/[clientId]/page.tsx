@@ -50,6 +50,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ clientI
   const client = data?.client;
   const closed = client?.status === "closed";
   const toSend = data?.assessments.filter((a) => a.needsBrief).length ?? 0;
+  const disagrees = data?.assessments.filter((a) => a.actionReason === "auditor-disagrees").length ?? 0;
 
   async function setStatus(next: "active" | "closed") {
     try {
@@ -118,6 +119,11 @@ export default function ClientDetailPage({ params }: { params: Promise<{ clientI
               {toSend > 0 && (
                 <Badge tone="danger" dot>
                   {toSend} {toSend === 1 ? "brief" : "briefs"} to send
+                </Badge>
+              )}
+              {disagrees > 0 && (
+                <Badge tone="danger">
+                  Auditor disagrees{disagrees > 1 ? ` · ${disagrees}` : ""}
                 </Badge>
               )}
             </div>

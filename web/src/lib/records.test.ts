@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { matchingPreset, presetRange, rangeError, receiptHref, recordHref } from "./records.ts";
+import { countKinds, describeCounts, matchingPreset, presetRange, rangeError, receiptHref, recordHref, recordLabel } from "./records.ts";
 import type { LedgerEntry } from "./types/records.ts";
 
 const entry = (over: Partial<LedgerEntry> = {}): LedgerEntry => ({
@@ -48,6 +48,25 @@ test("rangeError catches empty, impossible and reversed ranges", () => {
 test("rows link to the right screen, with the # in assessment keys encoded", () => {
   assert.equal(recordHref(entry()), "/impacts/evt-2026-09-12%23C-101");
   assert.equal(recordHref(entry({ kind: "brief", id: "b-1" })), "/briefs/b-1");
+});
+
+test("the record column names a consultant review apart from an assessment", () => {
+  assert.equal(recordLabel(entry()), "Assessment");
+  assert.equal(recordLabel(entry({ recordKind: "agent" })), "Assessment");
+  assert.equal(recordLabel(entry({ recordKind: "consultant-review", id: "review-1-evt#C-101" })), "Consultant review");
+  assert.equal(recordLabel(entry({ kind: "brief", recordKind: null })), "Sent brief");
+});
+
+test("counts keep reviews inside the assessment total, as the export does", () => {
+  const counts = countKinds([entry(), entry({ recordKind: "consultant-review" }), entry({ kind: "brief", recordKind: null })]);
+  assert.deepEqual(counts, { assessments: 2, consultantReviews: 1, briefs: 1 });
+  assert.equal(describeCounts(counts), "2 signed assessments (1 is your review), 1 sent brief");
+  assert.equal(describeCounts({ assessments: 3, briefs: 0 }), "3 signed assessments, 0 sent briefs");
+});
+
+test("a consultant review gets a public receipt link like any signed assessment", () => {
+  assert.equal(receiptHref(entry({ recordKind: "consultant-review" })), `/verify/${"ab".repeat(32)}`);
+  assert.equal(recordHref(entry({ recordKind: "consultant-review", id: "review-1-evt#C-101" })), "/impacts/review-1-evt%23C-101");
 });
 
 test("only signed assessments get a public receipt link", () => {

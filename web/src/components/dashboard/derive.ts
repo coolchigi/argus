@@ -1,5 +1,6 @@
 import type { Brief, Impact } from "@/lib/argus-types";
-import { ruleClientKey, sentRuleClientKeys } from "@/lib/current-assessments";
+import { countActionRequired, deriveAssessmentRows } from "../../lib/assessments.ts";
+import { ruleClientKey, sentRuleClientKeys } from "../../lib/current-assessments.ts";
 import type { PolicyEvent } from "@/lib/types/policy-events";
 
 /** The banner only looks back this far. PHASE8_PLAN section 4, Q8. */
@@ -57,6 +58,12 @@ function plural(n: number, one: string, many: string): string {
  * which happens on real data.
  */
 export function bannerImpactSentence(e: PolicyEvent): string {
+  const disagrees = e.auditorDisagrees ?? 0;
+  const dissent = disagrees > 0 ? ` The Auditor disagrees with ${disagrees} ${plural(disagrees, "verdict", "verdicts")}.` : "";
+  return `${briefSentence(e)}${dissent}`;
+}
+
+function briefSentence(e: PolicyEvent): string {
   const affected = e.affectedCount;
   const clients = `${affected} of your ${plural(affected, "clients is", "clients are")} affected`;
   if (e.briefsUnsent > 0) {
@@ -74,7 +81,11 @@ export type DashboardStats = {
   clientsAffected: number;
   /** Of those, clients with at least one affected assessment that has no sent brief. */
   clientsWaiting: number;
-  /** Affected assessments with no sent brief. Same number as the Assessments nav badge. */
+  /** Current verdicts that need the consultant. Same number as the Assessments nav badge. */
+  actionRequired: number;
+  /** The part of actionRequired that's there because the Auditor disagrees. */
+  auditorDisagrees: number;
+  /** Affected assessments with no sent brief. */
   briefsToSend: number;
   /** Brief rows that exist but aren't sent, summed over events. */
   briefsDrafted: number;
@@ -92,9 +103,12 @@ export function dashboardStats(input: {
   const sent = sentRuleClientKeys(input.briefs);
   const affected = input.impacts.filter((i) => i.isAffected);
   const unsentAffected = affected.filter((i) => !sent.has(ruleClientKey(i)));
+  const rows = deriveAssessmentRows(input.impacts, input.briefs, []);
   return {
     clientsAffected: new Set(affected.map((i) => i.clientId)).size,
     clientsWaiting: new Set(unsentAffected.map((i) => i.clientId)).size,
+    actionRequired: countActionRequired(input.impacts, input.briefs),
+    auditorDisagrees: rows.filter((r) => r.actionReason === "auditor-disagrees").length,
     briefsToSend: unsentAffected.length,
     briefsDrafted: input.events.reduce((n, e) => n + e.briefsUnsent, 0),
     eventsThisMonth: input.detectedThisMonth,

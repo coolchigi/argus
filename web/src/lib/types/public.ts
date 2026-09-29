@@ -11,6 +11,8 @@ export type PublicVerify = {
   /** Signing scheme id, for example "kms-digest-v1". Optional. */
   scheme?: string;
   fingerprint: string;
+  /** Assessments only. "consultant-review" for a verdict the consultant signed (ADR-0004). */
+  recordKind?: "agent" | "consultant-review";
   /** Assessments carry a topic. A brief may not. */
   topic?: string;
   signedAt: string;
@@ -30,4 +32,12 @@ export type PublicStats = { assessmentsSigned7d: number; briefsSent7d: number; l
 
 export function receiptKind(r: Pick<PublicVerify, "kind">): ReceiptKind {
   return r.kind === "brief" ? "brief" : "assessment";
+}
+
+/** What the receipt page names the record: an assessment splits into Argus's and the consultant's. */
+export type ReceiptRecord = "assessment" | "consultant-review" | "brief";
+
+export function receiptRecord(r: Pick<PublicVerify, "kind" | "recordKind">): ReceiptRecord {
+  if (receiptKind(r) === "brief") return "brief";
+  return r.recordKind === "consultant-review" ? "consultant-review" : "assessment";
 }

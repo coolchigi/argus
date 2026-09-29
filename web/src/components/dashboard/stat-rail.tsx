@@ -10,6 +10,12 @@ function Placeholder() {
   );
 }
 
+/** "2 briefs to send · Auditor disagrees on 1". */
+function actionSub(s: DashboardStats): string {
+  const briefs = `${s.briefsToSend} ${s.briefsToSend === 1 ? "brief" : "briefs"} to send`;
+  return s.auditorDisagrees > 0 ? `${briefs} · Auditor disagrees on ${s.auditorDisagrees}` : `${briefs}, ${s.briefsDrafted} drafted`;
+}
+
 /**
  * Four linked tiles. Every number is derived from /policy-events, /impacts and
  * /briefs. `stats` is null while any of them is still loading.
@@ -29,10 +35,10 @@ export function StatRail({ stats, monthLabel }: { stats: DashboardStats | null; 
       </li>
       <li>
         <StatTile
-          href="/impacts?tab=action-required"
-          label="Briefs to send"
-          value={v(stats?.briefsToSend)}
-          sub={stats ? `${stats.briefsDrafted} drafted, not sent` : " "}
+          href="/impacts"
+          label="Action required"
+          value={v(stats?.actionRequired)}
+          sub={stats ? actionSub(stats) : " "}
           accent="brand"
           className="h-full"
         />
@@ -48,7 +54,7 @@ export function StatRail({ stats, monthLabel }: { stats: DashboardStats | null; 
       </li>
       <li>
         <StatTile
-          href="/impacts?tab=corrected"
+          href="/impacts?tab=corrections"
           label="Corrections filed"
           value={v(stats?.correctionsFiled)}
           sub="Across every event"

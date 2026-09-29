@@ -65,14 +65,28 @@ export function receiptHref(r: LedgerEntry): string | undefined {
   return r.kind === "assessment" && r.signed ? `/verify/${r.canonicalHash}` : undefined;
 }
 
-export function countKinds(records: LedgerEntry[]): { assessments: number; briefs: number } {
-  let assessments = 0;
-  for (const r of records) if (r.kind === "assessment") assessments += 1;
-  return { assessments, briefs: records.length - assessments };
+/** What a ledger row is, in the words the Records page and receipts use. */
+export function recordLabel(r: Pick<LedgerEntry, "kind" | "recordKind">): string {
+  if (r.kind === "brief") return "Sent brief";
+  return r.recordKind === "consultant-review" ? "Consultant review" : "Assessment";
 }
 
-export function describeCounts(c: { assessments: number; briefs: number }): string {
+/** `assessments` counts every signed assessment record, consultant reviews included, as the export does. */
+export function countKinds(records: LedgerEntry[]): { assessments: number; consultantReviews: number; briefs: number } {
+  let assessments = 0;
+  let consultantReviews = 0;
+  for (const r of records) {
+    if (r.kind !== "assessment") continue;
+    assessments += 1;
+    if (r.recordKind === "consultant-review") consultantReviews += 1;
+  }
+  return { assessments, consultantReviews, briefs: records.length - assessments };
+}
+
+export function describeCounts(c: { assessments: number; consultantReviews?: number; briefs: number }): string {
+  const reviews = c.consultantReviews ?? 0;
   const a = `${c.assessments} signed ${c.assessments === 1 ? "assessment" : "assessments"}`;
+  const r = reviews > 0 ? ` (${reviews} ${reviews === 1 ? "is your review" : "are your reviews"})` : "";
   const b = `${c.briefs} sent ${c.briefs === 1 ? "brief" : "briefs"}`;
-  return `${a}, ${b}`;
+  return `${a}${r}, ${b}`;
 }

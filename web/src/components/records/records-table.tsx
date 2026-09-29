@@ -6,7 +6,7 @@ import { ClientChip } from "@/components/argus/client-chip";
 import { DataTable, type Column } from "@/components/argus/data-table";
 import { Fingerprint } from "@/components/argus/fingerprint";
 import { humanizeTopic } from "@/lib/humanize";
-import { receiptHref, recordHref } from "@/lib/records";
+import { receiptHref, recordHref, recordLabel } from "@/lib/records";
 import type { LedgerEntry } from "@/lib/types/records";
 
 function formatSignedAt(iso: string): { date: string; time: string } {
@@ -41,7 +41,9 @@ const COLUMNS: Column<LedgerEntry>[] = [
         <Link href={recordHref(r)} className="text-[13px] text-ink-1 underline-offset-4 hover:underline">
           {humanizeTopic(r.topic)}
         </Link>
-        <div className="font-mono text-[11px] text-ink-3">{r.kind === "assessment" ? "Assessment" : "Sent brief"}</div>
+        <div className={r.recordKind === "consultant-review" ? "font-mono text-[11px] text-brand-ink" : "font-mono text-[11px] text-ink-3"}>
+          {recordLabel(r)}
+        </div>
       </div>
     ),
   },

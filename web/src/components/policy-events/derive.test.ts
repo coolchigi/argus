@@ -4,6 +4,7 @@ import {
   ALL,
   NO_DOMAIN,
   aggregateActions,
+  clientActionReason,
   clientBriefState,
   clientNeedsAction,
   deltaSummary,
@@ -93,6 +94,34 @@ test("unaffected clients are hidden until asked for", () => {
   const list = [client({ clientId: "A" }), client({ clientId: "B", isAffected: false })];
   assert.deepEqual(visibleClients(list, false).map((c) => c.clientId), ["A"]);
   assert.deepEqual(visibleClients(list, true).map((c) => c.clientId), ["A", "B"]);
+});
+
+test("an unaffected client the Auditor disagrees about never hides", () => {
+  const list = [
+    client({ clientId: "A" }),
+    client({ clientId: "B", isAffected: false, actionRequired: true, actionReason: "auditor-disagrees" }),
+    client({ clientId: "C", isAffected: false, actionRequired: false, actionReason: null }),
+  ];
+  assert.deepEqual(visibleClients(list, false).map((c) => c.clientId), ["A", "B"]);
+});
+
+test("the API's action reason wins over the brief fallback", () => {
+  const sent = { briefId: "b", assessmentKey: "k", status: "sent", sentAt: null };
+  // Brief sent, but the Auditor disagrees: still needs the consultant.
+  assert.equal(clientActionReason(client({ brief: sent, actionReason: "auditor-disagrees" })), "auditor-disagrees");
+  assert.equal(clientNeedsAction(client({ brief: sent, actionReason: "auditor-disagrees" })), true);
+  // A review said not affected, so the API says nothing to do even with no brief.
+  assert.equal(clientNeedsAction(client({ brief: null, actionReason: null })), false);
+  // Responses from before ADR-0004 carry no reason.
+  assert.equal(clientActionReason(client({ brief: null })), "brief-needed");
+});
+
+test("the event note leads with disagreement and counts reviews", () => {
+  assert.equal(
+    eventNote({ runs: 2, correctionsFiled: 1, auditorDisagrees: 2, consultantReviewed: 1 }),
+    "Auditor disagrees on 2 clients · Reassessed 1x · 1 correction filed · 1 reviewed by you",
+  );
+  assert.equal(eventNote({ runs: 1, correctionsFiled: 0, auditorDisagrees: 1, consultantReviewed: 0 }), "Auditor disagrees on 1 client");
 });
 
 test("brief state separates a missing brief from one that isn't needed", () => {

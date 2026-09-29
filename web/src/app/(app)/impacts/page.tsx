@@ -6,8 +6,10 @@ import { Suspense, useMemo, useState } from "react";
 import type { Correction } from "@/lib/types/corrections";
 import { POLICY_EVENTS_MAX_LIMIT, useBriefs, useCorrections, useImpacts, usePolicyEvents } from "@/lib/queries";
 import {
+  ACTION_REASON_LABEL,
   type AssessmentRail,
   type AssessmentRow,
+  countActionRequired,
   deriveAssessmentRows,
   parseAssessmentTab,
 } from "@/lib/assessments";
@@ -70,6 +72,11 @@ function AssessmentsScreen() {
     (r.recommendedAction ?? "").toLowerCase().includes(term);
 
   const actionRows = rows.filter((r) => r.actionRequired);
+  // The sidebar badge calls the same function, so the two can't disagree.
+  const actionCount = useMemo(
+    () => countActionRequired(impacts.data?.impacts ?? [], briefs.data?.briefs ?? []),
+    [impacts.data, briefs.data],
+  );
   const shown = (tab === "action" ? actionRows : rows).filter(matches);
   const shownCorrections = correctionList.filter(
     (c) => !term || c.clientId.toLowerCase().includes(term) || humanizeTopic(c.topic).toLowerCase().includes(term) || c.correctorReasoning.toLowerCase().includes(term),
@@ -131,7 +138,7 @@ function AssessmentsScreen() {
       <Tabs value={tab} onValueChange={onTabChange}>
         <TabsList aria-label="Assessment views">
           <Tab value="action">
-            Action required {count(actionRows.length)}
+            Action required {count(actionCount)}
           </Tab>
           <Tab value="all">All {count(rows.length)}</Tab>
           <Tab value="corrections">
@@ -150,7 +157,7 @@ function AssessmentsScreen() {
         <TabsPanel value="action">
           {briefs.error ? <BriefsError onRetry={() => void briefs.refetch()} retrying={briefs.isFetching} /> : null}
           {rowsReady && actionRows.length === 0 ? (
-            <EmptyState headline="All clear. Nothing's waiting on you." body="Every affected client has a brief sent or copied out. New changes land here first." />
+            <EmptyState headline="All clear. Nothing's waiting on you." body="Every affected client has a brief sent or copied out, and no verdict is waiting on your review. New changes land here first." />
           ) : (
             <AssessmentList rows={shown} refs={refs} loading={!rowsReady} emptySearch={actionRows.length > 0} />
           )}
@@ -247,9 +254,12 @@ function AssessmentCard({ row: r, eventRef }: { row: AssessmentRow; eventRef: st
             {title}
           </Link>
           <span className="ml-auto flex flex-wrap items-center gap-1.5">
-            {r.actionRequired && <Badge tone="brand">Action required</Badge>}
+            {r.actionReason && (
+              <Badge tone={r.actionReason === "auditor-disagrees" ? "danger" : "brand"}>{ACTION_REASON_LABEL[r.actionReason]}</Badge>
+            )}
+            {r.reviewed && <Badge>Reviewed by you</Badge>}
             {r.corrected && <Badge tone="danger">Corrected</Badge>}
-            {!r.actionRequired && !r.corrected && <Badge>{r.isAffected ? "Done" : "No impact"}</Badge>}
+            {!r.actionRequired && !r.corrected && !r.reviewed && <Badge>{r.isAffected ? "Done" : "No impact"}</Badge>}
           </span>
         </div>
         <p className="text-[13px] text-ink-2">
@@ -267,7 +277,7 @@ function AssessmentCard({ row: r, eventRef }: { row: AssessmentRow; eventRef: st
             <Fingerprint hash={r.canonicalHash} signed={!!r.signatureAlgorithm} chars={8} href={`/verify/${r.canonicalHash}`} className="relative z-10" />
           )}
           <time dateTime={r.timestamp} className="tabular">
-            Signed {formatRelative(r.timestamp)}
+            {r.reviewed ? "Reviewed" : "Signed"} {formatRelative(r.timestamp)}
           </time>
         </div>
       </div>

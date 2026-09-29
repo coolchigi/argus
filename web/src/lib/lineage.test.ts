@@ -179,3 +179,18 @@ test("latestRunId picks the run of the newest signed assessment", () => {
   );
   assert.equal(latestRunId([]), null);
 });
+
+test("latestRunId never returns a review key's prefix as a run", () => {
+  // C2's current verdict is a review signed after every run. Its run is the agent row it replaced.
+  const clients = [
+    { assessmentKey: "e1#C1", signedAt: "2026-09-28T10:00:00Z" },
+    {
+      assessmentKey: "review-1727700000000-e2#C2",
+      recordKind: "consultant-review",
+      signedAt: "2026-09-30T10:00:00Z",
+      priorAssessments: [{ assessmentKey: "e2#C2", policyEventId: "e2", signedAt: "2026-09-29T10:00:00Z" }],
+    },
+  ];
+  assert.equal(latestRunId(clients), "e2");
+  assert.equal(latestRunId([{ ...clients[1], priorAssessments: [] }]), null);
+});

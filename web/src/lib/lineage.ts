@@ -1,4 +1,5 @@
 import type { Lineage, LineageAgent, LineageAgentName } from "./types/lineage.ts";
+import { isReview, parseAssessmentKey } from "./assessment-key.ts";
 
 /**
  * The agent chain behind an assessment or a pipeline run, built from the
@@ -161,13 +162,24 @@ export function parseCorrectionKey(
   return { assessmentKey, clientId: assessmentKey.slice(first + 1), correctedAt };
 }
 
-/** The pipeline run behind the newest signed assessment on an event page. */
-export function latestRunId(clients: Array<{ assessmentKey: string; signedAt: string }>): string | null {
-  let best: { key: string; at: string } | null = null;
+type RunRow = { assessmentKey: string; signedAt: string; recordKind?: string | null };
+
+/**
+ * The pipeline run behind the newest signed agent assessment on an event
+ * page. A consultant review isn't a run, so a client whose current verdict is
+ * a review counts through the agent rows in its history instead.
+ */
+export function latestRunId(clients: Array<RunRow & { priorAssessments?: Array<RunRow & { policyEventId: string }> }>): string | null {
+  const runs: Array<{ runId: string; at: string }> = [];
   for (const c of clients) {
-    if (!best || c.signedAt > best.at) best = { key: c.assessmentKey, at: c.signedAt };
+    if (!isReview(c)) {
+      const parsed = parseAssessmentKey(c.assessmentKey);
+      if (parsed?.recordKind === "agent") runs.push({ runId: parsed.policyEventId, at: c.signedAt });
+      continue;
+    }
+    for (const p of c.priorAssessments ?? []) if (!isReview(p) && p.policyEventId) runs.push({ runId: p.policyEventId, at: p.signedAt });
   }
-  if (!best) return null;
-  const i = best.key.indexOf("#");
-  return i > 0 ? best.key.slice(0, i) : null;
+  let best: { runId: string; at: string } | null = null;
+  for (const r of runs) if (!best || r.at > best.at) best = r;
+  return best?.runId ?? null;
 }

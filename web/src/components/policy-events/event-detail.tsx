@@ -81,7 +81,8 @@ export function EventDetail({
     const signed = signedRows(clients);
     return {
       affected: clients.filter((c) => c.isAffected).length,
-      unaffected: clients.filter((c) => !c.isAffected).length,
+      // The ones the switch hides. An unaffected client that needs action always shows.
+      unaffected: clients.length - visibleClients(clients, false).length,
       actions: aggregateActions(clients),
       delta: deltaSummary(clients),
       signed,
@@ -170,6 +171,20 @@ export function EventDetail({
               <>
                 <span aria-hidden>·</span>
                 <span className="text-brand-ink tabular">{e.awaitingBrief} awaiting a brief</span>
+              </>
+            )}
+            {(e.auditorDisagrees ?? 0) > 0 && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="text-danger-ink tabular">
+                  Auditor disagrees on {e.auditorDisagrees} {e.auditorDisagrees === 1 ? "client" : "clients"}
+                </span>
+              </>
+            )}
+            {(e.consultantReviewed ?? 0) > 0 && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="tabular">{e.consultantReviewed} reviewed by you</span>
               </>
             )}
           </div>
