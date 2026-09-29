@@ -55,7 +55,20 @@ type FieldKind =
   | { kind: 'number'; min: number; max?: number }
   | { kind: 'bool' }
   | { kind: 'pattern'; re: RegExp; hint: string }
+  | { kind: 'enum'; values: readonly string[] }
   | { kind: 'date' };
+
+// Closed value sets for the enum attributes. Each value is a fact the
+// consultant records about the file, in words the Analyst and Auditor can read
+// as they are. None of them encodes what IRCC does with the fact. The web form
+// mirrors these lists (web/src/components/caseload/profile-fields.ts).
+
+/** Where the sponsor is in the parents and grandparents intake. */
+export const PGP_SPONSOR_STATUSES = ['no-interest-form', 'interest-form-submitted', 'invited-to-apply', 'application-submitted'] as const;
+/** Public or private designated learning institution. */
+export const DLI_TYPES = ['public', 'private'] as const;
+/** The principal applicant's permanent residence route, for a family member's permit. */
+export const PR_PATHWAYS = ['none', 'express-entry', 'pnp', 'quebec', 'atlantic', 'other-economic', 'family', 'other'] as const;
 
 /**
  * Optional attributes, keyed by CSV column. Bounds are data-shape checks
@@ -85,6 +98,13 @@ export const OPTIONAL_FIELDS: Record<string, { attr: string; spec: FieldKind; wr
   pnp_province: { attr: 'pnpProvince', spec: { kind: 'pattern', re: /^[A-Z]{2}$/, hint: '2-letter-province' } },
   intended_study_level: { attr: 'intendedStudyLevel', spec: SLUG },
   pal_on_file: { attr: 'palOnFile', spec: { kind: 'bool' } },
+  // Dates here are about permits and study programs. Never a date of birth.
+  pgp_sponsor_status: { attr: 'pgpSponsorStatus', spec: { kind: 'enum', values: PGP_SPONSOR_STATUSES } },
+  dli_type: { attr: 'dliType', spec: { kind: 'enum', values: DLI_TYPES } },
+  study_start_date: { attr: 'studyStartDate', spec: { kind: 'date' } },
+  study_permit_applied_date: { attr: 'studyPermitAppliedDate', spec: { kind: 'date' } },
+  principal_pr_pathway: { attr: 'principalPrPathway', spec: { kind: 'enum', values: PR_PATHWAYS } },
+  principal_pr_applied: { attr: 'principalPrApplied', spec: { kind: 'bool' } },
 };
 
 export const REQUIRED_COLUMNS = ['client_id', 'program', 'status', 'consent_confirmed'] as const;
@@ -207,6 +227,10 @@ function parseField(col: string, spec: FieldKind, v: unknown): { value: unknown 
     case 'pattern': {
       const s = typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '';
       return spec.re.test(s) ? { value: s } : { error: `${col}-must-be-${spec.hint}` };
+    }
+    case 'enum': {
+      const s = typeof v === 'string' ? v.trim().toLowerCase() : '';
+      return spec.values.includes(s) ? { value: s } : { error: `${col}-must-be-a-listed-value` };
     }
     case 'date': {
       const s = typeof v === 'string' ? v.trim() : '';

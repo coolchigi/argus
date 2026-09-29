@@ -2,6 +2,8 @@
 # Seed a realistic demo caseload for one tenant.
 # Zero-PII: opaque file numbers only. No names, contacts, or free-text notes.
 # Conditional put: never overwrites an existing client.
+# A second pass fills attributes added after a tenant was first seeded. It
+# only sets an attribute the row doesn't have yet, so a consultant's edit wins.
 # Usage: scripts/seed-demo-tenant.sh R670922
 set -euo pipefail
 
@@ -21,6 +23,41 @@ put() {
     echo "  put ${RCIC_ID}/${clientId}"
   elif grep -q ConditionalCheckFailed /tmp/seed-err.txt; then
     echo "  skip ${RCIC_ID}/${clientId} (exists)"
+  else
+    cat /tmp/seed-err.txt >&2
+    exit 1
+  fi
+}
+
+# fill <clientId> <attr>=<type>:<value> ...   e.g. dliType=S:public principalPrApplied=BOOL:false
+# Sets each attribute only where it's missing. Skips a client that isn't there.
+fill() {
+  local clientId="$1"
+  shift
+  local sets="" values="" names="" i=0 pair attr typed type value literal
+  for pair in "$@"; do
+    attr="${pair%%=*}"
+    typed="${pair#*=}"
+    type="${typed%%:*}"
+    value="${typed#*:}"
+    if [ "$type" = "BOOL" ]; then literal="$value"; else literal="\"${value}\""; fi
+    sets+="${sets:+, }#a${i} = if_not_exists(#a${i}, :v${i})"
+    names+="${names:+,}\"#a${i}\":\"${attr}\""
+    values+="${values:+,}\":v${i}\":{\"${type}\":${literal}}"
+    i=$((i + 1))
+  done
+  if aws dynamodb update-item \
+    --region "$REGION" \
+    --table-name "$TABLE" \
+    --key "{\"rcicId\":{\"S\":\"${RCIC_ID}\"},\"clientId\":{\"S\":\"${clientId}\"}}" \
+    --condition-expression "attribute_exists(clientId)" \
+    --update-expression "SET ${sets}" \
+    --expression-attribute-names "{${names}}" \
+    --expression-attribute-values "{${values}}" \
+    >/dev/null 2>/tmp/seed-err.txt; then
+    echo "  fill ${RCIC_ID}/${clientId}"
+  elif grep -q ConditionalCheckFailed /tmp/seed-err.txt; then
+    echo "  skip ${RCIC_ID}/${clientId} (missing)"
   else
     cat /tmp/seed-err.txt >&2
     exit 1
@@ -52,5 +89,16 @@ put 2026-051 '"program":{"S":"sowp"},"principalPermitTeer":{"N":"1"},"principalP
 
 # Provincial nominee (Express Entry stream)
 put 2026-061 '"program":{"S":"pnp"},"pnpProvince":{"S":"ON"},"canadianWorkYears":{"N":"2"},"clbEnglishWorst":{"N":"8"},"currentCrsScore":{"N":"468"}'
+
+# Facts the Auditor asked for when it rejected 2026-021, 031, 042 and 051.
+# Each value is chosen to agree with the benchmark ground truth for that client.
+echo "Filling permit, sponsor and PR pathway attributes..."
+fill 2026-021 studyPermitAppliedDate=S:2024-11-20
+fill 2026-022 studyPermitAppliedDate=S:2024-05-15
+fill 2026-031 dliType=S:public studyStartDate=S:2027-01-11
+fill 2026-032 dliType=S:private studyStartDate=S:2027-01-06
+fill 2026-041 pgpSponsorStatus=S:interest-form-submitted
+fill 2026-042 pgpSponsorStatus=S:no-interest-form
+fill 2026-051 principalPrPathway=S:none principalPrApplied=BOOL:false
 
 echo "Done."
