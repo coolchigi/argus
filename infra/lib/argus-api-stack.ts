@@ -309,6 +309,8 @@ export class ArgusApiStack extends cdk.Stack {
         IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
         TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        // Public verify falls back to sent briefs by their sent-body hash.
+        BRIEFS_TABLE: props.briefsTable.tableName,
         SIGNING_KEY_ID: props.signingKey.keyId,
         // Public receipts name the consultant only when they opted in, and
         // /public/stats sums the landing counters.
@@ -329,6 +331,8 @@ export class ArgusApiStack extends cdk.Stack {
     props.impactAssessmentsTable.grantReadData(impactsHandler);
     props.trainingCorrectionTable.grantReadWriteData(impactsHandler);
     props.policyRulesTable.grantReadData(impactsHandler);
+    // Includes the bySentBodyHash index the public verify fallback queries.
+    props.briefsTable.grantReadData(impactsHandler);
     impactsHandler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['kms:GetPublicKey'],
@@ -733,6 +737,12 @@ export class ArgusApiStack extends cdk.Stack {
         SIGNING_KEY_ID: props.signingKey.keyId,
         PUBLIC_COUNTERS_TABLE: props.publicCountersTable.tableName,
         DEFAULT_FROM_EMAIL: alertsFromEmail,
+        // Base of the "Verify this message" link in every sent brief.
+        ARGUS_PUBLIC_BASE_URL: process.env.ARGUS_PUBLIC_BASE_URL ?? 'https://main.d270cjhakw6y7j.amplifyapp.com',
+        // Relay From ("Name via Argus <relay>", Reply-To the consultant).
+        // Off until the relay domain is verified in SES.
+        BRIEFS_RELAY_ENABLED: process.env.ARGUS_BRIEFS_RELAY_ENABLED === 'true' ? 'true' : 'false',
+        BRIEFS_RELAY_FROM_EMAIL: process.env.ARGUS_BRIEFS_RELAY_FROM ?? '',
         BATCH_SEND_MAX: '25',
         ARCHIVE_LINK_TTL_SECONDS: String(7 * 24 * 60 * 60),
         NODE_OPTIONS: '--enable-source-maps',
@@ -749,6 +759,13 @@ export class ArgusApiStack extends cdk.Stack {
     props.policyCorpusBucket.grantRead(briefsServiceHandler);
     props.signingKey.grantSign(briefsServiceHandler);
     briefsServiceHandler.addToRolePolicy(bumpPublicCounter);
+    // GET /briefs/{id}/send-signature returns the public key with the signature.
+    briefsServiceHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['kms:GetPublicKey'],
+        resources: [props.signingKey.keyArn],
+      }),
+    );
 
     briefsServiceHandler.addToRolePolicy(
       new iam.PolicyStatement({
@@ -913,11 +930,15 @@ export class ArgusApiStack extends cdk.Stack {
       { path: '/impacts/{id}', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}/audit-signature', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}/correction', methods: [apigwv2.HttpMethod.POST], handler: impactsHandler },
+      { path: '/impacts/{id}/corrections', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      { path: '/corrections', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/briefs', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
       { path: '/briefs/batch-send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/briefs/{id}', methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH], handler: briefsServiceHandler },
       { path: '/briefs/{id}/send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/briefs/{id}/archive-link', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
+      { path: '/briefs/{id}/send-signature', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
+      { path: '/briefs/{id}/copied', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/demo/trigger-policy-change', methods: [apigwv2.HttpMethod.POST], handler: demoHandler },
       { path: '/demo/seed', methods: [apigwv2.HttpMethod.POST], handler: demoHandler },
     ];

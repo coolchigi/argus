@@ -22,6 +22,8 @@ const users: Item[] = [];
 const profiles: Item[] = [];
 const reasoned: string[] = [];
 const emitted: string[] = [];
+const guardedTexts: string[] = [];
+const emittedDetails: Item[] = [];
 
 type Handler = (event: unknown) => Promise<{ hypothesesEmitted: number }>;
 let handler: Handler;
@@ -64,6 +66,10 @@ before(async () => {
   (BedrockRuntimeClient.prototype as { send: unknown }).send = async (cmd: ConverseCommand) => {
     // The client profile rides in a guarded JSON block. Pull its clientId back out.
     const blocks = (cmd.input.messages ?? []).flatMap((m) => m.content ?? []);
+    for (const b of blocks) {
+      const t = b.guardContent && 'text' in b.guardContent ? b.guardContent.text?.text : undefined;
+      if (t) guardedTexts.push(t);
+    }
     const ids = blocks.flatMap((b) => {
       const t = b.guardContent && 'text' in b.guardContent ? b.guardContent.text?.text : undefined;
       const m = t ? /"clientId": "([^"]+)"/.exec(t) : null;
@@ -79,6 +85,7 @@ before(async () => {
   (EventBridgeClient.prototype as { send: unknown }).send = async (cmd: { input: { Entries: Array<{ Detail: string }> } }) => {
     const d = JSON.parse(cmd.input.Entries[0].Detail);
     emitted.push(`${d.rcicId}/${d.clientId}`);
+    emittedDetails.push(d);
     return {};
   };
 
@@ -107,6 +114,8 @@ function project(item: Item, input: Item): Item {
 async function run(policyDomain: string, targetRcicIds?: string[]) {
   reasoned.length = 0;
   emitted.length = 0;
+  guardedTexts.length = 0;
+  emittedDetails.length = 0;
   const origLog = console.log;
   console.log = () => {};
   try {
@@ -158,5 +167,31 @@ describe('Analyst honours preferences and client status', () => {
   it('turning the area back on brings the tenant back', async () => {
     (users[0].preferences as Item).policyDomains = { 'express-entry': true };
     assert.deepEqual(await run('express-entry'), ['R1/R1-EE', 'R2/R2-EE']);
+  });
+});
+
+describe('Analyst passes the whole profile on', () => {
+  // The permit, sponsor and PR pathway fields were added so the Auditor
+  // stops rejecting these cases for thin profiles. A projection or whitelist
+  // that drops them would bring the rejections back without failing anything else.
+  const extra = {
+    pgpSponsorStatus: 'no-interest-form',
+    dliType: 'public',
+    studyStartDate: '2027-01-11',
+    studyPermitAppliedDate: '2024-11-20',
+    principalPrPathway: 'none',
+    principalPrApplied: false,
+  };
+
+  it('shows the new fields to the model and forwards them to the Auditor', async () => {
+    profiles.push({ rcicId: 'R2', clientId: 'R2-PGP', program: 'pgp', status: 'active', ...extra });
+    assert.deepEqual(await run('pgp', ['R2']), ['R2/R2-PGP']);
+
+    const profileBlock = guardedTexts.find((t) => t.includes('"clientId": "R2-PGP"'));
+    assert.ok(profileBlock, 'the client profile went to the model');
+    for (const [k, v] of Object.entries(extra)) assert.ok(profileBlock.includes(`"${k}": ${JSON.stringify(v)}`), `model prompt is missing ${k}`);
+
+    const forwarded = emittedDetails[0].clientProfile as Item;
+    for (const [k, v] of Object.entries(extra)) assert.deepEqual(forwarded[k], v, `hypothesis event is missing ${k}`);
   });
 });

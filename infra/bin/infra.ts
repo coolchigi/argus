@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import * as cdk from 'aws-cdk-lib';
 import { ArgusApiStack } from '../lib/argus-api-stack';
+import { ArgusBudgetStack } from '../lib/argus-budget-stack';
 import { ArgusStatefulStack } from '../lib/argus-stateful-stack';
 
 const app = new cdk.App();
@@ -37,4 +38,20 @@ new ArgusApiStack(app, 'ArgusApiDev', {
   guardrail: stateful.guardrail,
   policyCorpusBucket: stateful.policyCorpusBucket,
   generatedArtifactsBucket: stateful.generatedArtifactsBucket,
+});
+
+// Account-level cost alarms, in their own stack: the budget has no links to
+// Argus resources, and AWS deletes it on its own after the window ends, so it
+// stays out of the stack that holds the retained tables and signing key.
+// CA$50 warn and the CA$150 ceiling from docs/argus-design.md Section 14
+// (Chi's call over Section 9's CA$200). Rate from scripts/budget_fx.py.
+new ArgusBudgetStack(app, 'ArgusBudgetDev', {
+  env,
+  description: 'Argus cost budget alarms for the hackathon window',
+  alertEmail: process.env.ARGUS_BUDGET_EMAIL ?? '',
+  warnCad: 50,
+  hardCad: 150,
+  windowStart: '2026-09-19',
+  windowLastDay: '2026-10-19',
+  fx: { cadPerUsd: 1.4168, observedOn: '2026-09-28' },
 });
