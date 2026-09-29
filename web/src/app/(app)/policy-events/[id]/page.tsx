@@ -1,8 +1,11 @@
 "use client";
 
-import { use } from "react";
+import { use, useEffect, useMemo, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { useLiveRun } from "@/components/agent-lineage";
 import { EventDetail } from "@/components/policy-events/event-detail";
-import { isNotFound, usePolicyEvent, usePolicyEventImpacts } from "@/lib/queries";
+import { latestRunId } from "@/lib/lineage";
+import { isNotFound, queryKeys, usePolicyEvent, usePolicyEventImpacts, useRunLineage } from "@/lib/queries";
 
 function decode(id: string): string {
   try {
@@ -17,6 +20,22 @@ export default function PolicyEventPage({ params }: { params: Promise<{ id: stri
   const eventId = decode(id);
   const event = usePolicyEvent(eventId);
   const impacts = usePolicyEventImpacts(eventId);
+  const runId = useMemo(() => latestRunId(impacts.data?.clients ?? []), [impacts.data]);
+  const lineage = useRunLineage(runId);
+  const live = useLiveRun(runId, lineage.data);
+
+  // While a run is live, each newly signed assessment reloads the event and
+  // its client table, so they fill in alongside the chips.
+  const qc = useQueryClient();
+  const signed = lineage.data?.agents.find((a) => a.agent === "anchor")?.count ?? 0;
+  const lastSigned = useRef(signed);
+  useEffect(() => {
+    if (!live || signed === lastSigned.current) return;
+    lastSigned.current = signed;
+    void qc.invalidateQueries({ queryKey: queryKeys.policyEvent(eventId) });
+    void qc.invalidateQueries({ queryKey: queryKeys.policyEventImpacts(eventId) });
+  }, [live, signed, eventId, qc]);
+
   return (
     <EventDetail
       event={{
@@ -35,6 +54,7 @@ export default function PolicyEventPage({ params }: { params: Promise<{ id: stri
         retrying: impacts.isFetching,
         onRetry: () => void impacts.refetch(),
       }}
+      lineage={runId ? { policyEventId: runId, data: lineage.data, live } : undefined}
     />
   );
 }

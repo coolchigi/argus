@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { ArrowLeft } from "lucide-react";
+import { AgentLineage } from "@/components/agent-lineage";
 import { Fingerprint } from "@/components/argus/fingerprint";
 import { InlineError } from "@/components/argus/inline-error";
 import { NumberedSection } from "@/components/argus/numbered-section";
@@ -26,6 +27,7 @@ import { SignedRecords } from "@/components/policy-events/signed-records";
 import { SourceCitation } from "@/components/policy-events/source-citation";
 import { humanizeCategory, humanizePolicyDomain } from "@/lib/humanize";
 import type { PolicyEventDetailResponse, PolicyEventImpactsResponse } from "@/lib/types/policy-events";
+import type { Lineage } from "@/lib/types/lineage";
 
 export type QueryState<T> = {
   data: T | undefined;
@@ -56,14 +58,19 @@ function Placeholder({ lines = 3 }: { lines?: number }) {
 }
 
 /** The per-event page: header, then §1 to §5. Each section fails on its own. */
+/** The latest pipeline run on this event, for the agent chain under the header. */
+export type RunLineage = { policyEventId: string; data: Lineage | undefined; live: boolean };
+
 export function EventDetail({
   event,
   impacts,
   fetchSignature,
+  lineage,
 }: {
   event: QueryState<PolicyEventDetailResponse>;
   impacts: QueryState<PolicyEventImpactsResponse>;
   fetchSignature?: (assessmentKey: string) => Promise<SignatureMaterial>;
+  lineage?: RunLineage;
 }) {
   const [showUnaffected, setShowUnaffected] = useState(false);
   const e = event.data?.event;
@@ -173,6 +180,13 @@ export function EventDetail({
           <span className="block h-6 w-2/3 rounded-sm bg-hairline" />
           <span className="block h-3 w-1/2 rounded-sm bg-hairline" />
         </div>
+      )}
+
+      {lineage && (
+        <section aria-label="How Argus reviewed this change" className="space-y-2">
+          <p className="label">{lineage.live ? "Reviewing now" : "Latest review"}</p>
+          <AgentLineage policyEventId={lineage.policyEventId} lineage={lineage.data} live={lineage.live} scope="run" />
+        </section>
       )}
 
       <NumberedSection number={1} title="Change summary">

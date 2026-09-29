@@ -12,6 +12,8 @@ import type {
   PolicyEventsListResponse,
 } from "@/lib/types/policy-events";
 import type { MeResponse, PatchMeRequest } from "@/lib/types/me";
+import type { Lineage } from "@/lib/types/lineage";
+import { isLive, LIVE_POLL_MS } from "@/lib/lineage";
 import type {
   BulkRequest,
   BulkResponse,
@@ -38,6 +40,8 @@ export const queryKeys = {
   profiles: () => ["profiles"] as const,
   profile: (clientId: string) => ["profile", clientId] as const,
   me: () => ["me"] as const,
+  lineage: (assessmentKey: string) => ["lineage", assessmentKey] as const,
+  runLineage: (policyEventId: string) => ["run-lineage", policyEventId] as const,
 };
 
 export type PolicyEventsParams = {
@@ -238,5 +242,32 @@ export function usePatchMe() {
   return useMutation({
     mutationFn: (body: PatchMeRequest) => api<MeResponse>("/me", { method: "PATCH", body }),
     onSuccess: (me) => qc.setQueryData(queryKeys.me(), me),
+  });
+}
+
+/**
+ * GET /impacts/{id}/lineage. Polls every 4s while the run is live (started in
+ * the last 10 minutes), so steps land on screen as the agents finish. After
+ * that, one fetch.
+ */
+export function useAssessmentLineage(assessmentKey: string) {
+  const policyEventId = assessmentKey.split("#")[0];
+  return useQuery({
+    queryKey: queryKeys.lineage(assessmentKey),
+    queryFn: () => api<Lineage>(`/impacts/${encodeURIComponent(assessmentKey)}/lineage`),
+    refetchInterval: (q) => (isLive(policyEventId, q.state.data, Date.now()) ? LIVE_POLL_MS : false),
+    retry: retryUnlessNotFound,
+  });
+}
+
+/** GET /policy-events/{id}/lineage for one pipeline run. Same live polling. */
+export function useRunLineage(policyEventId: string | null) {
+  return useQuery({
+    queryKey: queryKeys.runLineage(policyEventId ?? ""),
+    queryFn: () => api<Lineage>(`/policy-events/${encodeURIComponent(policyEventId ?? "")}/lineage`),
+    enabled: policyEventId !== null,
+    refetchInterval: (q) =>
+      policyEventId !== null && isLive(policyEventId, q.state.data, Date.now()) ? LIVE_POLL_MS : false,
+    retry: retryUnlessNotFound,
   });
 }

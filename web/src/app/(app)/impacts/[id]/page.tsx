@@ -11,7 +11,9 @@ import { Input } from "@/components/ui/input";
 import { SectionLabel } from "@/components/argus/section-label";
 import { Textarea } from "@/components/ui/textarea";
 import { SignatureReceipt } from "@/components/signature-receipt";
-import { AgentLineage } from "@/components/agent-lineage";
+import { AgentLineage, useLiveRun } from "@/components/agent-lineage";
+import { LearnedFromYou } from "@/components/learned-from-you";
+import { useAssessmentLineage } from "@/lib/queries";
 import { CitationChips } from "@/components/citation-chips";
 import { formatDelta, formatRelative } from "@/lib/format";
 import { ArrowLeft } from "lucide-react";
@@ -65,6 +67,8 @@ export default function ImpactDetailPage({ params }: { params: Promise<{ id: str
 function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: string }) {
   const title = humanizeTopic(impact.topic);
   useBreadcrumbLabel(`${impact.clientId} · ${title}`);
+  const lineage = useAssessmentLineage(assessmentKey);
+  const live = useLiveRun(impact.policyEventId, lineage.data);
   return (
     <div className="grid grid-cols-[1fr_320px] gap-10">
       <div className="space-y-8 min-w-0">
@@ -80,7 +84,8 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
           }
         />
 
-        <AgentLineage />
+        <AgentLineage policyEventId={impact.policyEventId} lineage={lineage.data} live={live} />
+        <LearnedFromYou correctionKeys={lineage.data?.fewShotCorrectionKeys ?? []} />
 
         <section className="rounded-md border border-border bg-surface p-6">
           <div className="flex items-start justify-between gap-6">
@@ -114,7 +119,9 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
           )}
         </section>
 
-        <CorrectionForm assessmentKey={assessmentKey} original={impact} />
+        <div id="corrections" className="scroll-mt-6">
+          <CorrectionForm assessmentKey={assessmentKey} original={impact} />
+        </div>
       </div>
 
       <aside className="space-y-5">
