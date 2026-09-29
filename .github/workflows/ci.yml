@@ -95,6 +95,9 @@ jobs:
         working-directory: infra
       - run: npx tsc --noEmit
         working-directory: infra
+      # Guardrail regexes against the probe matrix, read from the stack source.
+      - run: npm run test:guardrail
+        working-directory: infra
       # The app has no context lookups, so synth runs without an AWS account.
       # The emails are placeholders for the two env vars the API stack reads.
       - run: npx cdk synth --quiet --no-notices
