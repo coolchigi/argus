@@ -8,6 +8,7 @@ import { EventBridgeClient } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
 import { marshall } from '@aws-sdk/util-dynamodb';
 import { build } from 'esbuild';
+import { PGP_042_ACTIONS, PGP_042_ASSESSMENT, PGP_042_BODY, PGP_RULE_CONTENT } from './fixtures.pgp-042.ts';
 
 // Runs the real Composer handler with the AWS SDK clients swapped for fakes.
 // Bundled with esbuild (the same tool CDK uses) with the SDK left external,
@@ -21,6 +22,7 @@ type Item = Record<string, unknown>;
 const briefs: Item[] = [];
 const trailRows: Item[] = [];
 let trailFails = false;
+let ruleContent = 'rule text';
 let modelReply = '{"subject":"Your CRS score changed","bodyMarkdown":"body","suggestedActions":["Retake the test"]}';
 
 type Handler = (event: unknown) => Promise<{ composed: number; skipped: number }>;
@@ -56,7 +58,7 @@ before(async () => {
 
   (DynamoDBDocumentClient.prototype as { send: unknown }).send = async (cmd: { input: Item }) => {
     const input = cmd.input as { TableName: string; Item: Item };
-    if (cmd instanceof GetCommand) return { Item: { rule_hash: 'h1', rule_content: 'rule text', severity: 'high' } };
+    if (cmd instanceof GetCommand) return { Item: { rule_hash: 'h1', rule_content: ruleContent, severity: 'high' } };
     if (cmd instanceof PutCommand && input.TableName === 'briefs') {
       briefs.push(input.Item);
       return {};
@@ -83,6 +85,7 @@ beforeEach(() => {
   briefs.length = 0;
   trailRows.length = 0;
   trailFails = false;
+  ruleContent = 'rule text';
   logLines = [];
   modelReply = '{"subject":"Your CRS score changed","bodyMarkdown":"body","suggestedActions":["Retake the test"]}';
 });
@@ -256,5 +259,71 @@ describe('Composer brief voice', () => {
     await compose([insert(pgp)]);
     assert.equal(briefs.length, 1);
     assert.equal(logLines.some((l) => l.msg === 'composer-voice-check'), false);
+  });
+});
+
+describe('Composer grounding', () => {
+  const live = {
+    clientId: PGP_042_ASSESSMENT.clientId,
+    assessmentKey: `pe1#${PGP_042_ASSESSMENT.clientId}`,
+    topic: 'pgp-program-pause',
+    impactType: 'procedural',
+    numericDelta: null,
+    narrative: PGP_042_ASSESSMENT.narrative,
+    recommendedAction: PGP_042_ASSESSMENT.recommendedAction,
+    citationSourceUrl: PGP_042_ASSESSMENT.citationSourceUrl,
+  };
+  const liveReply = JSON.stringify({ subject: 'PGP intake paused', bodyMarkdown: PGP_042_BODY, suggestedActions: PGP_042_ACTIONS });
+
+  it('tells the model to state IRCC facts only from the rule content or the assessment', () => {
+    const system = buildComposeRequest(assessmentFor(live), PGP_RULE_CONTENT).system.map((b) => b.text).join('\n');
+    assert.match(system, /must come from the rule content or the assessment/);
+    assert.match(system, /Name another program, visa or permit only if the rule content or the assessment names it/);
+    assert.match(system, /Never write "the rule", "the assessment"/);
+  });
+
+  it('logs no grounding warning for the live 2026-042 brief against its real rule, and flags "the rule" as a voice slip', async () => {
+    ruleContent = PGP_RULE_CONTENT;
+    modelReply = liveReply;
+    await compose([insert(live)]);
+    assert.equal(briefs.length, 1);
+    assert.equal(logLines.some((l) => l.msg === 'composer-grounding-check'), false);
+    const voice = logLines.find((l) => l.msg === 'composer-voice-check');
+    assert.deepEqual(voice?.findings, ['internal-term']);
+  });
+
+  it('warns on specifics no source gives, keeps the brief, and logs neither the client id nor the brief text', async () => {
+    ruleContent = PGP_RULE_CONTENT.split('\n\n').filter((p) => !p.includes('super visa')).join('\n\n');
+    modelReply = liveReply;
+    await compose([
+      insert({
+        ...live,
+        narrative: 'Client 2026-042 cannot submit a new PGP interest to sponsor form under the current intake pause.',
+        recommendedAction: 'Advise 2026-042 to await IRCC notice of intake resumption.',
+      }),
+    ]);
+    assert.equal(briefs.length, 1);
+    assert.equal(briefs[0].bodyMarkdown, PGP_042_BODY);
+    const warn = logLines.find((l) => l.msg === 'composer-grounding-check');
+    assert.ok(warn, 'expected a composer-grounding-check log line');
+    assert.equal(warn.level, 'warn');
+    assert.deepEqual(warn.findings, [
+      { kind: 'duration', value: '5 years' },
+      { kind: 'duration', value: '10 years' },
+      { kind: 'program', value: 'super visa' },
+    ]);
+    assert.equal(warn.briefId, briefs[0].briefId);
+    assert.equal(warn.ruleHash, 'h1');
+    const line = JSON.stringify(warn);
+    assert.doesNotMatch(line, /2026-042/);
+    assert.doesNotMatch(line, /intake|sponsor|Grandparents/);
+  });
+
+  it('never puts part of a client id in a finding when the body leaks the id', async () => {
+    modelReply = JSON.stringify({ subject: 'PGP intake paused', bodyMarkdown: 'File 2026-042 is on hold for 9 months.', suggestedActions: ['Wait'] });
+    await compose([insert(live)]);
+    const warn = logLines.find((l) => l.msg === 'composer-grounding-check');
+    assert.deepEqual(warn?.findings, [{ kind: 'duration', value: '9 months' }]);
+    assert.doesNotMatch(JSON.stringify(warn?.findings), /2026|042/);
   });
 });

@@ -4,10 +4,19 @@
 // - "your client", which addresses the consultant instead of the client
 // - the opaque client id, which is Argus bookkeeping and means nothing to the
 //   reader (the web's "Copy for my email" adds a [CLIENT NAME] greeting)
+// A third slip showed up once the first two were fixed: words for Argus's own
+// steps. The Analyst writes "the rule does not confirm...", and a brief that
+// repeats it tells the client "not confirmed by the rule", which means nothing
+// to someone who has never seen the rule.
 
-export type VoiceFinding = 'your-client' | 'client-id';
+export type VoiceFinding = 'your-client' | 'client-id' | 'internal-term';
 
 const YOUR_CLIENT = /\byour\s+client(?:'s|s)?\b/i;
+// "the rule" and "the assessment" as things the reader is meant to know
+// about, plus Argus's own name and field names. "The rules for..." (plural)
+// is ordinary English and passes.
+const INTERNAL_TERM =
+  /\b(?:the|this|that)\s+(?:rule|assessment|narrative)\b|\bargus\b|\b(?:impact\s?type|numeric\s?delta|rule\s?hash|confidence\s+(?:level|score))\b/i;
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -26,6 +35,7 @@ export function checkBriefVoice(body: string, clientId: string): VoiceFinding[] 
   const findings: VoiceFinding[] = [];
   if (YOUR_CLIENT.test(body)) findings.push('your-client');
   if (idPattern(clientId, '')?.test(body)) findings.push('client-id');
+  if (INTERNAL_TERM.test(body)) findings.push('internal-term');
   return findings;
 }
 

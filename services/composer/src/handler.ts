@@ -7,6 +7,7 @@ import type { DynamoDBStreamEvent, DynamoDBRecord } from 'aws-lambda';
 import { randomUUID } from 'node:crypto';
 import { describeGuardrailBlock, guarded } from './guardrail';
 import { ruleWindow } from './rule-window';
+import { checkBriefGrounding } from './grounding';
 import { elapsedMs, recordStep } from './telemetry';
 import { checkBriefVoice, withoutClientId } from './voice';
 
@@ -149,6 +150,25 @@ async function composeOne(assessment: Assessment, runId: string): Promise<'compo
     }),
   );
 
+  // A warning, never a failure, same as the voice check. Covers the body and
+  // the suggested actions, since the client reads both. The text loses the
+  // client id first, so no finding can carry part of it. The log line holds
+  // the findings and ids that don't name the client, never the brief text.
+  // No assessmentKey: it ends in the client id.
+  const briefText = [draft.bodyMarkdown, ...draft.suggestedActions].join('\n');
+  const grounding = checkBriefGrounding(withoutClientId(briefText, assessment.clientId), groundingSources(assessment, rule.content));
+  if (grounding.length > 0) {
+    log('warn', 'composer-grounding-check', {
+      runId,
+      briefId,
+      rcicId: assessment.rcicId,
+      policyEventId: assessment.policyEventId,
+      ruleHash: assessment.ruleHash,
+      modelId: COMPOSER_MODEL,
+      findings: grounding,
+    });
+  }
+
   await emitBriefReady({
     briefId,
     rcicId: assessment.rcicId,
@@ -187,6 +207,20 @@ async function loadRule(ruleHash: string): Promise<{ content: string; severity: 
   };
 }
 
+// What a brief is allowed to state facts from: the full rule text (the model
+// may see an excerpt of a long rule, but a fact from anywhere in the rule is
+// still the rule's) and the signed assessment fields the prompt carries, with
+// the client id taken out the same way, so the id can't ground a number.
+function groundingSources(assessment: Assessment, ruleContent: string): string[] {
+  return [
+    ruleContent,
+    withoutClientId(assessment.narrative, assessment.clientId),
+    withoutClientId(assessment.recommendedAction, assessment.clientId),
+    assessment.citationSourceUrl,
+    assessment.numericDelta === null ? '' : String(assessment.numericDelta),
+  ];
+}
+
 export function buildComposeRequest(assessment: Assessment, ruleContent: string): ConverseCommandInput {
   const snippet = ruleWindow(ruleContent);
 
@@ -196,7 +230,10 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
     'Write to the client directly, in second person: "you", "your application". Write in the consultant\'s voice, first person: "I recommend".',
     'Never write "your client" and never describe the client in the third person. The assessment below calls the reader "the client". Turn that into "you".',
     'Never write a name, a client id or a placeholder like [CLIENT NAME]. No greeting and no sign-off: the RCIC adds both when they send it.',
-    'You never invent facts. Every claim must come from the assessment or the rule content.',
+    'Every fact about IRCC programs, dates, numbers, durations, fees or eligibility must come from the rule content or the assessment below. If neither says it, leave it out, even if you believe it is true.',
+    'Name another program, visa or permit only if the rule content or the assessment names it.',
+    'The reader has never seen the rule content or the assessment and doesn\'t know Argus exists. Never write "the rule", "the assessment" or any field name. Call the source what it is to the reader: IRCC\'s notice, the change, the update.',
+    'When the assessment says something about the reader is unknown, ask the reader for it ("let me know whether..."). Never say a document doesn\'t confirm it.',
     'You match the professional tone RCICs use with their clients: plain language, honest about uncertainty, one clear next step.',
     'Return valid JSON only. No preamble.',
   ].join('\n');
@@ -231,6 +268,7 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
     '- If impactType is eligibility-flip, be explicit whether it opens or closes eligibility.',
     '- If confidence is low, add one sentence hedging the recommendation.',
     '- No em dashes. No exclamation marks. Use digits for numbers.',
+    '- Keep each number, duration, amount and date the same as the rule content or the assessment gives it, in digits.',
   ].join('\n');
 
   // The assessment text and the rule text are outside content. See
