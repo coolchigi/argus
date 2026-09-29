@@ -41,6 +41,7 @@ export class ArgusStatefulStack extends cdk.Stack {
   public readonly policyRulesTable: dynamodb.Table;
   public readonly ruleIndexTable: dynamodb.Table;
   public readonly briefsTable: dynamodb.Table;
+  public readonly publicCountersTable: dynamodb.Table;
 
   public readonly guardrail: bedrock.CfnGuardrail;
 
@@ -179,6 +180,16 @@ export class ArgusStatefulStack extends cdk.Stack {
       pointInTimeRecoverySpecification: { pointInTimeRecoveryEnabled: true },
       removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
+    // Pipeline step telemetry. Each agent appends a row per step it runs (see
+    // services/*/src/telemetry.ts). Per-client rows carry tenantRunKey
+    // `${rcicId}#${policyEventId}`, so one Query lists a consultant's steps
+    // for a whole pipeline run without crossing tenants.
+    this.auditTrailTable.addGlobalSecondaryIndex({
+      indexName: 'byTenantRun',
+      partitionKey: { name: 'tenantRunKey', type: dynamodb.AttributeType.STRING },
+      sortKey: { name: 'stepTimestamp', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.ALL,
+    });
 
     // Consultant corrections stream in as few-shot examples for the Auditor.
     // ASET self-growing pattern, adapted.
@@ -226,6 +237,27 @@ export class ArgusStatefulStack extends cdk.Stack {
       partitionKey: { name: 'assessmentKey', type: dynamodb.AttributeType.STRING },
       sortKey: { name: 'rcicId', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
+    });
+    // Public receipt lookup for sent briefs. The email footer links to
+    // /verify/{sentBodyHash}, and the public verify route falls back to this
+    // index when no assessment has the hash. KEYS_ONLY: the route reads the
+    // row by key and returns signature material only. Adding a GSI updates
+    // the table in place.
+    this.briefsTable.addGlobalSecondaryIndex({
+      indexName: 'bySentBodyHash',
+      partitionKey: { name: 'sentBodyHash', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.KEYS_ONLY,
+    });
+
+    // Public counters for the landing page. One row per kind per UTC day
+    // (`assessments#2026-09-29`, `briefs#2026-09-29`). Anchor and
+    // briefs-service ADD to them, and GET /public/stats sums the last 7 days.
+    // Counts and a timestamp only: no tenant, client or location.
+    this.publicCountersTable = new dynamodb.Table(this, 'PublicCountersTable', {
+      tableName: 'argus-public-counters',
+      partitionKey: { name: 'counterKey', type: dynamodb.AttributeType.STRING },
+      billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+      removalPolicy: cdk.RemovalPolicy.RETAIN,
     });
 
     // Policy corpus. Snapshots of IRCC pages plus embedding-source markdown.

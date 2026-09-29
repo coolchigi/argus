@@ -40,6 +40,7 @@ export interface ArgusApiStackProps extends cdk.StackProps {
   readonly policyRulesTable: dynamodb.Table;
   readonly ruleIndexTable: dynamodb.Table;
   readonly briefsTable: dynamodb.Table;
+  readonly publicCountersTable: dynamodb.Table;
 
   readonly guardrail: bedrock.CfnGuardrail;
 
@@ -84,8 +85,56 @@ export class ArgusApiStack extends cdk.Stack {
         }),
       });
 
-    // API handlers (one per bounded context).
-    const demoHandler = placeholder('DemoHandler', 'demo');
+    // Demo lever. POST /demo/trigger-policy-change replays a real PolicyRules
+    // row as a PolicyDelta aimed at the caller's tenant, so a demo runs the
+    // whole agent chain on demand. Off unless ARGUS_DEMO_TRIGGER_ENABLED is
+    // "true" at synth time (on by default for the hackathon), and only for the
+    // rcicIds in ARGUS_DEMO_RCIC_ALLOWLIST. /demo/seed stays a 501.
+    //
+    // Reuses the DemoHandler and DemoHandlerLogs construct ids and the
+    // physical names of the earlier placeholder so CloudFormation updates both
+    // in place, same as ProfilesHandler below.
+    const demoLogGroup = new logs.LogGroup(this, 'DemoHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-demo',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const demoHandler = new nodejs.NodejsFunction(this, 'DemoHandler', {
+      functionName: 'argus-demo',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/demo/package-lock.json'),
+      entry: path.join(__dirname, '../../services/demo/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(10),
+      memorySize: 256,
+      environment: {
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        DEMO_TRIGGER_ENABLED: process.env.ARGUS_DEMO_TRIGGER_ENABLED ?? 'true',
+        DEMO_RCIC_ALLOWLIST: process.env.ARGUS_DEMO_RCIC_ALLOWLIST ?? 'demo-rcic-001,R670922',
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: demoLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    // Reads rule metadata (GetItem, or a filtered Scan by domain) and puts one
+    // event on the default bus. It writes no table.
+    demoHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:GetItem', 'dynamodb:Scan'],
+        resources: [props.policyRulesTable.tableArn],
+      }),
+    );
+    demoHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['events:PutEvents'],
+        resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
+      }),
+    );
 
     // Me service (Phase E). GET /me returns the consultant's identity, firm,
     // province, preferences, onboarding state, signing key details and setup
@@ -260,12 +309,19 @@ export class ArgusApiStack extends cdk.Stack {
         IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
         TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
+        // Public verify falls back to sent briefs by their sent-body hash.
+        BRIEFS_TABLE: props.briefsTable.tableName,
         SIGNING_KEY_ID: props.signingKey.keyId,
+        // Public receipts name the consultant only when they opted in, and
+        // /public/stats sums the landing counters.
+        RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
+        PUBLIC_COUNTERS_TABLE: props.publicCountersTable.tableName,
         // Corrections are checked against the same guardrail the Auditor
         // applies when it reads them back, so a client name is refused at
         // filing time instead of blocking later audits.
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: impactsServiceLogGroup,
@@ -276,7 +332,77 @@ export class ArgusApiStack extends cdk.Stack {
     props.impactAssessmentsTable.grantReadData(impactsHandler);
     props.trainingCorrectionTable.grantReadWriteData(impactsHandler);
     props.policyRulesTable.grantReadData(impactsHandler);
+    // Includes the bySentBodyHash index the public verify fallback queries.
+    props.briefsTable.grantReadData(impactsHandler);
     impactsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['kms:GetPublicKey'],
+        resources: [props.signingKey.keyArn],
+      }),
+    );
+    // One consultant row per public receipt, and the 14 counter rows.
+    impactsHandler.addToRolePolicy(
+      new iam.PolicyStatement({ actions: ['dynamodb:GetItem'], resources: [props.rcicUsersTable.tableArn] }),
+    );
+    impactsHandler.addToRolePolicy(
+      new iam.PolicyStatement({ actions: ['dynamodb:BatchGetItem'], resources: [props.publicCountersTable.tableArn] }),
+    );
+
+    // Records service (ADR-0002, export on demand). GET /records lists the
+    // consultant's signed assessments and sent briefs for a date range, and
+    // POST /exports writes them to a zip (records.jsonl, VERIFY.md and the
+    // public key) under exports/ in the generated-artifacts bucket, then
+    // returns a 1-hour presigned link. Its own function so the only role that
+    // can write export files reads the two tables and nothing else: no
+    // corrections write, no Bedrock, no Sign.
+    const recordsLogGroup = new logs.LogGroup(this, 'RecordsHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-records',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const recordsHandler = new nodejs.NodejsFunction(this, 'RecordsHandler', {
+      functionName: 'argus-records',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/records/package-lock.json'),
+      entry: path.join(__dirname, '../../services/records/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        BRIEFS_TABLE: props.briefsTable.tableName,
+        GENERATED_ARTIFACTS_BUCKET: props.generatedArtifactsBucket.bucketName,
+        SIGNING_KEY_ID: props.signingKey.keyId,
+        // SHA-256 of the signing key's SPKI, the same value the web verifier
+        // pins (web/src/lib/signature-verify.ts). Exports refuse to run if KMS
+        // returns any other key.
+        SIGNING_KEY_SPKI_SHA256: '9eeaa3055e1915ee2c31e6c904c37bdde22eb43e82a08ccf9fba9dfccebe94be',
+        EXPORT_URL_TTL_SECONDS: '3600',
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: recordsLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    // Query only, on the two base tables. No GetItem, no Scan, no index.
+    recordsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:Query'],
+        resources: [props.impactAssessmentsTable.tableArn, props.briefsTable.tableArn],
+      }),
+    );
+    // Put, then GetObject so the presigned link works. Only under exports/.
+    recordsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:PutObject', 's3:GetObject'],
+        resources: [props.generatedArtifactsBucket.arnForObjects('exports/*')],
+      }),
+    );
+    recordsHandler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['kms:GetPublicKey'],
         resources: [props.signingKey.keyArn],
@@ -307,6 +433,7 @@ export class ArgusApiStack extends cdk.Stack {
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         IRCC_SEED_URLS: JSON.stringify(IRCC_SEED_URLS),
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: sentinelLogGroup,
@@ -359,6 +486,7 @@ export class ArgusApiStack extends cdk.Stack {
         CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         BEDROCK_REASONER_MODEL: 'us.amazon.nova-pro-v1:0',
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
@@ -429,6 +557,7 @@ export class ArgusApiStack extends cdk.Stack {
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         FEW_SHOT_MAX: '5',
         FEW_SHOT_MAX_AGE_DAYS: '90',
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: auditorLogGroup,
@@ -486,6 +615,8 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
         SIGNING_KEY_ID: props.signingKey.keyId,
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
+        PUBLIC_COUNTERS_TABLE: props.publicCountersTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: anchorLogGroup,
@@ -496,6 +627,11 @@ export class ArgusApiStack extends cdk.Stack {
     props.policyRulesTable.grantReadData(anchorHandler);
     props.impactAssessmentsTable.grantWriteData(anchorHandler);
     props.signingKey.grantSign(anchorHandler);
+    const bumpPublicCounter = new iam.PolicyStatement({
+      actions: ['dynamodb:UpdateItem'],
+      resources: [props.publicCountersTable.tableArn],
+    });
+    anchorHandler.addToRolePolicy(bumpPublicCounter);
 
     new events.Rule(this, 'AuditVerdictToAnchor', {
       ruleName: 'argus-verdict-to-anchor',
@@ -531,6 +667,7 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         BRIEFS_TABLE: props.briefsTable.tableName,
         BEDROCK_COMPOSER_MODEL: 'us.amazon.nova-lite-v1:0',
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         NODE_OPTIONS: '--enable-source-maps',
@@ -665,7 +802,14 @@ export class ArgusApiStack extends cdk.Stack {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         POLICY_CORPUS_BUCKET: props.policyCorpusBucket.bucketName,
         SIGNING_KEY_ID: props.signingKey.keyId,
+        PUBLIC_COUNTERS_TABLE: props.publicCountersTable.tableName,
         DEFAULT_FROM_EMAIL: alertsFromEmail,
+        // Base of the "Verify this message" link in every sent brief.
+        ARGUS_PUBLIC_BASE_URL: process.env.ARGUS_PUBLIC_BASE_URL ?? 'https://main.d270cjhakw6y7j.amplifyapp.com',
+        // Relay From ("Name via Argus <relay>", Reply-To the consultant).
+        // Off until the relay domain is verified in SES.
+        BRIEFS_RELAY_ENABLED: process.env.ARGUS_BRIEFS_RELAY_ENABLED === 'true' ? 'true' : 'false',
+        BRIEFS_RELAY_FROM_EMAIL: process.env.ARGUS_BRIEFS_RELAY_FROM ?? '',
         BATCH_SEND_MAX: '25',
         ARCHIVE_LINK_TTL_SECONDS: String(7 * 24 * 60 * 60),
         NODE_OPTIONS: '--enable-source-maps',
@@ -681,6 +825,14 @@ export class ArgusApiStack extends cdk.Stack {
     props.policyRulesTable.grantReadData(briefsServiceHandler);
     props.policyCorpusBucket.grantRead(briefsServiceHandler);
     props.signingKey.grantSign(briefsServiceHandler);
+    briefsServiceHandler.addToRolePolicy(bumpPublicCounter);
+    // GET /briefs/{id}/send-signature returns the public key with the signature.
+    briefsServiceHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['kms:GetPublicKey'],
+        resources: [props.signingKey.keyArn],
+      }),
+    );
 
     briefsServiceHandler.addToRolePolicy(
       new iam.PolicyStatement({
@@ -724,6 +876,7 @@ export class ArgusApiStack extends cdk.Stack {
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
         RECALL_LOOKBACK_DAYS: '30',
         RECALL_MAX_PAIRS: '200',
+        AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
       logGroup: recallLogGroup,
@@ -752,6 +905,19 @@ export class ArgusApiStack extends cdk.Stack {
         resources: [`arn:aws:events:${this.region}:${this.account}:event-bus/default`],
       }),
     );
+
+    // Pipeline step telemetry. Each agent appends one AuditTrail row per step.
+    // PutItem only: no UpdateItem, DeleteItem or BatchWriteItem, so an agent
+    // can add a step and can never rewrite or remove one (ADR-0002).
+    const appendStep = new iam.PolicyStatement({
+      actions: ['dynamodb:PutItem'],
+      resources: [props.auditTrailTable.tableArn],
+    });
+    for (const h of [sentinelHandler, recallHandler, analystHandler, auditorHandler, anchorHandler, composerHandler]) {
+      h.addToRolePolicy(appendStep);
+    }
+    // The lineage routes read the steps back, by partition and by run.
+    props.auditTrailTable.grantReadData(impactsHandler);
 
     const orchestratorHandler = placeholder('OrchestratorHandler', 'orchestrator');
 
@@ -785,10 +951,6 @@ export class ArgusApiStack extends cdk.Stack {
     for (const h of [sentinelHandler, analystHandler, auditorHandler, composerHandler, recallHandler, impactsHandler]) {
       h.addToRolePolicy(guardrailApply);
     }
-
-    // Demo lever needs write access to seed profiles and trigger a fake policy delta.
-    props.clientProfilesTable.grantReadWriteData(demoHandler);
-    props.policyEventsTable.grantReadWriteData(demoHandler);
 
     props.policyCorpusBucket.grantReadWrite(sentinelHandler);
 
@@ -848,12 +1010,22 @@ export class ArgusApiStack extends cdk.Stack {
       { path: '/impacts', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}/audit-signature', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      { path: '/impacts/{id}/lineage', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      // {id} is one pipeline run (a policyEventId). Served by impacts-service,
+      // which owns the lineage reads.
+      { path: '/policy-events/{id}/lineage', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/impacts/{id}/correction', methods: [apigwv2.HttpMethod.POST], handler: impactsHandler },
+      { path: '/impacts/{id}/corrections', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      { path: '/corrections', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      { path: '/records', methods: [apigwv2.HttpMethod.GET], handler: recordsHandler },
+      { path: '/exports', methods: [apigwv2.HttpMethod.POST], handler: recordsHandler },
       { path: '/briefs', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
       { path: '/briefs/batch-send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/briefs/{id}', methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH], handler: briefsServiceHandler },
       { path: '/briefs/{id}/send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/briefs/{id}/archive-link', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
+      { path: '/briefs/{id}/send-signature', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
+      { path: '/briefs/{id}/copied', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/demo/trigger-policy-change', methods: [apigwv2.HttpMethod.POST], handler: demoHandler },
       { path: '/demo/seed', methods: [apigwv2.HttpMethod.POST], handler: demoHandler },
     ];
@@ -877,6 +1049,18 @@ export class ArgusApiStack extends cdk.Stack {
       path: '/public/verify/{hash}',
       methods: [apigwv2.HttpMethod.GET],
       integration: new apigwv2int.HttpLambdaIntegration('Integration-public-verify', impactsHandler),
+    });
+    // The signing key as a JWK set (the web serves it at
+    // /.well-known/jwks.json), and the landing page's 7-day counters.
+    this.httpApi.addRoutes({
+      path: '/public/jwks',
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2int.HttpLambdaIntegration('Integration-public-jwks', impactsHandler),
+    });
+    this.httpApi.addRoutes({
+      path: '/public/stats',
+      methods: [apigwv2.HttpMethod.GET],
+      integration: new apigwv2int.HttpLambdaIntegration('Integration-public-stats', impactsHandler),
     });
 
     // -----------------------------------------------------------------

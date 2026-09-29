@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { describeGuardrailBlock, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
 import { eligibleClients, tenantFromItem, TENANT_ATTRIBUTES, type Tenant } from './eligibility';
 import { ruleWindow } from './rule-window';
+import { elapsedMs, recordStep } from './telemetry';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -25,6 +26,8 @@ const REASONER_MODEL = requiredEnv('BEDROCK_REASONER_MODEL');
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const GROUNDING_QUERY_MAX_CHARS = 1000;
+// Optional on purpose: a missing telemetry table must never stop analysis.
+const AUDIT_TRAIL_TABLE = process.env.AUDIT_TRAIL_TABLE;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -170,9 +173,12 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
     });
 
     for (const client of candidates) {
+      const startedAt = performance.now();
+      let outcome: 'affected' | 'not-affected' | 'failed' = 'failed';
       try {
         const hyp = await reason(delta, rule, client, runId);
         await emitHypothesis(hyp, delta, client);
+        outcome = hyp.isAffected ? 'affected' : 'not-affected';
         log('info', 'hypothesis-emitted', {
           runId,
           rcicId,
@@ -199,6 +205,14 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
           ruleHash: delta.ruleHash,
           reason: reasonText,
         });
+      } finally {
+        await recordStep(
+          ddb,
+          AUDIT_TRAIL_TABLE,
+          { kind: 'assessment', rcicId, policyEventId: delta.eventId, clientId: client.clientId },
+          { agent: 'analyst', modelId: REASONER_MODEL, durationMs: elapsedMs(startedAt), outcome },
+          log,
+        );
       }
     }
   }
