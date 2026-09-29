@@ -1,9 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { currentAssessments, ruleClientKey, sentRuleClientKeys } from "@/lib/current-assessments";
+import { currentAssessments } from "@/lib/current-assessments";
+import { countActionRequired } from "@/lib/assessments";
 import { ApiError, api } from "@/lib/api";
-import type { Brief, Impact } from "@/lib/argus-types";
+import type { AuditSignature, Brief, Impact } from "@/lib/argus-types";
+import type { CorrectionsResponse } from "@/lib/types/corrections";
 import type {
   ActivityResponse,
   PolicyEventDetailResponse,
@@ -31,6 +33,9 @@ export const queryKeys = {
   impact: (assessmentKey: string) => ["impact", assessmentKey] as const,
   briefs: () => ["briefs"] as const,
   brief: (briefId: string) => ["brief", briefId] as const,
+  briefSendSignature: (briefId: string) => ["brief-send-signature", briefId] as const,
+  corrections: () => ["corrections"] as const,
+  impactCorrections: (assessmentKey: string) => ["impact-corrections", assessmentKey] as const,
   policyEvents: (params: PolicyEventsParams = {}) => ["policy-events", params] as const,
   policyEvent: (eventId: string) => ["policy-event", eventId] as const,
   policyEventImpacts: (eventId: string) => ["policy-event-impacts", eventId] as const,
@@ -38,6 +43,13 @@ export const queryKeys = {
   profiles: () => ["profiles"] as const,
   profile: (clientId: string) => ["profile", clientId] as const,
   me: () => ["me"] as const,
+};
+
+/** GET /briefs/{id}/send-signature. The audit-signature shape plus the brief fields. */
+export type BriefSendSignature = Omit<AuditSignature, "assessmentKey"> & {
+  briefId: string;
+  sentAt: string;
+  scheme: string;
 };
 
 export type PolicyEventsParams = {
@@ -124,11 +136,12 @@ export function isNotFound(err: unknown): boolean {
   return err instanceof ApiError && err.status === 404;
 }
 
-export function usePolicyEvent(eventId: string) {
+export function usePolicyEvent(eventId: string, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.policyEvent(eventId),
     queryFn: () => api<PolicyEventDetailResponse>(`/policy-events/${encodeURIComponent(eventId)}`),
     retry: retryUnlessNotFound,
+    enabled: options.enabled ?? true,
   });
 }
 
@@ -150,12 +163,50 @@ export function useActivity(params: ActivityParams = {}, options: { enabled?: bo
 }
 
 /**
- * Affected assessments that don't have a sent brief yet. This is the number
- * behind the Assessments badge and, later, the Action required tab.
+ * Affected assessments with no brief sent or copied out yet. The number behind
+ * the Assessments badge and the Action required tab. See lib/assessments.ts.
  */
-export function countActionRequired(impacts: Impact[], briefs: Brief[]): number {
-  const sent = sentRuleClientKeys(briefs);
-  return impacts.filter((i) => i.isAffected && !sent.has(ruleClientKey(i))).length;
+export { countActionRequired };
+
+/** GET /corrections. Every correction this consultant filed, newest first. */
+export function useCorrections(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.corrections(),
+    queryFn: () => api<CorrectionsResponse>("/corrections"),
+    enabled: options.enabled ?? true,
+  });
+}
+
+/** GET /impacts/{id}/corrections. Corrections filed on this one assessment, newest first. */
+export function useImpactCorrections(assessmentKey: string) {
+  return useQuery({
+    queryKey: queryKeys.impactCorrections(assessmentKey),
+    queryFn: () => api<CorrectionsResponse>(`/impacts/${encodeURIComponent(assessmentKey)}/corrections`),
+  });
+}
+
+/** GET /briefs/{id}/send-signature. Only asked for once the brief is sent. */
+export function useBriefSendSignature(briefId: string, options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.briefSendSignature(briefId),
+    queryFn: () => api<BriefSendSignature>(`/briefs/${encodeURIComponent(briefId)}/send-signature`),
+    enabled: options.enabled ?? true,
+    retry: retryUnlessNotFound,
+  });
+}
+
+/** POST /briefs/{id}/copied. Marks the brief handled. Nothing is signed. */
+export function useMarkBriefCopied(briefId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api<Brief>(`/briefs/${encodeURIComponent(briefId)}/copied`, { method: "POST" }),
+    onSuccess: (b) => {
+      qc.setQueryData(queryKeys.brief(briefId), b);
+      void qc.invalidateQueries({ queryKey: queryKeys.briefs() });
+      void qc.invalidateQueries({ queryKey: ["policy-events"] });
+      void qc.invalidateQueries({ queryKey: ["policy-event-impacts"] });
+    },
+  });
 }
 
 /** Returns null until both lists have loaded, so a badge never flashes a wrong number. */

@@ -20,6 +20,8 @@ export type SettingsDraft = {
   province: Province | "";
   policyDomains: Record<MonitoredDomain, boolean>;
   realtimeAlerts: boolean;
+  /** Name and R-license on public receipts. Off unless the consultant turns it on. */
+  showIdentityOnPublicReceipts: boolean;
 };
 
 export const PROVINCE_LABELS: Record<Province, string> = {
@@ -54,6 +56,7 @@ export function draftFromMe(me: MeResponse): SettingsDraft {
     province: me.consultant.province ?? "",
     policyDomains: { ...me.preferences.policyDomains },
     realtimeAlerts: me.preferences.realtimeAlerts,
+    showIdentityOnPublicReceipts: me.preferences.showIdentityOnPublicReceipts === true,
   };
 }
 
@@ -89,6 +92,9 @@ export function diffDraft(saved: SettingsDraft, draft: SettingsDraft): PatchMeRe
   const prefs: NonNullable<PatchMeRequest["preferences"]> = {};
   if (Object.keys(domains).length > 0) prefs.policyDomains = domains;
   if (draft.realtimeAlerts !== saved.realtimeAlerts) prefs.realtimeAlerts = draft.realtimeAlerts;
+  if (draft.showIdentityOnPublicReceipts !== saved.showIdentityOnPublicReceipts) {
+    prefs.showIdentityOnPublicReceipts = draft.showIdentityOnPublicReceipts;
+  }
   if (Object.keys(prefs).length > 0) body.preferences = prefs;
 
   return Object.keys(body).length > 0 ? body : null;
@@ -102,7 +108,8 @@ export function changeCount(saved: SettingsDraft, draft: SettingsDraft): number 
     ("firm" in body ? 1 : 0) +
     ("province" in body ? 1 : 0) +
     Object.keys(body.preferences?.policyDomains ?? {}).length +
-    (body.preferences && "realtimeAlerts" in body.preferences ? 1 : 0)
+    (body.preferences && "realtimeAlerts" in body.preferences ? 1 : 0) +
+    (body.preferences && "showIdentityOnPublicReceipts" in body.preferences ? 1 : 0)
   );
 }
 

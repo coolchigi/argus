@@ -232,8 +232,10 @@ export type MeResponse = {
 /**
  * Builds the /me body. Identity comes from the Cognito claims first, because
  * that's what the consultant signed up with, then falls back to the row.
- * Preferences resolve to defaults (everything on) for any value that isn't
- * stored as a boolean: only an explicit false turns something off.
+ * Preferences resolve to defaults for any value that isn't stored as a
+ * boolean. Areas and alerts default on, so only an explicit false turns them
+ * off. showIdentityOnPublicReceipts defaults off, so only an explicit true
+ * turns it on.
  */
 export function toMeResponse(input: {
   rcicId: string;
@@ -273,7 +275,9 @@ export function toMeResponse(input: {
     preferences: {
       policyDomains,
       realtimeAlerts: prefs.realtimeAlerts !== false,
-      showIdentityOnPublicReceipts: prefs.showIdentityOnPublicReceipts !== false,
+      // Consultant identity on public receipts is opt-in: only an explicit
+      // true turns it on (GET /public/verify reads the same rule).
+      showIdentityOnPublicReceipts: prefs.showIdentityOnPublicReceipts === true,
     },
     onboarding: { step, completedAt: text(ob.completedAt), skippedAt: text(ob.skippedAt) },
     signing,

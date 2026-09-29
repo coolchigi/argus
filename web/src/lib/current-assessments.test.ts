@@ -53,3 +53,8 @@ test("a brief sent on an earlier run covers the client, a draft does not", () =>
   assert.ok(sent.has(ruleClientKey(imp({ assessmentKey: "e2#C1", policyEventId: "e2" }))));
   assert.ok(!sent.has(ruleClientKey(imp({ clientId: "C2" }))));
 });
+
+test("a brief the consultant copied out covers the client", () => {
+  const sent = sentRuleClientKeys([brief({ assessmentKey: "e1#C1", status: "sent-externally" })]);
+  assert.ok(sent.has(ruleClientKey(imp({}))));
+});

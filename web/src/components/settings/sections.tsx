@@ -178,6 +178,36 @@ export function NotificationsSection({
   );
 }
 
+export function PublicReceiptsSection({
+  me,
+  draft,
+  onChange,
+}: {
+  me: MeResponse;
+  draft: SettingsDraft;
+  onChange: (patch: Partial<SettingsDraft>) => void;
+}) {
+  const name = me.consultant.displayName ?? "your name";
+  const license = me.consultant.rcicLicense ?? me.consultant.rcicId;
+  return (
+    <SettingsSection
+      id="public-receipts"
+      title="Public receipts"
+      description="Anyone with a receipt link can check the signature. Clients never appear on a receipt."
+    >
+      <div className="border border-hairline bg-card px-5 py-3.5">
+        <Switch
+          checked={draft.showIdentityOnPublicReceipts}
+          onCheckedChange={(checked) => onChange({ showIdentityOnPublicReceipts: checked })}
+          label="Show my name on receipts"
+          description={`Receipts read "Signed for ${name}, RCIC ${license}". Off until you turn it on.`}
+          className="items-center"
+        />
+      </div>
+    </SettingsSection>
+  );
+}
+
 function groupFingerprint(hex: string): string {
   return (hex.toLowerCase().match(/.{1,4}/g) ?? []).join(" ");
 }

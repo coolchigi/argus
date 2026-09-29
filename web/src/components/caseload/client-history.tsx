@@ -60,7 +60,7 @@ export function AssessmentList({ assessments }: { assessments: ClientAssessment[
   );
 }
 
-const BRIEF_STATUSES = new Set(["draft", "edited", "sent"]);
+const BRIEF_STATUSES = new Set(["draft", "edited", "sent", "sent-externally"]);
 
 export function BriefList({ briefs }: { briefs: ClientBrief[] }) {
   if (briefs.length === 0) {
@@ -83,7 +83,7 @@ export function BriefList({ briefs }: { briefs: ClientBrief[] }) {
             </div>
           </div>
           {BRIEF_STATUSES.has(b.status) ? (
-            <StatusBadge kind="brief" status={b.status as "draft" | "edited" | "sent"} />
+            <StatusBadge kind="brief" status={b.status as "draft" | "edited" | "sent" | "sent-externally"} />
           ) : (
             <Badge tone="neutral">{b.status || "Unknown"}</Badge>
           )}
