@@ -40,6 +40,11 @@ export type BriefRow = {
   sentAt: string | null;
 };
 
+/** Sent by Argus, or copied out by the consultant (`sent-externally`). Either clears the action. */
+export function isDelivered(status: string): boolean {
+  return status === 'sent' || status === 'sent-externally';
+}
+
 export type LatestAffected = { assessmentKey: string; policyEventId: string; topic: string };
 
 export type ClientCounts = {
@@ -140,7 +145,7 @@ export function groupRuns(assessments: AssessmentRow[]): Map<string, RuleRuns[]>
 function sentKeys(briefs: BriefRow[], ruleByAssessment: Map<string, string>): Set<string> {
   const out = new Set<string>();
   for (const b of briefs) {
-    if (b.status !== 'sent') continue;
+    if (!isDelivered(b.status)) continue;
     const ruleId = ruleByAssessment.get(b.assessmentKey) ?? b.ruleHash;
     if (ruleId && b.clientId) out.add(`${ruleId}#${b.clientId}`);
   }
@@ -176,8 +181,8 @@ function pickBrief(briefs: BriefRow[]): BriefRow | null {
   let best: BriefRow | null = null;
   for (const b of briefs) {
     if (!best) best = b;
-    else if (b.status === 'sent' && best.status !== 'sent') best = b;
-    else if ((b.status === 'sent') === (best.status === 'sent') && (b.createdAt ?? '') > (best.createdAt ?? '')) best = b;
+    else if (isDelivered(b.status) && !isDelivered(best.status)) best = b;
+    else if (isDelivered(b.status) === isDelivered(best.status) && (b.createdAt ?? '') > (best.createdAt ?? '')) best = b;
   }
   return best;
 }
@@ -194,7 +199,7 @@ export function clientAssessments(assessments: AssessmentRow[], briefs: BriefRow
   for (const runs of groupRuns(assessments).values()) {
     for (const { ruleId, current, prior } of runs) {
       const all = [current, ...prior];
-      const sentBrief = pickBrief(all.flatMap((a) => (byAssessment.get(a.assessmentKey) ?? []).filter((b) => b.status === 'sent')));
+      const sentBrief = pickBrief(all.flatMap((a) => (byAssessment.get(a.assessmentKey) ?? []).filter((b) => isDelivered(b.status))));
       const brief = sentBrief ?? pickBrief(byAssessment.get(current.assessmentKey) ?? []);
       out.push({
         eventId: ruleId,

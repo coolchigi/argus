@@ -10,6 +10,7 @@ import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-d
 import { randomUUID } from 'node:crypto';
 import { describeGuardrailBlock, guarded, type GroundingCheck } from './guardrail';
 import { ruleWindow } from './rule-window';
+import { elapsedMs, recordStep } from './telemetry';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -22,6 +23,8 @@ const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const FEW_SHOT_MAX = Number(process.env.FEW_SHOT_MAX ?? '5');
 const FEW_SHOT_MAX_AGE_DAYS = Number(process.env.FEW_SHOT_MAX_AGE_DAYS ?? '90');
+// Optional on purpose: a missing telemetry table must never stop an audit.
+const AUDIT_TRAIL_TABLE = process.env.AUDIT_TRAIL_TABLE;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -85,7 +88,33 @@ type AuditVerdict = {
 export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promise<{ passed: boolean }> => {
   const runId = randomUUID();
   const hyp: ImpactHypothesis = 'detail' in event && event.detail ? event.detail : (event as ImpactHypothesis);
+  const startedAt = performance.now();
+  let outcome: 'passed' | 'rejected' | 'failed' = 'failed';
+  let fewShotCorrectionKeys: string[] = [];
+  try {
+    const res = await runAudit(hyp, runId, (keys) => {
+      fewShotCorrectionKeys = keys;
+    });
+    outcome = res.passed ? 'passed' : 'rejected';
+    return res;
+  } finally {
+    // Written after the verdict is emitted. The correction keys go on the
+    // step row only, never into the verdict Anchor signs from.
+    await recordStep(
+      ddb,
+      AUDIT_TRAIL_TABLE,
+      { kind: 'assessment', rcicId: hyp.rcicId, policyEventId: hyp.policyEventId, clientId: hyp.clientId },
+      { agent: 'auditor', modelId: AUDITOR_MODEL, durationMs: elapsedMs(startedAt), outcome, fewShotCorrectionKeys },
+      log,
+    );
+  }
+};
 
+async function runAudit(
+  hyp: ImpactHypothesis,
+  runId: string,
+  onFewShots: (correctionKeys: string[]) => void,
+): Promise<{ passed: boolean }> {
   log('info', 'audit-start', {
     runId,
     hypothesisId: hyp.hypothesisId,
@@ -100,6 +129,7 @@ export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promi
     loadRuleContent(hyp.ruleHash),
     loadRecentCorrections(hyp.rcicId, hyp.policyDomain, hyp.topic),
   ]);
+  onFewShots(fewShots.flatMap((c) => (typeof c.correctionKey === 'string' && c.correctionKey ? [c.correctionKey] : [])));
 
   const verdict = await audit(hyp, ruleContent, fewShots, runId);
   await emitVerdict(verdict);
@@ -132,7 +162,7 @@ export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promi
   });
 
   return { passed: verdict.passed };
-};
+}
 
 async function loadRuleContent(ruleHash: string): Promise<string> {
   const res = await ddb.send(new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash } }));
@@ -143,6 +173,8 @@ async function loadRuleContent(ruleHash: string): Promise<string> {
 // One TrainingCorrections row, as impacts-service writes it. The original
 // action and confidence are absent on rows filed before they were stored.
 export type Correction = {
+  // `${assessmentKey}#${correctedAt}`, the table's sort key.
+  correctionKey?: string;
   correctedAt: string;
   policyDomain: string;
   topic: string;

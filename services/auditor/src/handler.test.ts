@@ -4,8 +4,8 @@ import path from 'node:path';
 import { before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { BedrockRuntimeClient, type ConverseCommand, type ConverseCommandInput } from '@aws-sdk/client-bedrock-runtime';
-import { EventBridgeClient } from '@aws-sdk/client-eventbridge';
-import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { EventBridgeClient, type PutEventsCommand } from '@aws-sdk/client-eventbridge';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { build } from 'esbuild';
 
 // Runs the real Auditor handler against an in-memory TrainingCorrections
@@ -21,6 +21,10 @@ type Item = Record<string, unknown>;
 const corrections: Item[] = [];
 const queries: Item[] = [];
 let lastRequest: ConverseCommandInput | undefined;
+const trailRows: Item[] = [];
+const verdicts: Item[] = [];
+let trailFails = false;
+let modelReply = '{"passed":true,"issues":[]}';
 
 type Handler = (event: unknown) => Promise<{ passed: boolean }>;
 let handler: Handler;
@@ -41,12 +45,18 @@ before(async () => {
     POLICY_RULES_TABLE: 'rules',
     TRAINING_CORRECTIONS_TABLE: 'argus-training-corrections',
     BEDROCK_AUDITOR_MODEL: 'us.test-model',
+    AUDIT_TRAIL_TABLE: 'audit-trail',
     AWS_REGION: 'us-east-1',
   });
 
   (DynamoDBDocumentClient.prototype as { send: unknown }).send = async (cmd: { input: Item }) => {
     const input = cmd.input;
     if (cmd instanceof GetCommand) return { Item: { rule_hash: 'h1', rule_content: 'rule text' } };
+    if (cmd instanceof PutCommand && input.TableName === 'audit-trail') {
+      if (trailFails) throw new Error('ProvisionedThroughputExceededException');
+      trailRows.push(input.Item as Item);
+      return {};
+    }
     if (cmd instanceof QueryCommand) {
       queries.push(input);
       // Applies the key condition and filter the way DynamoDB would, for the
@@ -60,10 +70,13 @@ before(async () => {
     lastRequest = cmd.input;
     return {
       stopReason: 'end_turn',
-      output: { message: { role: 'assistant', content: [{ text: '{"passed":true,"issues":[]}' }] } },
+      output: { message: { role: 'assistant', content: [{ text: modelReply }] } },
     };
   };
-  (EventBridgeClient.prototype as { send: unknown }).send = async () => ({});
+  (EventBridgeClient.prototype as { send: unknown }).send = async (cmd: PutEventsCommand) => {
+    for (const e of cmd.input.Entries ?? []) verdicts.push(JSON.parse(e.Detail ?? '{}') as Item);
+    return {};
+  };
 
   handler = (await import(outfile)).handler as Handler;
 });
@@ -72,6 +85,10 @@ beforeEach(() => {
   corrections.length = 0;
   queries.length = 0;
   lastRequest = undefined;
+  trailRows.length = 0;
+  verdicts.length = 0;
+  trailFails = false;
+  modelReply = '{"passed":true,"issues":[]}';
 });
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
@@ -221,5 +238,87 @@ describe('Auditor few-shot prompt', () => {
     assert.ok(plain.some((t) => t.includes('CORRECTION 1 (topic=ee-category-draws')));
     assert.ok(plain.every((t) => !t.includes('reason g')), 'consultant reasoning never rides in a plain block');
     assert.match(fewShotBodies(req)[0], /Consultant reasoning: reason g/);
+  });
+});
+
+describe('Auditor step telemetry', () => {
+  it('records the correction keys it actually used, in the order it used them', async () => {
+    corrections.push(
+      row('domain-a', 'ee-crs-grid', 'express-entry', daysAgo(10)),
+      row('topic-new', 'ee-category-draws', 'express-entry', daysAgo(5)),
+      row('unrelated', 'study-permit-cap', 'study-permits', daysAgo(1)),
+      row('expired', 'ee-category-draws', 'express-entry', daysAgo(120)),
+    );
+    await audit();
+    assert.equal(trailRows.length, 1);
+    const step = trailRows[0];
+    assert.deepEqual(step.fewShotCorrectionKeys, ['pe#c#topic-new', 'pe#c#domain-a']);
+    assert.equal(step.agent, 'auditor');
+    assert.equal(step.modelId, 'us.test-model');
+    assert.equal(step.outcome, 'passed');
+    assert.equal(step.assessmentId, 'R1#pe1#c1');
+    assert.equal(typeof step.durationMs, 'number');
+  });
+
+  it('records an empty list when no correction applied', async () => {
+    await audit();
+    assert.deepEqual(trailRows[0].fewShotCorrectionKeys, []);
+  });
+
+  it('keeps the correction keys out of the verdict Anchor signs from', async () => {
+    corrections.push(row('topic-new', 'ee-category-draws', 'express-entry', daysAgo(5)));
+    await audit();
+    assert.equal(verdicts.length, 1);
+    assert.doesNotMatch(JSON.stringify(verdicts[0]), /fewShotCorrectionKeys|pe#c#topic-new/);
+  });
+
+  it('still emits the verdict when the telemetry write fails', async () => {
+    trailFails = true;
+    await audit();
+    assert.equal(verdicts.length, 1);
+    assert.equal(verdicts[0].passed, true);
+  });
+
+  it('records a rejected verdict as rejected', async () => {
+    modelReply = '{"passed":false,"issues":[{"type":"other","detail":"wrong program"}]}';
+    await audit();
+    assert.equal(trailRows[0].outcome, 'rejected');
+  });
+
+  it('records a failed step and still fails the audit when the model returns junk', async () => {
+    modelReply = 'no json here';
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      await assert.rejects(handler({ detail: hypothesis }), /non-JSON/);
+    } finally {
+      console.log = origLog;
+    }
+    assert.equal(trailRows[0].outcome, 'failed');
+    assert.equal(verdicts.length, 0);
+  });
+});
+
+describe('Auditor sees the whole client profile', () => {
+  it('puts the permit, sponsor and PR pathway fields in the guarded profile block', async () => {
+    // These fields exist so the Auditor can decide cases it used to reject
+    // for thin profiles. Filtering the profile would bring those rejections back.
+    const clientProfile = {
+      clientId: 'c1',
+      program: 'sowp',
+      pgpSponsorStatus: 'interest-form-submitted',
+      dliType: 'private',
+      studyStartDate: '2027-01-11',
+      studyPermitAppliedDate: '2024-11-20',
+      principalPrPathway: 'none',
+      principalPrApplied: false,
+    };
+    const req = await audit({ clientProfile });
+    const content = req.messages?.[0].content ?? [];
+    const labelAt = content.findIndex((b) => typeof b.text === 'string' && b.text.startsWith('CLIENT PROFILE'));
+    const block = content[labelAt + 1];
+    const text = block?.guardContent && 'text' in block.guardContent ? block.guardContent.text?.text : undefined;
+    assert.ok(labelAt >= 0 && text, 'the profile rides in a guarded block after its label');
+    assert.deepEqual(JSON.parse(text), clientProfile);
   });
 });
