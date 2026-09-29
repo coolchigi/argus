@@ -59,6 +59,7 @@ jobs:
           - policy-events
           - profiles
           - recall
+          - records
           - sentinel
           - user-provisioning
     defaults:

@@ -347,6 +347,67 @@ export class ArgusApiStack extends cdk.Stack {
       new iam.PolicyStatement({ actions: ['dynamodb:BatchGetItem'], resources: [props.publicCountersTable.tableArn] }),
     );
 
+    // Records service (ADR-0002, export on demand). GET /records lists the
+    // consultant's signed assessments and sent briefs for a date range, and
+    // POST /exports writes them to a zip (records.jsonl, VERIFY.md and the
+    // public key) under exports/ in the generated-artifacts bucket, then
+    // returns a 1-hour presigned link. Its own function so the only role that
+    // can write export files reads the two tables and nothing else: no
+    // corrections write, no Bedrock, no Sign.
+    const recordsLogGroup = new logs.LogGroup(this, 'RecordsHandlerLogs', {
+      logGroupName: '/aws/lambda/argus-records',
+      retention: logs.RetentionDays.ONE_WEEK,
+      removalPolicy: cdk.RemovalPolicy.DESTROY,
+    });
+
+    const recordsHandler = new nodejs.NodejsFunction(this, 'RecordsHandler', {
+      functionName: 'argus-records',
+      runtime: lambda.Runtime.NODEJS_22_X,
+      architecture: lambda.Architecture.ARM_64,
+      projectRoot: path.join(__dirname, '../..'),
+      depsLockFilePath: path.join(__dirname, '../../services/records/package-lock.json'),
+      entry: path.join(__dirname, '../../services/records/src/handler.ts'),
+      handler: 'handler',
+      timeout: cdk.Duration.seconds(29),
+      memorySize: 512,
+      environment: {
+        IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
+        BRIEFS_TABLE: props.briefsTable.tableName,
+        GENERATED_ARTIFACTS_BUCKET: props.generatedArtifactsBucket.bucketName,
+        SIGNING_KEY_ID: props.signingKey.keyId,
+        // SHA-256 of the signing key's SPKI, the same value the web verifier
+        // pins (web/src/lib/signature-verify.ts). Exports refuse to run if KMS
+        // returns any other key.
+        SIGNING_KEY_SPKI_SHA256: '9eeaa3055e1915ee2c31e6c904c37bdde22eb43e82a08ccf9fba9dfccebe94be',
+        EXPORT_URL_TTL_SECONDS: '3600',
+        NODE_OPTIONS: '--enable-source-maps',
+      },
+      logGroup: recordsLogGroup,
+      tracing: lambda.Tracing.ACTIVE,
+      bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
+    });
+
+    // Query only, on the two base tables. No GetItem, no Scan, no index.
+    recordsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:Query'],
+        resources: [props.impactAssessmentsTable.tableArn, props.briefsTable.tableArn],
+      }),
+    );
+    // Put, then GetObject so the presigned link works. Only under exports/.
+    recordsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['s3:PutObject', 's3:GetObject'],
+        resources: [props.generatedArtifactsBucket.arnForObjects('exports/*')],
+      }),
+    );
+    recordsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['kms:GetPublicKey'],
+        resources: [props.signingKey.keyArn],
+      }),
+    );
+
     const sentinelLogGroup = new logs.LogGroup(this, 'SentinelHandlerLogs', {
       logGroupName: '/aws/lambda/argus-sentinel',
       retention: logs.RetentionDays.ONE_WEEK,
@@ -932,6 +993,8 @@ export class ArgusApiStack extends cdk.Stack {
       { path: '/impacts/{id}/correction', methods: [apigwv2.HttpMethod.POST], handler: impactsHandler },
       { path: '/impacts/{id}/corrections', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
       { path: '/corrections', methods: [apigwv2.HttpMethod.GET], handler: impactsHandler },
+      { path: '/records', methods: [apigwv2.HttpMethod.GET], handler: recordsHandler },
+      { path: '/exports', methods: [apigwv2.HttpMethod.POST], handler: recordsHandler },
       { path: '/briefs', methods: [apigwv2.HttpMethod.GET], handler: briefsServiceHandler },
       { path: '/briefs/batch-send', methods: [apigwv2.HttpMethod.POST], handler: briefsServiceHandler },
       { path: '/briefs/{id}', methods: [apigwv2.HttpMethod.GET, apigwv2.HttpMethod.PATCH], handler: briefsServiceHandler },
