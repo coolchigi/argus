@@ -45,6 +45,68 @@ export function buildCopyText({ subject, body, actions, clientId }: CopyInput): 
   return parts.join("\n");
 }
 
+export type CopyOutcome =
+  /** On the clipboard and the brief is marked handled. */
+  | { kind: "copied" }
+  /** On the clipboard, but POST /copied failed. */
+  | { kind: "copied-unmarked" }
+  /** The clipboard refused. Nothing was copied or marked. Show the text so the consultant can copy it by hand. */
+  | { kind: "manual"; text: string };
+
+export type CopyDeps = {
+  writeClipboard: (text: string) => Promise<void>;
+  markCopied: () => Promise<unknown>;
+};
+
+/**
+ * "Copy for my email": try the async clipboard first. The brief is marked
+ * copied only after the text really landed on the clipboard. When the browser
+ * blocks the clipboard (embedded browsers, locked-down work machines), the
+ * caller gets the text back to show in a manual-copy dialog, and nothing is
+ * marked.
+ */
+export async function copyBrief(text: string, deps: CopyDeps): Promise<CopyOutcome> {
+  try {
+    await deps.writeClipboard(text);
+  } catch {
+    return { kind: "manual", text };
+  }
+  try {
+    await deps.markCopied();
+    return { kind: "copied" };
+  } catch {
+    return { kind: "copied-unmarked" };
+  }
+}
+
+/**
+ * The manual dialog's "I've copied it" button. This is the only place the
+ * manual path marks the brief copied. Opening the dialog or pressing Copy
+ * doesn't.
+ */
+export async function confirmManualCopy(markCopied: CopyDeps["markCopied"]): Promise<"marked" | "mark-failed"> {
+  try {
+    await markCopied();
+    return "marked";
+  } catch {
+    return "mark-failed";
+  }
+}
+
+/**
+ * The manual dialog's Copy button: select the text, then ask for the legacy
+ * copy command. Returns whether the browser says it copied. It never marks the
+ * brief, because only the consultant knows whether the text left the page.
+ */
+export function tryLegacyCopy(select: () => void, execCopy: () => boolean): boolean {
+  try {
+    select();
+    return execCopy() === true;
+  } catch {
+    return false;
+  }
+}
+
 // First letter either case. The rest of the pattern is case-sensitive so a
 // name has to start with a capital.
 export type BatchRowStatus = "pending" | "signing" | "sent" | "failed";

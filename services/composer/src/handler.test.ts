@@ -24,7 +24,15 @@ let trailFails = false;
 let modelReply = '{"subject":"Your CRS score changed","bodyMarkdown":"body","suggestedActions":["Retake the test"]}';
 
 type Handler = (event: unknown) => Promise<{ composed: number; skipped: number }>;
+type Request = {
+  system: { text: string }[];
+  messages: { content: ({ text: string } | { guardContent: { text: { text: string } } })[] }[];
+  inferenceConfig: { maxTokens?: number };
+  modelId: string;
+};
 let handler: Handler;
+let buildComposeRequest: (assessment: unknown, ruleContent: string) => Request;
+let logLines: Record<string, unknown>[] = [];
 
 before(async () => {
   mkdirSync(outDir, { recursive: true });
@@ -66,18 +74,21 @@ before(async () => {
   });
   (EventBridgeClient.prototype as { send: unknown }).send = async () => ({});
 
-  handler = (await import(outfile)).handler as Handler;
+  const mod = await import(outfile);
+  handler = mod.handler as Handler;
+  buildComposeRequest = mod.buildComposeRequest;
 });
 
 beforeEach(() => {
   briefs.length = 0;
   trailRows.length = 0;
   trailFails = false;
+  logLines = [];
   modelReply = '{"subject":"Your CRS score changed","bodyMarkdown":"body","suggestedActions":["Retake the test"]}';
 });
 
-function insert(overrides: Item = {}) {
-  const assessment = {
+function assessmentFor(overrides: Item = {}) {
+  return {
     rcicId: 'R1',
     assessmentKey: 'pe1#c1',
     clientId: 'c1',
@@ -94,12 +105,16 @@ function insert(overrides: Item = {}) {
     timestamp: '2026-09-29T12:00:00.000Z',
     ...overrides,
   };
+}
+
+function insert(overrides: Item = {}) {
+  const assessment = assessmentFor(overrides);
   return { eventID: '1', eventName: 'INSERT', dynamodb: { NewImage: marshall(assessment, { removeUndefinedValues: true }) } };
 }
 
 async function compose(records: unknown[]) {
   const origLog = console.log;
-  console.log = () => {};
+  console.log = (line: string) => logLines.push(JSON.parse(line));
   try {
     return await handler({ Records: records });
   } finally {
@@ -139,5 +154,107 @@ describe('Composer step telemetry', () => {
     assert.equal(res.composed, 0);
     assert.equal(briefs.length, 0);
     assert.equal(trailRows[0].outcome, 'failed');
+  });
+});
+
+// Everything the model reads, joined back into one string.
+function promptText(req: Request): string {
+  const user = req.messages[0].content.map((b) => ('text' in b ? b.text : b.guardContent.text.text)).join('');
+  return req.system.map((b) => b.text).join('\n') + '\n' + user;
+}
+
+describe('Composer brief voice', () => {
+  const pgp = {
+    clientId: '2026-042',
+    assessmentKey: 'pe1#2026-042',
+    topic: 'pgp-intake',
+    impactType: 'eligibility-flip',
+    numericDelta: null,
+    narrative: 'Client 2026-042 cannot submit a new interest to sponsor form while PGP intake is paused.',
+    recommendedAction: 'Tell 2026-042 to wait for the next intake.',
+  };
+
+  it('tells the model to write to the client in second person and never say "your client"', () => {
+    const system = buildComposeRequest(assessmentFor(pgp), 'rule text').system.map((b) => b.text).join('\n');
+    assert.match(system, /second person/);
+    assert.match(system, /Never write "your client"/);
+    assert.match(system, /consultant's voice/);
+  });
+
+  it('keeps the client id out of everything the model reads', () => {
+    const text = promptText(buildComposeRequest(assessmentFor(pgp), 'rule text'));
+    assert.doesNotMatch(text, /2026-042/);
+    assert.doesNotMatch(text, /client_id as placeholder/);
+    assert.match(text, /the client cannot submit a new interest to sponsor form/);
+  });
+
+  it('keeps the guardrail tagging, the us. profile and an explicit maxTokens', () => {
+    const req = buildComposeRequest(assessmentFor(pgp), 'rule text');
+    const guardedTexts = req.messages[0].content.flatMap((b) => ('guardContent' in b ? [b.guardContent.text.text] : []));
+    assert.equal(guardedTexts.length, 2);
+    assert.match(guardedTexts[0], /cannot submit a new interest/);
+    assert.match(guardedTexts[1], /rule text/);
+    assert.match(req.modelId, /^us\./);
+    assert.equal(typeof req.inferenceConfig.maxTokens, 'number');
+  });
+
+  it('logs a composer-voice-check warning for the live bad draft and still writes the brief', async () => {
+    const body =
+      'This means that your client, identified as [CLIENT NAME], cannot submit new sponsor applications. ' +
+      'As your consultant, I recommend that your client refrains from submitting.';
+    modelReply = JSON.stringify({ subject: 'PGP intake paused', bodyMarkdown: body, suggestedActions: ['Wait'] });
+    const res = await compose([insert(pgp)]);
+    assert.equal(res.composed, 1);
+    assert.equal(briefs.length, 1);
+    assert.equal(briefs[0].bodyMarkdown, body);
+    const warn = logLines.find((l) => l.msg === 'composer-voice-check');
+    assert.ok(warn, 'expected a composer-voice-check log line');
+    assert.equal(warn.level, 'warn');
+    assert.deepEqual(warn.findings, ['your-client']);
+    assert.equal(warn.clientId, '2026-042');
+  });
+
+  for (const [label, reply] of [
+    ['no subject', { bodyMarkdown: 'You can wait.', suggestedActions: ['Wait'] }],
+    ['a blank subject', { subject: '  ', bodyMarkdown: 'You can wait.', suggestedActions: ['Wait'] }],
+    ['a null subject', { subject: null, bodyMarkdown: 'You can wait.', suggestedActions: ['Wait'] }],
+  ] as const) {
+    it(`falls back to a neutral subject with no client id when the model returns ${label}`, async () => {
+      modelReply = JSON.stringify(reply);
+      await compose([insert(pgp)]);
+      assert.equal(briefs.length, 1);
+      const subject = String(briefs[0].subject);
+      assert.equal(subject, 'An immigration policy update that affects your file');
+      assert.doesNotMatch(subject, /2026-042/);
+    });
+  }
+
+  for (const [label, reply] of [
+    ['no body', { subject: 'PGP intake paused' }],
+    ['a blank body', { subject: 'PGP intake paused', bodyMarkdown: ' \n ' }],
+    ['a null body', { subject: 'PGP intake paused', bodyMarkdown: null, suggestedActions: null }],
+  ] as const) {
+    it(`falls back to the Analyst text without the client id when the model returns ${label}`, async () => {
+      modelReply = JSON.stringify(reply);
+      await compose([insert(pgp)]);
+      assert.equal(briefs.length, 1);
+      const body = String(briefs[0].bodyMarkdown);
+      assert.equal(body, 'the client cannot submit a new interest to sponsor form while PGP intake is paused.');
+      assert.doesNotMatch(body, /2026-042/);
+      const actions = briefs[0].suggestedActions as string[];
+      if (!('suggestedActions' in reply) || reply.suggestedActions === null) {
+        assert.deepEqual(actions, ['Tell the client to wait for the next intake.']);
+      }
+      assert.doesNotMatch(actions.join(' '), /2026-042/);
+      assert.equal(logLines.some((l) => l.msg === 'composer-voice-check'), false);
+    });
+  }
+
+  it('logs no voice warning for a draft written to the client', async () => {
+    const body = "You can't submit a new interest to sponsor form right now. I recommend we wait for the next intake.";
+    modelReply = JSON.stringify({ subject: 'PGP intake paused', bodyMarkdown: body, suggestedActions: ['Wait'] });
+    await compose([insert(pgp)]);
+    assert.equal(briefs.length, 1);
+    assert.equal(logLines.some((l) => l.msg === 'composer-voice-check'), false);
   });
 });
