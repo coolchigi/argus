@@ -181,6 +181,18 @@ describe('POST /profiles/bulk per-row errors', () => {
     }
   });
 
+  it('rejects ids the guardrail would block and commits the rest', async () => {
+    const ids = ['123456789', '123 456 789', '123-456-789', '123-45-6789', 'F-123456789', '2026-042', 'F123456789', 'C-101'];
+    const res = await call(event('POST /profiles/bulk', { body: { rows: ids.map((id) => row(id)), dryRun: false } }));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.created, 3);
+    assert.deepEqual(
+      res.body.rejected.map((r: any) => [r.row, r.clientId, r.errors]),
+      [1, 2, 3, 4, 5].map((n) => [n, null, ['client-id-looks-like-sin']]),
+    );
+    assert.deepEqual(store.writes.map((w) => w.clientId).sort(), ['2026-042', 'C-101', 'F123456789']);
+  });
+
   it('rejects every copy of a client id that appears twice in the file', async () => {
     const res = await call(event('POST /profiles/bulk', { body: { rows: [row('C-1'), row('C-2'), row('C-1', { program: 'pgwp' })], dryRun: false } }));
     assert.equal(res.body.created, 1);
@@ -388,6 +400,16 @@ describe('POST /profiles', () => {
     const second = await call(event('POST /profiles', { body: { ...body, pnpProvince: 'BC' } }));
     assert.equal(second.status, 409);
     assert.equal(store.profiles.get(`${TENANT}|C-7`)?.pnpProvince, 'ON');
+  });
+
+  it('rejects a SIN-shaped client id without writing or echoing it', async () => {
+    for (const clientId of ['123456789', '123-456-789', '123-45-6789']) {
+      const res = await call(event('POST /profiles', { body: { clientId, program: 'pnp', status: 'active', consentConfirmed: true } }));
+      assert.equal(res.status, 400, clientId);
+      assert.deepEqual(res.body.errors, ['client-id-looks-like-sin'], clientId);
+      assert.ok(!res.raw.includes(clientId), `response leaked ${clientId}`);
+    }
+    assert.equal(store.writes.length, 0);
   });
 
   it('rejects a body with a forbidden key', async () => {
