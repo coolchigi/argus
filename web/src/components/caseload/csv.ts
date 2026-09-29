@@ -32,6 +32,12 @@ export const OPTIONAL_COLUMNS = [
   "pnp_province",
   "intended_study_level",
   "pal_on_file",
+  "pgp_sponsor_status",
+  "dli_type",
+  "study_start_date",
+  "study_permit_applied_date",
+  "principal_pr_pathway",
+  "principal_pr_applied",
 ] as const;
 
 export const FORBIDDEN_COLUMNS = [
@@ -150,4 +156,18 @@ export function parseImport(text: string): ParsedImport {
   return { ok: true, columns, rows };
 }
 
-export const TEMPLATE_CSV = `${[...REQUIRED_COLUMNS, "current_crs_score", "noc_code", "teer_level"].join(",")}\n2026-001,express-entry,active,true,471,21231,1\n`;
+/**
+ * Every column, with one made-up example row per program that has program
+ * facts. A blank cell means the fact doesn't apply or isn't known.
+ */
+const TEMPLATE_ROWS: Array<Record<string, string>> = [
+  { client_id: "2026-001", program: "express-entry", status: "active", consent_confirmed: "true", current_crs_score: "471", noc_code: "21231", teer_level: "1" },
+  { client_id: "2026-002", program: "pgwp", status: "active", consent_confirmed: "true", cip_code: "52.0201", graduation_date: "2026-04-30", study_permit_applied_date: "2024-11-20" },
+  { client_id: "2026-003", program: "study-permit", status: "active", consent_confirmed: "true", intended_study_level: "master", dli_type: "public", study_start_date: "2027-01-11", pal_on_file: "false" },
+  { client_id: "2026-004", program: "pgp", status: "active", consent_confirmed: "true", pgp_sponsor_status: "interest-form-submitted" },
+  { client_id: "2026-005", program: "sowp", status: "active", consent_confirmed: "true", principal_permit_teer: "1", principal_permit_remaining_months: "12", principal_pr_pathway: "none", principal_pr_applied: "false" },
+];
+
+const TEMPLATE_COLUMNS = [...REQUIRED_COLUMNS, ...OPTIONAL_COLUMNS];
+
+export const TEMPLATE_CSV = `${[TEMPLATE_COLUMNS.join(","), ...TEMPLATE_ROWS.map((r) => TEMPLATE_COLUMNS.map((c) => r[c] ?? "").join(","))].join("\n")}\n`;

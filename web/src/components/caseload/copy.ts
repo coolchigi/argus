@@ -36,7 +36,7 @@ export function describeRowError(code: string): string {
   if (ROW_ERRORS[code]) return ROW_ERRORS[code];
   const m = /^([a-z0-9_]+)-(.+)$/.exec(code);
   if (!m) return code;
-  const field = m[1].replace(/_/g, " ").replace(/\bcrs\b/, "CRS").replace(/\bclb\b/, "CLB").replace(/\bnoc\b/, "NOC").replace(/\bteer\b/, "TEER").replace(/\bcip\b/, "CIP").replace(/\bpgp\b/, "PGP").replace(/\bpnp\b/, "PNP").replace(/\bpal\b/, "PAL").replace(/\blico\b/, "LICO");
+  const field = m[1].replace(/_/g, " ").replace(/\bcrs\b/, "CRS").replace(/\bclb\b/, "CLB").replace(/\bnoc\b/, "NOC").replace(/\bteer\b/, "TEER").replace(/\bcip\b/, "CIP").replace(/\bpgp\b/, "PGP").replace(/\bpnp\b/, "PNP").replace(/\bpal\b/, "PAL").replace(/\blico\b/, "LICO").replace(/\bdli\b/, "DLI").replace(/\bpr\b/, "PR");
   const rule = m[2].replace(/-/g, " ");
   return `${field.charAt(0).toUpperCase()}${field.slice(1)} ${rule}`;
 }

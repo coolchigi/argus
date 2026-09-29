@@ -13,6 +13,8 @@ import { CLIENT_STATUSES, type ClientStatus, type CreateProfileRequest } from "@
 import { CONSENT_LABEL, PII_WARNING, buttonPrimary, buttonSecondary, describeRowError, fieldClass } from "./copy";
 import { clientHref } from "./caseload-table";
 import { SIN_SHAPED_ID_MESSAGE, looksLikeSinOrSsn } from "./client-id";
+import { ProfileFieldInput } from "./profile-field-input";
+import { ADD_FORM_ATTRS, PROFILE_FIELDS, fromDraft, type EditableAttr } from "./profile-fields";
 
 const STATUS_LABELS: Record<ClientStatus, string> = { active: "Active", submitted: "Submitted", closed: "Closed" };
 
@@ -22,9 +24,10 @@ type Props = {
 };
 
 /**
- * One client by hand. Case number, program and status, plus the three fields
- * the caseload table shows. Everything else the Analyst reads comes in
- * through a CSV import or a later edit.
+ * One client by hand. Case number, program and status, the three fields the
+ * caseload table shows, and the sponsor, DLI, study permit and PR pathway
+ * facts for the chosen program. Everything else comes in through a CSV import or
+ * Edit details on the client page.
  */
 export function AddClientDialog({ open, onOpenChange }: Props) {
   const router = useRouter();
@@ -46,7 +49,10 @@ export function AddClientDialog({ open, onOpenChange }: Props) {
   const [noc, setNoc] = useState("");
   const [teer, setTeer] = useState("");
   const [consent, setConsent] = useState(false);
+  const [extra, setExtra] = useState<Partial<Record<EditableAttr, string>>>({});
   const [error, setError] = useState<string | null>(null);
+  const programFields = PROFILE_FIELDS.filter((f) => ADD_FORM_ATTRS.includes(f.attr) && f.programs.includes(program));
+  const extraId = useId();
   // Checked as they type. The guardrail would block every assessment for this client.
   const sinShaped = looksLikeSinOrSsn(clientId);
 
@@ -58,6 +64,7 @@ export function AddClientDialog({ open, onOpenChange }: Props) {
     setNoc("");
     setTeer("");
     setConsent(false);
+    setExtra({});
     setError(null);
     create.reset();
   }
@@ -70,6 +77,11 @@ export function AddClientDialog({ open, onOpenChange }: Props) {
     if (crs.trim()) body.currentCrsScore = Number(crs);
     if (noc.trim()) body.nocCode = noc.trim();
     if (teer.trim()) body.teerLevel = Number(teer);
+    // Only the fields shown for the chosen program. A value typed under another program stays behind.
+    for (const f of programFields) {
+      const v = fromDraft(f, extra[f.attr] ?? "");
+      if (v !== null) (body as Record<string, unknown>)[f.attr] = v;
+    }
     try {
       const res = await create.mutateAsync(body);
       toast.success(`${res.client.clientId} added`);
@@ -176,6 +188,20 @@ export function AddClientDialog({ open, onOpenChange }: Props) {
               <input id={ids.teer} inputMode="numeric" pattern="[0-5]" maxLength={1} value={teer} onChange={(e) => setTeer(e.target.value)} className={`${fieldClass} font-mono`} />
             </div>
           </div>
+
+          {programFields.length > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              {programFields.map((f) => (
+                <ProfileFieldInput
+                  key={f.attr}
+                  id={`${extraId}-${f.attr}`}
+                  field={f}
+                  value={extra[f.attr] ?? ""}
+                  onChange={(v) => setExtra((d) => ({ ...d, [f.attr]: v }))}
+                />
+              ))}
+            </div>
+          )}
 
           <label htmlFor={ids.consent} className="flex items-start gap-2.5 text-[13px] text-ink-1">
             <input

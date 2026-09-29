@@ -47,9 +47,20 @@ export type BriefRow = {
   topic: string;
   status: string;
   sentAt: string | null;
+  /** The public receipt fingerprint of a brief Argus sent. */
+  sentBodyHash?: string | null;
   createdAt: string | null;
   updatedAt: string | null;
 };
+
+/**
+ * A brief is delivered once Argus sent it, or once the consultant copied it
+ * into their own mail client (`sent-externally`). Either one clears the
+ * action for that client.
+ */
+export function isDelivered(status: string): boolean {
+  return status === 'sent' || status === 'sent-externally';
+}
 
 export type CorrectionRow = {
   correctionKey: string;
@@ -233,7 +244,7 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
     let briefsUnsent = 0;
     let awaitingBrief = 0;
     for (const { current, prior } of clients) {
-      const sent = [current, ...prior].some((a) => (briefsByAssessment.get(a.assessmentKey) ?? []).some((b) => b.status === 'sent'));
+      const sent = [current, ...prior].some((a) => (briefsByAssessment.get(a.assessmentKey) ?? []).some((b) => isDelivered(b.status)));
       if (sent) briefsSent += 1;
       else if ((briefsByAssessment.get(current.assessmentKey) ?? []).length > 0) briefsUnsent += 1;
       if (current.isAffected && !sent) awaitingBrief += 1;
@@ -380,8 +391,8 @@ function pickBrief(briefs: BriefRow[]): BriefRow | null {
       best = b;
       continue;
     }
-    const bestSent = best.status === 'sent';
-    const nextSent = b.status === 'sent';
+    const bestSent = isDelivered(best.status);
+    const nextSent = isDelivered(b.status);
     if (nextSent && !bestSent) best = b;
     else if (nextSent === bestSent && (b.createdAt ?? '') > (best.createdAt ?? '')) best = b;
   }
@@ -403,7 +414,7 @@ export function buildEventImpacts(rows: Row[], briefs: BriefRow[], corrections: 
   const clients = splitCurrent(withKeys).map(({ current, prior }) => {
     const r = current.row;
     const profile = profiles.get(current.clientId);
-    const sentBrief = pickBrief([current, ...prior].flatMap((a) => (briefsByAssessment.get(a.assessmentKey) ?? []).filter((b) => b.status === 'sent')));
+    const sentBrief = pickBrief([current, ...prior].flatMap((a) => (briefsByAssessment.get(a.assessmentKey) ?? []).filter((b) => isDelivered(b.status))));
     const brief = sentBrief ?? pickBrief(briefsByAssessment.get(current.assessmentKey) ?? []);
     return {
       clientId: current.clientId,
@@ -484,9 +495,8 @@ export function buildActivity(
       ref: { kind: 'brief', id: b.briefId },
       eventId: eventByAssessment.get(b.assessmentKey) ?? null,
       clientId: b.clientId || null,
-      // The sent-body hash can't be verified on the public receipt page yet
-      // (PHASE8_PLAN B4), so it isn't offered as a fingerprint.
-      fingerprint: null,
+      // The public receipt page finds a sent brief by this hash.
+      fingerprint: b.sentBodyHash ?? null,
     });
   }
 
@@ -505,10 +515,13 @@ export function buildActivity(
   }
 
   // consultant-manual rows mirror a brief send, which is already listed above.
+  // consultant-copy rows record a brief copied out by the consultant, which
+  // isn't an email Argus sent.
   for (const al of alerts) {
     const at = str(al.timestamp);
     const briefId = str(al.briefId);
-    if (!at || str(al.channel) === 'consultant-manual') continue;
+    const channel = str(al.channel);
+    if (!at || channel === 'consultant-manual' || channel === 'consultant-copy') continue;
     const brief = briefById.get(briefId);
     const topic = brief?.topic ?? '';
     items.push({

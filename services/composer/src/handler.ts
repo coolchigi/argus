@@ -7,6 +7,7 @@ import type { DynamoDBStreamEvent, DynamoDBRecord } from 'aws-lambda';
 import { randomUUID } from 'node:crypto';
 import { describeGuardrailBlock, guarded } from './guardrail';
 import { ruleWindow } from './rule-window';
+import { elapsedMs, recordStep } from './telemetry';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -17,6 +18,8 @@ const BRIEFS_TABLE = requiredEnv('BRIEFS_TABLE');
 const COMPOSER_MODEL = requiredEnv('BEDROCK_COMPOSER_MODEL');
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
+// Optional on purpose: a missing telemetry table must never stop a draft.
+const AUDIT_TRAIL_TABLE = process.env.AUDIT_TRAIL_TABLE;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -83,7 +86,24 @@ async function processOne(record: DynamoDBRecord, runId: string): Promise<'compo
   if (!image) return 'skipped';
 
   const assessment = unmarshall(image as Parameters<typeof unmarshall>[0]) as Assessment;
+  const startedAt = performance.now();
+  let outcome: 'drafted' | 'no-brief-needed' | 'failed' = 'failed';
+  try {
+    const result = await composeOne(assessment, runId);
+    outcome = result === 'composed' ? 'drafted' : 'no-brief-needed';
+    return result;
+  } finally {
+    await recordStep(
+      ddb,
+      AUDIT_TRAIL_TABLE,
+      { kind: 'assessment', rcicId: assessment.rcicId, policyEventId: assessment.policyEventId, clientId: assessment.clientId },
+      { agent: 'composer', modelId: COMPOSER_MODEL, durationMs: elapsedMs(startedAt), outcome },
+      log,
+    );
+  }
+}
 
+async function composeOne(assessment: Assessment, runId: string): Promise<'composed' | 'skipped'> {
   if (!assessment.isAffected || assessment.impactType === 'none') {
     log('info', 'skip-non-impact', {
       runId,
