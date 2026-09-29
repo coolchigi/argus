@@ -5,6 +5,7 @@ import { use, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { describeCorrectionError } from "@/lib/correction-error";
 import type { Impact, ImpactType, Confidence } from "@/lib/argus-types";
 import { Input } from "@/components/ui/input";
 import { SectionLabel } from "@/components/argus/section-label";
@@ -190,7 +191,7 @@ function CorrectionForm({ assessmentKey, original }: { assessmentKey: string; or
       setOpen(false);
       setReasoning("");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "correction-failed");
+      toast.error(describeCorrectionError(err instanceof Error ? err.message : "correction-failed"));
     } finally {
       setBusy(false);
     }
