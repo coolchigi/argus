@@ -277,6 +277,12 @@ export function DataRetentionSection() {
           Closing a client in your caseload stops new assessments for them and starts that clock. For each client, Argus
           holds the case number you gave it and the program details in your import.
         </p>
+        <p>
+          <Link href="/records" className="text-brand-ink underline underline-offset-4 hover:text-ink-1">
+            Download your signed records
+          </Link>{" "}
+          for any date range, to file with your own client records.
+        </p>
       </div>
     </SettingsSection>
   );

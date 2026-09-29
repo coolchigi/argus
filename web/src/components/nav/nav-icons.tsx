@@ -8,6 +8,7 @@ export type NavIconName =
   | "briefs"
   | "verify"
   | "settings"
+  | "records"
   | "setup";
 
 /** 14px line icons ported from the Figma sidebar (web/design/User engagement/src/App.tsx). */
@@ -80,6 +81,14 @@ export function NavIcon({ name, className }: { name: NavIconName; className?: st
             stroke="currentColor"
             strokeWidth="1.1"
           />
+        </svg>
+      );
+    case "records":
+      return (
+        <svg {...common}>
+          <rect x="1" y="2" width="12" height="3" stroke="currentColor" strokeWidth="1.2" />
+          <path d="M2 5v7h10V5" stroke="currentColor" strokeWidth="1.2" />
+          <line x1="5.5" y1="7.5" x2="8.5" y2="7.5" stroke="currentColor" strokeWidth="1.2" />
         </svg>
       );
     case "setup":
