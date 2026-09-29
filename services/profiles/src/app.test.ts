@@ -218,6 +218,28 @@ describe('POST /profiles/bulk per-row errors', () => {
     assert.equal(store.profiles.size, 1);
   });
 
+  it('imports the permit, sponsor and PR pathway columns and returns them on the detail view', async () => {
+    const rows = [
+      { client_id: 'C-PGP', program: 'pgp', status: 'active', consent_confirmed: 'yes', pgp_sponsor_status: 'no-interest-form' },
+      { client_id: 'C-SP', program: 'study-permit', status: 'active', consent_confirmed: 'yes', dli_type: 'public', study_start_date: '2027-01-11' },
+      { client_id: 'C-PGWP', program: 'pgwp', status: 'active', consent_confirmed: 'yes', study_permit_applied_date: '2024-11-20' },
+      { client_id: 'C-OWP', program: 'sowp', status: 'active', consent_confirmed: 'yes', principal_pr_pathway: 'none', principal_pr_applied: 'false' },
+      { client_id: 'C-BAD', program: 'study-permit', status: 'active', consent_confirmed: 'yes', dli_type: 'college' },
+    ];
+    const res = await call(event('POST /profiles/bulk', { body: { rows, dryRun: false } }));
+    assert.equal(res.status, 200);
+    assert.equal(res.body.created, 4);
+    assert.deepEqual(res.body.rejected, [{ row: 5, clientId: 'C-BAD', errors: ['dli_type-must-be-a-listed-value'] }]);
+
+    const detail = async (id: string) => (await call(event('GET /profiles/{id}', { id }))).body.client;
+    assert.equal((await detail('C-PGP')).pgpSponsorStatus, 'no-interest-form');
+    const sp = await detail('C-SP');
+    assert.deepEqual([sp.dliType, sp.studyStartDate], ['public', '2027-01-11']);
+    assert.equal((await detail('C-PGWP')).studyPermitAppliedDate, '2024-11-20');
+    const owp = await detail('C-OWP');
+    assert.deepEqual([owp.principalPrPathway, owp.principalPrApplied], ['none', false]);
+  });
+
   it('treats a missing dryRun as a dry run', async () => {
     const res = await call(event('POST /profiles/bulk', { body: { rows: [row('C-9')] } }));
     assert.equal(res.body.dryRun, true);

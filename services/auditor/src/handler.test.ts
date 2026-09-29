@@ -223,3 +223,27 @@ describe('Auditor few-shot prompt', () => {
     assert.match(fewShotBodies(req)[0], /Consultant reasoning: reason g/);
   });
 });
+
+describe('Auditor sees the whole client profile', () => {
+  it('puts the permit, sponsor and PR pathway fields in the guarded profile block', async () => {
+    // These fields exist so the Auditor can decide cases it used to reject
+    // for thin profiles. Filtering the profile would bring those rejections back.
+    const clientProfile = {
+      clientId: 'c1',
+      program: 'sowp',
+      pgpSponsorStatus: 'interest-form-submitted',
+      dliType: 'private',
+      studyStartDate: '2027-01-11',
+      studyPermitAppliedDate: '2024-11-20',
+      principalPrPathway: 'none',
+      principalPrApplied: false,
+    };
+    const req = await audit({ clientProfile });
+    const content = req.messages?.[0].content ?? [];
+    const labelAt = content.findIndex((b) => typeof b.text === 'string' && b.text.startsWith('CLIENT PROFILE'));
+    const block = content[labelAt + 1];
+    const text = block?.guardContent && 'text' in block.guardContent ? block.guardContent.text?.text : undefined;
+    assert.ok(labelAt >= 0 && text, 'the profile rides in a guarded block after its label');
+    assert.deepEqual(JSON.parse(text), clientProfile);
+  });
+});
