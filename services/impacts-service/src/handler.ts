@@ -12,11 +12,17 @@ const bedrock = new BedrockRuntimeClient({});
 const IMPACT_ASSESSMENTS_TABLE = requiredEnv('IMPACT_ASSESSMENTS_TABLE');
 const TRAINING_CORRECTIONS_TABLE = requiredEnv('TRAINING_CORRECTIONS_TABLE');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
+const BRIEFS_TABLE = requiredEnv('BRIEFS_TABLE');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
 const GUARDRAIL_ID = requiredEnv('BEDROCK_GUARDRAIL_ID');
 const GUARDRAIL_VERSION = requiredEnv('BEDROCK_GUARDRAIL_VERSION');
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
+
+// Anchor and briefs-service both call KMS Sign with MessageType DIGEST over
+// the SHA-256 of the canonical payload. Public receipts name the scheme so a
+// later signing change can't be confused with this one.
+const SIGNATURE_SCHEME = 'kms-digest-v1';
 
 let cachedPublicKey: { pem: string; keyId: string } | null = null;
 
@@ -34,6 +40,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (routeKey === 'GET /impacts/{id}') return json(200, await getImpact(rcicId, decodePathParam(event, 'id')));
     if (routeKey === 'GET /impacts/{id}/audit-signature') return json(200, await getAuditSignature(rcicId, decodePathParam(event, 'id')));
     if (routeKey === 'POST /impacts/{id}/correction') return json(200, await postCorrection(rcicId, decodePathParam(event, 'id'), parseBody(event)));
+    if (routeKey === 'GET /impacts/{id}/corrections') return json(200, await listCorrections(rcicId, decodePathParam(event, 'id')));
+    if (routeKey === 'GET /corrections') return json(200, await listCorrections(rcicId, null));
     return json(404, { error: 'route-not-found', routeKey });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -140,6 +148,32 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
   return { correction: item };
 }
 
+/**
+ * The consultant's own corrections, newest first. With an assessmentKey, only
+ * the ones filed on that assessment: correctionKey is
+ * `${assessmentKey}#${correctedAt}`, so a begins_with on the sort key inside
+ * the tenant partition finds them without a scan.
+ */
+async function listCorrections(rcicId: string, assessmentKey: string | null): Promise<{ corrections: Record<string, unknown>[] }> {
+  const items: Record<string, unknown>[] = [];
+  let startKey: Record<string, unknown> | undefined;
+  do {
+    const res = await ddb.send(
+      new QueryCommand({
+        TableName: TRAINING_CORRECTIONS_TABLE,
+        KeyConditionExpression: assessmentKey === null ? 'rcicId = :r' : 'rcicId = :r AND begins_with(correctionKey, :p)',
+        ExpressionAttributeValues: assessmentKey === null ? { ':r': rcicId } : { ':r': rcicId, ':p': `${assessmentKey}#` },
+        ScanIndexForward: false,
+        ExclusiveStartKey: startKey,
+      }),
+    );
+    items.push(...(res.Items ?? []));
+    startKey = res.LastEvaluatedKey;
+  } while (startKey);
+  items.sort((a, b) => String(b.correctedAt ?? '').localeCompare(String(a.correctedAt ?? '')));
+  return { corrections: items };
+}
+
 // The Auditor sends every stored correction to Bedrock inside a guarded
 // block, and the guardrail blocks client names. A correction that names a
 // client would block every audit for this consultant until it ages out, so
@@ -193,7 +227,9 @@ async function publicVerify(canonicalHash: string): Promise<Record<string, unkno
   );
   const gsiHit = (gsi.Items ?? [])[0];
   if (!gsiHit || typeof gsiHit.rcicId !== 'string' || typeof gsiHit.assessmentKey !== 'string') {
-    throw httpError(404, 'assessment-not-found');
+    // Not an assessment. The link in a sent brief's email footer carries the
+    // brief's sent-body hash, so look there next.
+    return publicVerifyBrief(cleanHash);
   }
 
   const full = await ddb.send(
@@ -207,6 +243,8 @@ async function publicVerify(canonicalHash: string): Promise<Record<string, unkno
 
   const publicKey = await loadPublicKey();
   return {
+    kind: 'assessment',
+    scheme: SIGNATURE_SCHEME,
     fingerprint: cleanHash,
     topic: String(item.topic ?? ''),
     signedAt: String(item.timestamp ?? ''),
@@ -224,6 +262,50 @@ async function publicVerify(canonicalHash: string): Promise<Record<string, unkno
     },
     // Deliberately omitted: rcicId, clientId, assessmentKey, narrative,
     // recommendedAction, ruleHash. This endpoint is for signature proof only.
+  };
+}
+
+/**
+ * Public receipt for a sent brief, found by its sent-body hash. Same shape
+ * as the assessment receipt. Never returns the body, the recipient hash or
+ * domain, the client or the sender.
+ */
+async function publicVerifyBrief(cleanHash: string): Promise<Record<string, unknown>> {
+  const gsi = await ddb.send(
+    new QueryCommand({
+      TableName: BRIEFS_TABLE,
+      IndexName: 'bySentBodyHash',
+      KeyConditionExpression: 'sentBodyHash = :h',
+      ExpressionAttributeValues: { ':h': cleanHash },
+      Limit: 1,
+    }),
+  );
+  const hit = (gsi.Items ?? [])[0];
+  if (!hit || typeof hit.rcicId !== 'string' || typeof hit.briefId !== 'string') throw httpError(404, 'receipt-not-found');
+
+  const full = await ddb.send(new GetCommand({ TableName: BRIEFS_TABLE, Key: { rcicId: hit.rcicId, briefId: hit.briefId } }));
+  const item = full.Item;
+  if (!item || item.sentBodyHash !== cleanHash || typeof item.sentSignature !== 'string') throw httpError(404, 'receipt-not-found');
+
+  const publicKey = await loadPublicKey();
+  return {
+    kind: 'brief',
+    scheme: SIGNATURE_SCHEME,
+    fingerprint: cleanHash,
+    topic: String(item.topic ?? ''),
+    signedAt: String(item.sentAt ?? ''),
+    signatureAlgorithm: String(item.sentSignatureAlgorithm ?? 'ECDSA_SHA_256'),
+    canonicalHash: cleanHash,
+    signatureBase64: item.sentSignature,
+    signingKeyId: typeof item.sentSigningKeyId === 'string' ? item.sentSigningKeyId : publicKey.keyId,
+    publicKeyPem: publicKey.pem,
+    verification: {
+      algorithm: 'ECDSA_SHA_256',
+      curve: 'P-256',
+      messageIsHex: true,
+      messageIsHash: true,
+      how: 'Decode signatureBase64 from base64; decode canonicalHash from hex; verify with the P-256 public key.',
+    },
   };
 }
 

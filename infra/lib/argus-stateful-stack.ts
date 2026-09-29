@@ -227,6 +227,16 @@ export class ArgusStatefulStack extends cdk.Stack {
       sortKey: { name: 'rcicId', type: dynamodb.AttributeType.STRING },
       projectionType: dynamodb.ProjectionType.ALL,
     });
+    // Public receipt lookup for sent briefs. The email footer links to
+    // /verify/{sentBodyHash}, and the public verify route falls back to this
+    // index when no assessment has the hash. KEYS_ONLY: the route reads the
+    // row by key and returns signature material only. Adding a GSI updates
+    // the table in place.
+    this.briefsTable.addGlobalSecondaryIndex({
+      indexName: 'bySentBodyHash',
+      partitionKey: { name: 'sentBodyHash', type: dynamodb.AttributeType.STRING },
+      projectionType: dynamodb.ProjectionType.KEYS_ONLY,
+    });
 
     // Policy corpus. Snapshots of IRCC pages plus embedding-source markdown.
     this.policyCorpusBucket = new s3.Bucket(this, 'PolicyCorpusBucket', {
