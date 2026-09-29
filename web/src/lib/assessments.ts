@@ -33,7 +33,8 @@ type RuleClient = { ruleHash?: string | null; policyEventId?: string | null; cli
  * A consultant review carries no stance, so reviewing clears the first.
  */
 export function actionReasonOf(current: Impact, briefDelivered: boolean): ActionReason | null {
-  if (!isReview(current) && auditorStanceOf(current)?.stance === "disagree") return "auditor-disagrees";
+  // auditorStanceOf is null on a review.
+  if (auditorStanceOf(current)?.stance === "disagree") return "auditor-disagrees";
   if (current.isAffected && !briefDelivered) return "brief-needed";
   return null;
 }
