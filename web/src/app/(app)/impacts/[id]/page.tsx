@@ -15,7 +15,9 @@ import { Input } from "@/components/ui/input";
 import { SectionLabel } from "@/components/argus/section-label";
 import { Textarea } from "@/components/ui/textarea";
 import { SignatureReceipt } from "@/components/signature-receipt";
-import { AgentLineage } from "@/components/agent-lineage";
+import { AgentLineage, useLiveRun } from "@/components/agent-lineage";
+import { LearnedFromYou } from "@/components/learned-from-you";
+import { useAssessmentLineage } from "@/lib/queries";
 import { CitationChips } from "@/components/citation-chips";
 import { formatDelta, formatRelative } from "@/lib/format";
 import { humanizeImpactType, humanizeTopic } from "@/lib/humanize";
@@ -73,6 +75,8 @@ export default function ImpactDetailPage({ params }: { params: Promise<{ id: str
 function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: string }) {
   const title = humanizeTopic(impact.topic);
   useBreadcrumbLabel(`${impact.clientId} · ${title}`);
+  const lineage = useAssessmentLineage(assessmentKey);
+  const live = useLiveRun(impact.policyEventId, lineage.data);
   const eventId = impact.ruleHash || impact.policyEventId;
   const event = usePolicyEvent(eventId, { enabled: !!eventId });
   const briefs = useBriefs();
@@ -124,7 +128,8 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
           </p>
         )}
 
-        <AgentLineage />
+        <AgentLineage policyEventId={impact.policyEventId} lineage={lineage.data} live={live} />
+        <LearnedFromYou correctionKeys={lineage.data?.fewShotCorrectionKeys ?? []} />
 
         {/* A persistent 2px danger rail once the consultant has corrected this assessment. */}
         <div className={cn("relative space-y-8", corrected && "pl-4")}>
@@ -156,6 +161,7 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
             )}
           </NumberedSection>
 
+          <div id="corrections" className="scroll-mt-6">
           <NumberedSection number={3} title="Corrections">
             {corrections.error ? (
               <InlineError
@@ -171,6 +177,7 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
               <CorrectionForm assessmentKey={assessmentKey} original={impact} />
             </div>
           </NumberedSection>
+          </div>
         </div>
       </div>
 
