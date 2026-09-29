@@ -53,6 +53,7 @@ jobs:
           - auditor
           - briefs-service
           - composer
+          - demo
           - impacts-service
           - me
           - policy-events
