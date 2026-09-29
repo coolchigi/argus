@@ -178,6 +178,36 @@ export function NotificationsSection({
   );
 }
 
+export function PublicReceiptsSection({
+  me,
+  draft,
+  onChange,
+}: {
+  me: MeResponse;
+  draft: SettingsDraft;
+  onChange: (patch: Partial<SettingsDraft>) => void;
+}) {
+  const name = me.consultant.displayName ?? "your name";
+  const license = me.consultant.rcicLicense ?? me.consultant.rcicId;
+  return (
+    <SettingsSection
+      id="public-receipts"
+      title="Public receipts"
+      description="Anyone with a receipt link can check the signature. Clients never appear on a receipt."
+    >
+      <div className="border border-hairline bg-card px-5 py-3.5">
+        <Switch
+          checked={draft.showIdentityOnPublicReceipts}
+          onCheckedChange={(checked) => onChange({ showIdentityOnPublicReceipts: checked })}
+          label="Show my name on receipts"
+          description={`Receipts read "Signed for ${name}, RCIC ${license}". Off until you turn it on.`}
+          className="items-center"
+        />
+      </div>
+    </SettingsSection>
+  );
+}
+
 function groupFingerprint(hex: string): string {
   return (hex.toLowerCase().match(/.{1,4}/g) ?? []).join(" ");
 }
@@ -276,6 +306,12 @@ export function DataRetentionSection() {
         <p>
           Closing a client in your caseload stops new assessments for them and starts that clock. For each client, Argus
           holds the case number you gave it and the program details in your import.
+        </p>
+        <p>
+          <Link href="/records" className="text-brand-ink underline underline-offset-4 hover:text-ink-1">
+            Download your signed records
+          </Link>{" "}
+          for any date range, to file with your own client records.
         </p>
       </div>
     </SettingsSection>

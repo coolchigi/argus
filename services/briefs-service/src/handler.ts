@@ -1,11 +1,12 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { KMSClient, SignCommand } from '@aws-sdk/client-kms';
+import { GetPublicKeyCommand, KMSClient, SignCommand } from '@aws-sdk/client-kms';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { createHash, randomUUID } from 'node:crypto';
+import { bumpPublicCounter } from './public-counter';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
@@ -18,10 +19,25 @@ const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const POLICY_CORPUS_BUCKET = requiredEnv('POLICY_CORPUS_BUCKET');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
+const PUBLIC_COUNTERS_TABLE = process.env.PUBLIC_COUNTERS_TABLE;
 const DEFAULT_FROM_EMAIL = requiredEnv('DEFAULT_FROM_EMAIL');
 const BATCH_SEND_MAX = Number(process.env.BATCH_SEND_MAX ?? '25');
 const ARCHIVE_LINK_TTL_SECONDS = Number(process.env.ARCHIVE_LINK_TTL_SECONDS ?? String(7 * 24 * 60 * 60));
 const HEAD_CHECK_TIMEOUT_MS = 3_000;
+// Where the "Verify this message" link in the email footer points. The web
+// app serves /verify/{hash} for assessment and brief receipts alike.
+const PUBLIC_BASE_URL = (process.env.ARGUS_PUBLIC_BASE_URL || 'https://main.d270cjhakw6y7j.amplifyapp.com').replace(/\/+$/, '');
+// Relay sending: From "Name via Argus <relay>", Reply-To the consultant. Off
+// until the relay domain is verified in SES. While it's off, From is the
+// consultant's verified sender, as before.
+const RELAY_ENABLED = process.env.BRIEFS_RELAY_ENABLED === 'true';
+const RELAY_FROM_EMAIL = process.env.BRIEFS_RELAY_FROM_EMAIL ?? '';
+// Brief sends sign the same way Anchor does: KMS Sign, MessageType DIGEST,
+// over the SHA-256 of the canonical payload.
+const SIGNATURE_SCHEME = 'kms-digest-v1';
+const SIGNATURE_ALGORITHM = 'ECDSA_SHA_256';
+
+let cachedPublicKeyPem: string | null = null;
 
 type Citation = {
   sourceUrl: string;
@@ -49,6 +65,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (routeKey === 'GET /briefs') return json(200, await listBriefs(rcicId));
     if (routeKey === 'GET /briefs/{id}') return json(200, await getBrief(rcicId, requireParam(event, 'id')));
     if (routeKey === 'GET /briefs/{id}/archive-link') return json(200, await getArchiveLink(rcicId, requireParam(event, 'id')));
+    if (routeKey === 'GET /briefs/{id}/send-signature') return json(200, await getSendSignature(rcicId, requireParam(event, 'id')));
+    if (routeKey === 'POST /briefs/{id}/copied') return json(200, await markCopied(rcicId, requireParam(event, 'id')));
     if (routeKey === 'PATCH /briefs/{id}') return json(200, await patchBrief(rcicId, requireParam(event, 'id'), parseBody(event)));
     if (routeKey === 'POST /briefs/{id}/send') return json(200, await sendOne(rcicId, requireParam(event, 'id'), parseBody(event)));
     if (routeKey === 'POST /briefs/batch-send') return json(200, await sendBatch(rcicId, parseBody(event)));
@@ -69,8 +87,52 @@ async function listBriefs(rcicId: string): Promise<{ briefs: Record<string, unkn
       ExpressionAttributeValues: { ':r': rcicId },
     }),
   );
-  const items = (res.Items ?? []).map(stripInternal).sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
+  const rows = res.Items ?? [];
+  const severities = await loadSeverities(rows.map((r) => (typeof r.ruleHash === 'string' ? r.ruleHash : '')));
+  const items = rows
+    .map((row): Record<string, unknown> => ({
+      ...stripInternal(row),
+      policyEventId: policyEventIdOf(row),
+      // Sentinel's classification of the rule, read from PolicyRules. Never
+      // derived here, so no threshold lives in this service.
+      severity: severities.get(String(row.ruleHash ?? '')) ?? null,
+    }))
+    .sort((a, b) => String(b.createdAt ?? '').localeCompare(String(a.createdAt ?? '')));
   return { briefs: items };
+}
+
+/** Composer stores policyEventId. A row without it still has assessmentKey = `${policyEventId}#${clientId}`. */
+function policyEventIdOf(row: Record<string, unknown>): string | null {
+  if (typeof row.policyEventId === 'string' && row.policyEventId.length > 0) return row.policyEventId;
+  const key = typeof row.assessmentKey === 'string' ? row.assessmentKey : '';
+  const cut = key.lastIndexOf('#');
+  return cut > 0 ? key.slice(0, cut) : null;
+}
+
+type Severity = 'low' | 'medium' | 'high';
+
+async function loadSeverities(ruleHashes: string[]): Promise<Map<string, Severity>> {
+  const unique = Array.from(new Set(ruleHashes.filter((h) => h.length > 0)));
+  const out = new Map<string, Severity>();
+  // BatchGetItem takes at most 100 keys per call.
+  for (let i = 0; i < unique.length; i += 100) {
+    let keys: Record<string, unknown>[] | undefined = unique.slice(i, i + 100).map((h) => ({ rule_hash: h }));
+    for (let attempt = 0; keys && keys.length > 0 && attempt < 3; attempt += 1) {
+      const res = await ddb.send(
+        new BatchGetCommand({
+          RequestItems: {
+            [POLICY_RULES_TABLE]: { Keys: keys, ProjectionExpression: 'rule_hash, severity' },
+          },
+        }),
+      );
+      for (const r of res.Responses?.[POLICY_RULES_TABLE] ?? []) {
+        const sev = r.severity;
+        if (typeof r.rule_hash === 'string' && (sev === 'low' || sev === 'medium' || sev === 'high')) out.set(r.rule_hash, sev);
+      }
+      keys = res.UnprocessedKeys?.[POLICY_RULES_TABLE]?.Keys as Record<string, unknown>[] | undefined;
+    }
+  }
+  return out;
 }
 
 async function getBrief(rcicId: string, briefId: string): Promise<Record<string, unknown>> {
@@ -100,7 +162,8 @@ async function patchBrief(rcicId: string, briefId: string, body: Record<string, 
   if (Array.isArray(body.suggestedActions)) addField('suggestedActions', body.suggestedActions.filter((a) => typeof a === 'string').slice(0, 5));
   if (sets.length === 0) throw httpError(400, 'no-editable-fields');
 
-  addField('status', 'edited');
+  // A brief the consultant already copied out stays marked as handled.
+  addField('status', existing.Item.status === 'sent-externally' ? 'sent-externally' : 'edited');
   addField('updatedAt', new Date().toISOString());
 
   const res = await ddb.send(
@@ -162,7 +225,7 @@ async function sendOneInternal(rcicId: string, briefId: string, recipient: strin
   const ruleHash = typeof brief.ruleHash === 'string' ? brief.ruleHash : '';
   const emailCitation = await buildCitationForEmail(ruleHash, brief);
 
-  const sender = await resolveSender(rcicId);
+  const { from: sender, replyTo } = await resolveSender(rcicId);
   const recipientHash = sha256(recipient);
   const recipientDomain = recipient.split('@')[1] ?? '';
 
@@ -182,13 +245,13 @@ async function sendOneInternal(rcicId: string, briefId: string, recipient: strin
 
   const textBody = renderEmailText(finalBody, suggestedActions, emailCitation, {
     briefId,
-    signatureAlgorithm: 'ECDSA_SHA_256',
-    canonicalHash: sentBodyHash,
+    verifyUrl: verifyUrlFor(sentBodyHash),
   });
 
   const sesRes = await ses.send(
     new SendEmailCommand({
       FromEmailAddress: sender,
+      ...(replyTo ? { ReplyToAddresses: [replyTo] } : {}),
       Destination: { ToAddresses: [recipient] },
       Content: {
         Simple: {
@@ -205,14 +268,15 @@ async function sendOneInternal(rcicId: string, briefId: string, recipient: strin
       TableName: BRIEFS_TABLE,
       Key: { rcicId, briefId },
       UpdateExpression:
-        'SET #status = :sent, sentBodyMarkdown = :sb, sentBodyHash = :sh, sentSignature = :sig, sentSignatureAlgorithm = :alg, sentAt = :ts, sentRecipientHash = :rh, sentRecipientDomain = :rd, sesMessageId = :m, sender = :sender',
+        'SET #status = :sent, sentBodyMarkdown = :sb, sentBodyHash = :sh, sentSignature = :sig, sentSignatureAlgorithm = :alg, sentSigningKeyId = :kid, sentAt = :ts, sentRecipientHash = :rh, sentRecipientDomain = :rd, sesMessageId = :m, sender = :sender',
       ExpressionAttributeNames: { '#status': 'status' },
       ExpressionAttributeValues: {
         ':sent': 'sent',
         ':sb': finalBody,
         ':sh': sentBodyHash,
         ':sig': sentSignature,
-        ':alg': 'ECDSA_SHA_256',
+        ':alg': SIGNATURE_ALGORITHM,
+        ':kid': SIGNING_KEY_ID,
         ':ts': canonical.sentAt,
         ':rh': recipientHash,
         ':rd': recipientDomain,
@@ -236,11 +300,13 @@ async function sendOneInternal(rcicId: string, briefId: string, recipient: strin
         sesMessageId,
         sender,
         channel: 'consultant-manual',
-        signatureAlgorithm: 'ECDSA_SHA_256',
+        signatureAlgorithm: SIGNATURE_ALGORITHM,
         sentBodyHash,
       },
     }),
   );
+
+  await bumpPublicCounter(ddb, PUBLIC_COUNTERS_TABLE, 'briefs', canonical.sentAt);
 
   log('info', 'brief-sent', {
     rcicId,
@@ -253,11 +319,107 @@ async function sendOneInternal(rcicId: string, briefId: string, recipient: strin
   return { briefId, ok: true, sesMessageId, sentBodyHash };
 }
 
-async function resolveSender(rcicId: string): Promise<string> {
+async function resolveSender(rcicId: string): Promise<{ from: string; replyTo: string | null }> {
   const res = await ddb.send(new GetCommand({ TableName: RCIC_USERS_TABLE, Key: { rcicId } }));
   const email = res.Item?.verifiedSenderEmail;
-  if (typeof email === 'string' && email.includes('@')) return email;
-  return DEFAULT_FROM_EMAIL;
+  const consultantEmail = typeof email === 'string' && email.includes('@') ? email : null;
+  if (RELAY_ENABLED && RELAY_FROM_EMAIL.includes('@')) {
+    const name = typeof res.Item?.displayName === 'string' ? res.Item.displayName : '';
+    return { from: relayFrom(name, RELAY_FROM_EMAIL), replyTo: consultantEmail };
+  }
+  return { from: consultantEmail ?? DEFAULT_FROM_EMAIL, replyTo: null };
+}
+
+/** `"Priya Sandhu via Argus" <briefs@example.ca>`. Quotes, brackets and line breaks in the name are dropped. */
+function relayFrom(displayName: string, relayEmail: string): string {
+  const clean = displayName.replace(/["<>\r\n\\]/g, '').trim();
+  return clean ? `"${clean} via Argus" <${relayEmail}>` : `"Argus" <${relayEmail}>`;
+}
+
+function verifyUrlFor(hash: string): string {
+  return `${PUBLIC_BASE_URL}/verify/${hash}`;
+}
+
+/**
+ * Everything a browser needs to check a sent brief's signature, in the same
+ * shape as GET /impacts/{id}/audit-signature.
+ */
+async function getSendSignature(rcicId: string, briefId: string): Promise<Record<string, unknown>> {
+  const res = await ddb.send(new GetCommand({ TableName: BRIEFS_TABLE, Key: { rcicId, briefId } }));
+  const brief = res.Item;
+  if (!brief) throw httpError(404, 'brief-not-found');
+  if (typeof brief.sentBodyHash !== 'string' || typeof brief.sentSignature !== 'string') throw httpError(404, 'brief-not-signed');
+  return {
+    briefId,
+    canonicalHash: brief.sentBodyHash,
+    signatureBase64: brief.sentSignature,
+    signatureAlgorithm: typeof brief.sentSignatureAlgorithm === 'string' ? brief.sentSignatureAlgorithm : SIGNATURE_ALGORITHM,
+    signingKeyId: typeof brief.sentSigningKeyId === 'string' ? brief.sentSigningKeyId : SIGNING_KEY_ID,
+    publicKeyPem: await loadPublicKeyPem(),
+    sentAt: String(brief.sentAt ?? ''),
+    scheme: SIGNATURE_SCHEME,
+    verification: {
+      algorithm: SIGNATURE_ALGORITHM,
+      curve: 'P-256',
+      messageIsHex: true,
+      messageIsHash: true,
+      how: 'Decode signatureBase64 from base64; decode canonicalHash from hex; verify with the P-256 public key over the hash itself (no second hash).',
+    },
+  };
+}
+
+/**
+ * The consultant copied the brief into their own mail client. Records that
+ * in AlertsTable next to Argus sends and marks the brief handled. Nothing is
+ * signed, because Argus never sees what actually went out.
+ */
+async function markCopied(rcicId: string, briefId: string): Promise<Record<string, unknown>> {
+  const existing = await ddb.send(new GetCommand({ TableName: BRIEFS_TABLE, Key: { rcicId, briefId } }));
+  const brief = existing.Item;
+  if (!brief) throw httpError(404, 'brief-not-found');
+  if (brief.status === 'sent') throw httpError(409, 'brief-already-sent');
+
+  const copiedAt = new Date().toISOString();
+  const res = await ddb
+    .send(
+      new UpdateCommand({
+        TableName: BRIEFS_TABLE,
+        Key: { rcicId, briefId },
+        UpdateExpression: 'SET #status = :s, copiedAt = :at, updatedAt = :at',
+        // A send that lands between the read above and this write wins.
+        ConditionExpression: '#status <> :sent',
+        ExpressionAttributeNames: { '#status': 'status' },
+        ExpressionAttributeValues: { ':s': 'sent-externally', ':at': copiedAt, ':sent': 'sent' },
+        ReturnValues: 'ALL_NEW',
+      }),
+    )
+    .catch((err: unknown) => {
+      if ((err as { name?: string }).name === 'ConditionalCheckFailedException') throw httpError(409, 'brief-already-sent');
+      throw err;
+    });
+  await ddb.send(
+    new PutCommand({
+      TableName: ALERTS_TABLE,
+      Item: {
+        rcicId,
+        timestamp: copiedAt,
+        briefId,
+        clientId: String(brief.clientId ?? ''),
+        channel: 'consultant-copy',
+      },
+    }),
+  );
+  log('info', 'brief-copied', { rcicId, briefId });
+  return stripInternal(res.Attributes ?? {});
+}
+
+async function loadPublicKeyPem(): Promise<string> {
+  if (cachedPublicKeyPem) return cachedPublicKeyPem;
+  const res = await kms.send(new GetPublicKeyCommand({ KeyId: SIGNING_KEY_ID }));
+  if (!res.PublicKey) throw new Error('kms returned no public key');
+  const b64 = Buffer.from(res.PublicKey).toString('base64');
+  cachedPublicKeyPem = `-----BEGIN PUBLIC KEY-----\n${b64.match(/.{1,64}/g)?.join('\n') ?? b64}\n-----END PUBLIC KEY-----\n`;
+  return cachedPublicKeyPem;
 }
 
 async function loadCitation(ruleHash: string, briefFallback: Record<string, unknown> | undefined): Promise<Citation | null> {
@@ -347,7 +509,7 @@ async function getArchiveLink(rcicId: string, briefId: string): Promise<{ archiv
   };
 }
 
-function renderEmailText(body: string, actions: string[], citation: CitationForEmail, meta: { briefId: string; signatureAlgorithm: string; canonicalHash: string }): string {
+function renderEmailText(body: string, actions: string[], citation: CitationForEmail, meta: { briefId: string; verifyUrl: string }): string {
   const parts = [body];
   if (actions.length > 0) {
     parts.push('', 'Suggested actions:', ...actions.map((a) => `- ${a}`));
@@ -365,7 +527,9 @@ function renderEmailText(body: string, actions: string[], citation: CitationForE
   parts.push(
     '',
     '---',
-    `This message was drafted by Argus and edited by your consultant. Assessment hash: ${meta.canonicalHash} (${meta.signatureAlgorithm}). Brief id: ${meta.briefId}.`,
+    'This message was drafted by Argus and edited by your consultant. Argus signed it when it was sent.',
+    `Verify this message: ${meta.verifyUrl}`,
+    `Brief id: ${meta.briefId}`,
   );
   return parts.join('\n');
 }
@@ -405,7 +569,8 @@ function normalizeEmail(v: unknown): string | null {
 function stripInternal(item: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(item)) {
-    if (k === 'sentBodyMarkdown' || k === 'sentSignature' || k === 'sentBodyHash') continue;
+    // sentBodyHash is the public receipt fingerprint, so it goes out.
+    if (k === 'sentBodyMarkdown' || k === 'sentSignature') continue;
     out[k] = v;
   }
   return out;

@@ -110,7 +110,7 @@ const RULE_FIELDS = [
   'captured_at',
 ];
 
-const BRIEF_FIELDS = ['briefId', 'assessmentKey', 'clientId', 'topic', 'status', 'sentAt', 'createdAt', 'updatedAt'];
+const BRIEF_FIELDS = ['briefId', 'assessmentKey', 'clientId', 'topic', 'status', 'sentAt', 'sentBodyHash', 'createdAt', 'updatedAt'];
 const CORRECTION_FIELDS = ['correctionKey', 'assessmentKey', 'clientId', 'topic', 'correctedAt'];
 // recipient (the consultant's own email) is deliberately absent.
 const ALERT_FIELDS = ['timestamp', 'briefId', 'clientId', 'channel'];
@@ -265,6 +265,7 @@ async function loadBriefs(rcicId: string): Promise<BriefRow[]> {
     topic: str(r.topic),
     status: str(r.status),
     sentAt: strOrNull(r.sentAt),
+    sentBodyHash: strOrNull(r.sentBodyHash),
     createdAt: strOrNull(r.createdAt),
     updatedAt: strOrNull(r.updatedAt),
   }));

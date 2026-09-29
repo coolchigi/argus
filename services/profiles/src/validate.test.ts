@@ -58,6 +58,11 @@ describe('columns', () => {
     assert.deepEqual(checkColumns([{ ...good, client_name: 'x' }]), { ok: false, error: 'unknown-column', columns: ['client_name'] });
   });
 
+  it('knows the new CSV columns', () => {
+    const cols = { dli_type: 'public', study_start_date: '2027-01-11', study_permit_applied_date: '2024-11-20', pgp_sponsor_status: 'no-interest-form', principal_pr_pathway: 'none', principal_pr_applied: 'false' };
+    assert.deepEqual(checkColumns([{ ...good, ...cols }]), { ok: true });
+  });
+
   it('reports missing required columns', () => {
     const { consent_confirmed: _c, ...rest } = good;
     assert.deepEqual(checkColumns([rest]), { ok: false, error: 'missing-column', columns: ['consent_confirmed'] });
@@ -88,6 +93,43 @@ describe('rows', () => {
     assert.equal(res.clientId, null);
   });
 
+  it('parses the permit, sponsor and PR pathway fields', () => {
+    const res = validateRow({
+      ...good,
+      'PGP Sponsor Status': 'Interest-Form-Submitted',
+      dli_type: 'public',
+      study_start_date: '2027-01-11',
+      study_permit_applied_date: '2024-11-20',
+      principal_pr_pathway: 'none',
+      principal_pr_applied: 'no',
+    });
+    assert.ok(res.ok);
+    assert.deepEqual(res.profile.attributes, {
+      pgpSponsorStatus: 'interest-form-submitted',
+      dliType: 'public',
+      studyStartDate: '2027-01-11',
+      studyPermitAppliedDate: '2024-11-20',
+      principalPrPathway: 'none',
+      principalPrApplied: false,
+    });
+  });
+
+  it('refuses enum values outside the closed set, so free text cannot ride in', () => {
+    const res = validateRow({ ...good, dli_type: 'University of Toronto', pgp_sponsor_status: 'waiting', principal_pr_pathway: 'Express Entry' });
+    assert.ok(!res.ok);
+    assert.deepEqual(res.errors.sort(), [
+      'dli_type-must-be-a-listed-value',
+      'pgp_sponsor_status-must-be-a-listed-value',
+      'principal_pr_pathway-must-be-a-listed-value',
+    ]);
+  });
+
+  it('refuses permit dates that are not yyyy-mm-dd', () => {
+    const res = validateRow({ ...good, study_start_date: 'Jan 2027', study_permit_applied_date: '20/11/2024' });
+    assert.ok(!res.ok);
+    assert.deepEqual(res.errors.sort(), ['study_permit_applied_date-must-be-yyyy-mm-dd', 'study_start_date-must-be-yyyy-mm-dd']);
+  });
+
   it('parses typed attributes', () => {
     const res = validateRow({ ...good, age: '29', current_crs_score: '489', has_job_offer: 'no', teer_level: '1', canadian_work_years: '0.5' });
     assert.ok(res.ok);
@@ -101,6 +143,15 @@ describe('patch', () => {
     assert.deepEqual(validatePatch({ notes: 'x' }), { ok: false, status: 400, error: 'forbidden-column', columns: ['notes'] });
     assert.deepEqual(validatePatch({ nickname: 'x' }), { ok: false, status: 400, error: 'unknown-column', columns: ['nickname'] });
     assert.equal((validatePatch({ clientId: 'C-2' }) as { error: string }).error, 'client-id-is-immutable');
+  });
+
+  it('takes the new fields by their camelCase names and clears them with null', () => {
+    assert.deepEqual(validatePatch({ dliType: 'private', principalPrApplied: true, studyPermitAppliedDate: null }), {
+      ok: true,
+      set: { dliType: 'private', principalPrApplied: true },
+      remove: ['studyPermitAppliedDate'],
+    });
+    assert.deepEqual(validatePatch({ pgpSponsorStatus: 'maybe' }), { ok: false, status: 400, error: 'invalid-fields', errors: ['pgp_sponsor_status-must-be-a-listed-value'] });
   });
 
   it('sets and clears attributes', () => {

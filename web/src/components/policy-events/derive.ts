@@ -86,7 +86,7 @@ export function visibleClients(clients: readonly PolicyEventImpact[], showUnaffe
   return showUnaffected ? [...clients] : clients.filter((c) => c.isAffected);
 }
 
-export type ClientBriefState = "sent" | "edited" | "draft" | "missing" | "not-needed";
+export type ClientBriefState = "sent" | "sent-externally" | "edited" | "draft" | "missing" | "not-needed";
 
 /**
  * Where the client's brief stands. An affected client with no brief row still
@@ -95,6 +95,7 @@ export type ClientBriefState = "sent" | "edited" | "draft" | "missing" | "not-ne
 export function clientBriefState(c: Pick<PolicyEventImpact, "isAffected" | "brief">): ClientBriefState {
   const s = c.brief?.status;
   if (s === "sent") return "sent";
+  if (s === "sent-externally") return "sent-externally";
   if (s === "edited") return "edited";
   if (s === "draft") return "draft";
   // Unknown status strings on a brief row still count as an unsent brief.
@@ -102,9 +103,10 @@ export function clientBriefState(c: Pick<PolicyEventImpact, "isAffected" | "brie
   return c.isAffected ? "missing" : "not-needed";
 }
 
-/** An affected client whose brief hasn't gone out. Mirrors the API's awaitingBrief. */
+/** An affected client whose brief hasn't been sent or copied out. Mirrors the API's awaitingBrief. */
 export function clientNeedsAction(c: Pick<PolicyEventImpact, "isAffected" | "brief">): boolean {
-  return c.isAffected && clientBriefState(c) !== "sent";
+  const state = clientBriefState(c);
+  return c.isAffected && state !== "sent" && state !== "sent-externally";
 }
 
 // ---------------------------------------------------------------------------

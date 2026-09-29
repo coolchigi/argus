@@ -104,6 +104,8 @@ test("brief state separates a missing brief from one that isn't needed", () => {
   assert.equal(clientBriefState(client({ brief: brief("queued") })), "draft");
   assert.equal(clientNeedsAction(client({ brief: brief("draft") })), true);
   assert.equal(clientNeedsAction(client({ brief: brief("sent") })), false);
+  assert.equal(clientBriefState(client({ brief: brief("sent-externally") })), "sent-externally");
+  assert.equal(clientNeedsAction(client({ brief: brief("sent-externally") })), false);
   assert.equal(clientNeedsAction(client({ isAffected: false })), false);
 });
 

@@ -41,6 +41,7 @@ export const NAV_GROUPS: NavGroup[] = [
 
 export const NAV_BOTTOM: NavItem[] = [
   { href: "/settings", label: "Settings", icon: "settings" },
+  { href: "/records", label: "Records", icon: "records" },
   { href: "/setup", label: "Setup guide", icon: "setup", badge: "setup" },
 ];
 
