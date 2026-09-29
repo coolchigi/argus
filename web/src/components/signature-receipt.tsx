@@ -13,7 +13,14 @@ import { cn } from "@/lib/utils";
 import { humanizeSignatureAlgorithm } from "@/lib/humanize";
 
 type Props = {
-  assessmentKey: string;
+  /**
+   * assessment: the ImpactAssessment Anchor signed, loaded by assessmentKey.
+   * brief: the signature briefs-service made when it sent a brief, loaded by
+   * briefId. Both use the same KMS digest scheme.
+   */
+  kind?: "assessment" | "brief";
+  assessmentKey?: string;
+  briefId?: string;
   fingerprintPreview?: string;
   signedAt: string;
   /**
@@ -22,8 +29,10 @@ type Props = {
    */
   autoVerify?: boolean;
   /** Called with the fetched signature material once loaded. */
-  onLoaded?: (sig: AuditSignature) => void;
+  onLoaded?: (sig: ReceiptSignature) => void;
 };
+
+type ReceiptSignature = Omit<AuditSignature, "assessmentKey">;
 
 type Stage =
   | "idle"
@@ -37,7 +46,7 @@ type Stage =
   | "error";
 
 type LoadedState = {
-  sig: AuditSignature | null;
+  sig: ReceiptSignature | null;
   verifiedAt: Date | null;
   message: string | null;
 };
@@ -59,7 +68,9 @@ const REDUCED_STAGE_TIMING = {
  * at 140ms overlap-lag, fingerprint underline sweep at 960ms).
  */
 export function SignatureReceipt({
+  kind = "assessment",
   assessmentKey,
+  briefId,
   fingerprintPreview,
   signedAt,
   autoVerify = false,
@@ -96,9 +107,11 @@ export function SignatureReceipt({
     timers.current = [];
     setStage("verifying");
     try {
-      const sig = await api<AuditSignature>(
-        `/impacts/${encodeURIComponent(assessmentKey)}/audit-signature`,
-      );
+      const path =
+        kind === "brief"
+          ? `/briefs/${encodeURIComponent(briefId ?? "")}/send-signature`
+          : `/impacts/${encodeURIComponent(assessmentKey ?? "")}/audit-signature`;
+      const sig = await api<ReceiptSignature>(path);
       onLoaded?.(sig);
       const ok = await verifyAssessmentSignature({
         canonicalHashHex: sig.canonicalHash,
@@ -110,7 +123,9 @@ export function SignatureReceipt({
           sig,
           verifiedAt: null,
           message:
-            "This signature couldn't be verified. Something is wrong here. Please contact Argus support before relying on this assessment.",
+            kind === "brief"
+              ? "This signature couldn't be verified. Something is wrong here. Please contact Argus support before relying on this send record."
+              : "This signature couldn't be verified. Something is wrong here. Please contact Argus support before relying on this assessment.",
         });
         setStage("invalid");
         return;
@@ -198,7 +213,13 @@ export function SignatureReceipt({
               showHeaderVerified ? "text-seal" : isInvalid ? "text-red" : "text-ink-secondary",
             )}
           >
-            {showHeaderVerified ? "Signature verified" : isInvalid ? "Signature invalid" : "Signature receipt"}
+            {showHeaderVerified
+              ? "Signature verified"
+              : isInvalid
+                ? "Signature invalid"
+                : kind === "brief"
+                  ? "Send receipt"
+                  : "Signature receipt"}
           </span>
         </div>
 
@@ -221,7 +242,7 @@ export function SignatureReceipt({
             )}
           </ReceiptRow>
 
-          <ReceiptRow label="Signed at">
+          <ReceiptRow label={kind === "brief" ? "Sent at" : "Signed at"}>
             <span className="text-[13px] text-ink-primary tabular">{formatDateTime(signedAt)}</span>
           </ReceiptRow>
 

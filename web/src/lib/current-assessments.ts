@@ -1,4 +1,5 @@
 import type { Brief, Impact } from "./argus-types";
+import { isDelivered } from "./briefs.ts";
 
 /**
  * A rule is the policy change, so a pipeline replay of the same rule is a
@@ -29,7 +30,7 @@ export function currentAssessments(all: readonly Impact[]): {
   return { current, priorRuns };
 }
 
-/** A brief sent on any run of a rule covers that client for the rule. */
+/** A brief sent or copied out on any run of a rule covers that client for the rule. */
 export function sentRuleClientKeys(briefs: readonly Brief[]): Set<string> {
-  return new Set(briefs.filter((b) => b.status === "sent").map((b) => ruleClientKey(b)));
+  return new Set(briefs.filter((b) => isDelivered(b.status)).map((b) => ruleClientKey(b)));
 }
