@@ -4,6 +4,7 @@ import { ChevronRight } from "lucide-react";
 import { DataTable, type Column } from "@/components/argus/data-table";
 import { StatusBadge } from "@/components/argus/status-badge";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
+import { humanizeTopic } from "@/lib/humanize";
 import type { PolicyEvent } from "@/lib/types/policy-events";
 
 const COLUMNS: Column<PolicyEvent>[] = [
@@ -15,7 +16,7 @@ const COLUMNS: Column<PolicyEvent>[] = [
   {
     key: "title",
     header: "Change",
-    cell: (e) => <span className="text-ink-1">{e.title}</span>,
+    cell: (e) => <span className="text-ink-1">{humanizeTopic(e.topic)}</span>,
   },
   {
     key: "date",
@@ -79,7 +80,7 @@ export function RecentEventsTable({
           rows={events.slice(0, RECENT_EVENT_ROWS)}
           getRowKey={(e) => e.eventId}
           rowHref={(e) => `/policy-events/${encodeURIComponent(e.eventId)}`}
-          rowLinkLabel={(e) => `${e.ref}, ${e.title}`}
+          rowLinkLabel={(e) => `${e.ref}, ${humanizeTopic(e.topic)}`}
           loading={loading}
           placeholderRows={RECENT_EVENT_ROWS}
           stickyHeader={false}

@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { ArrowLeft, ClipboardCopy, Send } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import type { Brief } from "@/lib/argus-types";
-import { CLIENT_NAME_TOKEN, type SendResult, buildCopyText, describeSendError, findNamedSalutation } from "@/lib/briefs";
+import { CLIENT_NAME_TOKEN, type SendResult, buildCopyText, confirmManualCopy, copyBrief, describeSendError, findNamedSalutation } from "@/lib/briefs";
 import { isNotFound, queryKeys, useBrief, useBriefs, useMarkBriefCopied } from "@/lib/queries";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -18,6 +18,7 @@ import { Fingerprint } from "@/components/argus/fingerprint";
 import { InlineError } from "@/components/argus/inline-error";
 import { CitationChips } from "@/components/citation-chips";
 import { SignatureReceipt } from "@/components/signature-receipt";
+import { ManualCopyDialog } from "@/components/briefs/manual-copy-dialog";
 import { useBreadcrumbLabel } from "@/components/nav/breadcrumb-context";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { humanizeTopic } from "@/lib/humanize";
@@ -84,6 +85,9 @@ function BriefBody({ brief, severity, archive }: { brief: Brief; severity: Brief
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [justSent, setJustSent] = useState(false);
+  // Set when the browser blocks the clipboard. Holds the text the consultant copies by hand.
+  const [manualText, setManualText] = useState<string | null>(null);
+  const [manualError, setManualError] = useState<string | null>(null);
   const markCopied = useMarkBriefCopied(brief.briefId);
   const sent = brief.status === "sent";
 
@@ -131,24 +135,32 @@ function BriefBody({ brief, severity, archive }: { brief: Brief; severity: Brief
     setCopying(true);
     try {
       if (dirty) await save();
-      const text = buildCopyText({ subject, body, actions, clientId: brief.clientId });
-      try {
-        await navigator.clipboard.writeText(text);
-      } catch {
-        toast.error("Your browser blocked the clipboard. Nothing was copied.");
-        return;
-      }
-      try {
-        await markCopied.mutateAsync();
-        toast.success(`Copied. Paste it into your email and replace ${CLIENT_NAME_TOKEN} with your client's name.`);
-      } catch {
-        toast.error("Copied, but Argus couldn't mark the brief handled. Copy again to retry.");
-      }
     } catch (err) {
       toast.error(`Couldn't save before copying: ${err instanceof Error ? err.message : "save-failed"}`);
-    } finally {
       setCopying(false);
+      return;
     }
+    const text = buildCopyText({ subject, body, actions, clientId: brief.clientId });
+    const out = await copyBrief(text, {
+      writeClipboard: (t) => navigator.clipboard.writeText(t),
+      markCopied: () => markCopied.mutateAsync(),
+    });
+    setCopying(false);
+    if (out.kind === "copied") toast.success(`Copied. Paste it into your email and replace ${CLIENT_NAME_TOKEN} with your client's name.`);
+    else if (out.kind === "copied-unmarked") toast.error("Copied, but Argus couldn't mark the brief handled. Copy again to retry.");
+    else {
+      setManualError(null);
+      setManualText(out.text);
+    }
+  }
+
+  async function onConfirmManualCopy() {
+    setManualError(null);
+    const r = await confirmManualCopy(() => markCopied.mutateAsync());
+    if (r === "marked") {
+      setManualText(null);
+      toast.success("Marked as copied.");
+    } else setManualError("Argus couldn't mark the brief handled. Try again.");
   }
 
   async function onSend(e: React.FormEvent) {
@@ -313,32 +325,34 @@ function BriefBody({ brief, severity, archive }: { brief: Brief; severity: Brief
         </section>
       ) : (
         <section aria-label="Send" className="space-y-3 border border-hairline bg-card px-4 py-4">
-          <div className="flex flex-wrap items-center gap-3">
-            <div className="min-w-0 flex-1">
+          <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
+            <div className="min-w-0 sm:min-w-[16rem] sm:flex-1">
               <div className="label">Send it</div>
               <p className="mt-1 text-[12px] text-ink-2">
                 Copy it into your own email and swap {CLIENT_NAME_TOKEN} for the name there. Argus never sees the name.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => void onCopy()}
-              disabled={copying}
-              className="inline-flex h-9 items-center gap-1.5 rounded-sm border border-brand-ink bg-brand px-4 text-[13px] font-medium text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-50"
-            >
-              <ClipboardCopy className="h-3.5 w-3.5" strokeWidth={1.75} />
-              {copying ? "Copying" : "Copy for my email"}
-            </button>
-            <button
-              type="button"
-              onClick={() => setSendOpen((v) => !v)}
-              aria-expanded={sendOpen}
-              aria-controls="send-via-argus"
-              className="inline-flex h-9 items-center gap-1.5 rounded-sm border border-control bg-surface px-3 text-[13px] font-medium text-ink-1 transition-colors hover:bg-sunk"
-            >
-              <Send className="h-3.5 w-3.5" strokeWidth={1.75} />
-              Send and sign via Argus
-            </button>
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <button
+                type="button"
+                onClick={() => void onCopy()}
+                disabled={copying}
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-sm border border-brand-ink bg-brand px-4 text-[13px] font-medium text-on-brand transition-colors hover:bg-brand-hover disabled:opacity-50"
+              >
+                <ClipboardCopy className="h-3.5 w-3.5" strokeWidth={1.75} />
+                {copying ? "Copying" : "Copy for my email"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSendOpen((v) => !v)}
+                aria-expanded={sendOpen}
+                aria-controls="send-via-argus"
+                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-sm border border-control bg-surface px-3 text-[13px] font-medium text-ink-1 transition-colors hover:bg-sunk"
+              >
+                <Send className="h-3.5 w-3.5" strokeWidth={1.75} />
+                Send and sign via Argus
+              </button>
+            </div>
           </div>
           {sendOpen && (
             <form id="send-via-argus" onSubmit={onSend} className="flex flex-wrap items-center gap-2 border-t border-hairline pt-3">
@@ -371,6 +385,16 @@ function BriefBody({ brief, severity, archive }: { brief: Brief; severity: Brief
             </form>
           )}
         </section>
+      )}
+
+      {manualText !== null && (
+        <ManualCopyDialog
+          text={manualText}
+          confirming={markCopied.isPending}
+          error={manualError}
+          onConfirm={() => void onConfirmManualCopy()}
+          onClose={() => setManualText(null)}
+        />
       )}
     </div>
   );
