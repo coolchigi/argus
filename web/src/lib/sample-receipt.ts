@@ -1,13 +1,17 @@
 /**
- * The sample receipt the onboarding wizard verifies. Same hash as the landing
- * page's "Live sample receipt" (src/app/page.tsx), a real signed assessment
- * from the demo tenant with no client data in it. sample-receipt.test.ts fails
- * if the two drift apart.
+ * A real signed assessment from the demo tenant (Express Entry category-based
+ * selection). It resolves through the public verify endpoint and exposes no
+ * client data. The landing page, /verify and the onboarding wizard all use
+ * it. sample-receipt.test.ts fails if the landing page drifts from this hash.
  */
 
 import { verifyAssessmentSignature } from "./signature-verify.ts";
 
 export const SAMPLE_RECEIPT_HASH = "8be968886f7d6f6d9b1b0c1185f00f8e08032546dee5d8f3a1f00c0037c07d7b";
+export const SAMPLE_RECEIPT_TOPIC = "ee-category-based-selection";
+
+/** Where the web app serves the signing key. Relative, so it works on every branch host. */
+export const JWKS_PATH = "/.well-known/jwks.json";
 
 /** The fields of GET /public/verify/{hash} the check needs. */
 export type PublicReceipt = {

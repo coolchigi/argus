@@ -54,6 +54,9 @@ test("a correct signature from a key Argus doesn't sign with fails", async () =>
 });
 
 test("the wizard checks the same receipt the landing page shows", () => {
+  // The landing page takes the hash from this module. A hardcoded hash there
+  // could drift from the one the wizard verifies.
   const landing = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
-  assert.ok(landing.includes(SAMPLE_RECEIPT_HASH), "src/app/page.tsx no longer shows SAMPLE_RECEIPT_HASH. Update one to match the other.");
+  assert.match(landing, /import \{[^}]*\bSAMPLE_RECEIPT_HASH\b[^}]*\} from "@\/lib\/sample-receipt"/, "src/app/page.tsx must import SAMPLE_RECEIPT_HASH from @/lib/sample-receipt");
+  assert.ok(!/\b[0-9a-f]{64}\b/.test(landing), "src/app/page.tsx hardcodes a 64-hex hash. Use SAMPLE_RECEIPT_HASH instead.");
 });

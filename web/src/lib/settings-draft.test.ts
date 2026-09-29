@@ -98,3 +98,18 @@ test("known service errors get their own copy, others a generic line", () => {
   assert.match(describeMeError("concurrent-update"), /another tab/);
   assert.equal(describeMeError("internal-error"), describeMeError(null));
 });
+
+test("showing your name on public receipts is its own change", () => {
+  const off = draftFromMe(me({}, { showIdentityOnPublicReceipts: false }));
+  assert.equal(off.showIdentityOnPublicReceipts, false);
+  const on = { ...off, showIdentityOnPublicReceipts: true };
+  assert.deepEqual(diffDraft(off, on), { preferences: { showIdentityOnPublicReceipts: true } });
+  assert.equal(changeCount(off, on), 1);
+  assert.deepEqual(diffDraft(on, off), { preferences: { showIdentityOnPublicReceipts: false } });
+});
+
+test("a missing identity preference loads as off", () => {
+  const legacy = me();
+  delete (legacy.preferences as Partial<MeResponse["preferences"]>).showIdentityOnPublicReceipts;
+  assert.equal(draftFromMe(legacy).showIdentityOnPublicReceipts, false);
+});

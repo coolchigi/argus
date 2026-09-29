@@ -3,7 +3,7 @@
 import { useId, useState } from "react";
 import { SectionLabel } from "@/components/argus/section-label";
 import { fieldClass } from "@/components/caseload/copy";
-import { PROVINCE_LABELS, validateDraft } from "@/lib/settings-draft";
+import { PROVINCE_LABELS, draftFromMe, validateDraft } from "@/lib/settings-draft";
 import { FIRM_MAX_LENGTH, PROVINCES, type MeResponse, type PatchMeRequest, type Province } from "@/lib/types/me";
 import { cn } from "@/lib/utils";
 import { ContinueButton, StepFrame } from "./step-frame";
@@ -29,7 +29,7 @@ export function StepPractice({
 
   // Settings' own rules, plus both fields filled: the setup guide counts
   // practice details as done only with firm and province.
-  const errors = validateDraft({ firm, province, policyDomains: me.preferences.policyDomains, realtimeAlerts: me.preferences.realtimeAlerts });
+  const errors = validateDraft({ ...draftFromMe(me), firm, province });
   const firmError = errors.firm ?? (touched && firm.trim() === "" ? "Add your firm's name." : undefined);
   const provinceError = errors.province ?? (touched && province === "" ? "Pick the province or territory you practise in." : undefined);
   const ready = firm.trim() !== "" && province !== "" && !errors.firm && !errors.province;

@@ -273,4 +273,17 @@
   [data-print="hide"] {
     display: none !important;
   }
+  /* Keep a receipt's panels whole, and spell out external links on paper. */
+  main .rounded-lg,
+  main section {
+    break-inside: avoid;
+  }
+  main a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    color: var(--ink-3);
+  }
+}
+
+@page {
+  margin: 16mm;
 }
