@@ -5,7 +5,7 @@ import { before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { EventBridgeClient } from '@aws-sdk/client-eventbridge';
-import { BatchGetCommand, DynamoDBDocumentClient, GetCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { BatchGetCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { build } from 'esbuild';
 
 // Runs the real Analyst handler against in-memory tables. The handler is
@@ -22,6 +22,9 @@ const users: Item[] = [];
 const profiles: Item[] = [];
 const reasoned: string[] = [];
 const emitted: string[] = [];
+const trailRows: Item[] = [];
+let trailFails = false;
+let failClient: string | null = null;
 
 type Handler = (event: unknown) => Promise<{ hypothesesEmitted: number }>;
 let handler: Handler;
@@ -43,6 +46,7 @@ before(async () => {
     POLICY_RULES_TABLE: 'rules',
     RCIC_USERS_TABLE: 'users',
     BEDROCK_REASONER_MODEL: 'us.test-model',
+    AUDIT_TRAIL_TABLE: 'audit-trail',
     AWS_REGION: 'us-east-1',
   });
 
@@ -59,6 +63,11 @@ before(async () => {
       const rcicId = (input.ExpressionAttributeValues as Item)[':r'];
       return { Items: profiles.filter((p) => p.rcicId === rcicId) };
     }
+    if (cmd instanceof PutCommand && input.TableName === 'audit-trail') {
+      if (trailFails) throw new Error('ProvisionedThroughputExceededException');
+      trailRows.push(input.Item as Item);
+      return {};
+    }
     throw new Error(`unexpected command ${cmd.constructor.name}`);
   };
   (BedrockRuntimeClient.prototype as { send: unknown }).send = async (cmd: ConverseCommand) => {
@@ -71,6 +80,7 @@ before(async () => {
     });
     // The profile appears in more than one guarded block. One call is one client.
     reasoned.push(...new Set(ids));
+    if (failClient && ids.includes(failClient)) return { stopReason: 'end_turn', output: { message: { role: 'assistant', content: [{ text: 'junk' }] } } };
     return {
       stopReason: 'end_turn',
       output: { message: { role: 'assistant', content: [{ text: '{"isAffected":false,"impactType":"none","confidence":"low"}' }] } },
@@ -107,6 +117,7 @@ function project(item: Item, input: Item): Item {
 async function run(policyDomain: string, targetRcicIds?: string[]) {
   reasoned.length = 0;
   emitted.length = 0;
+  trailRows.length = 0;
   const origLog = console.log;
   console.log = () => {};
   try {
@@ -120,6 +131,8 @@ async function run(policyDomain: string, targetRcicIds?: string[]) {
 }
 
 beforeEach(() => {
+  trailFails = false;
+  failClient = null;
   users.length = 0;
   profiles.length = 0;
   users.push(
@@ -158,5 +171,29 @@ describe('Analyst honours preferences and client status', () => {
   it('turning the area back on brings the tenant back', async () => {
     (users[0].preferences as Item).policyDomains = { 'express-entry': true };
     assert.deepEqual(await run('express-entry'), ['R1/R1-EE', 'R2/R2-EE']);
+  });
+});
+
+describe('Analyst step telemetry', () => {
+  it('appends one step per client, keyed by tenant, run and client', async () => {
+    await run('general');
+    const rows = trailRows.map((r) => `${r.assessmentId}|${r.tenantRunKey}|${r.agent}|${r.modelId}|${r.outcome}`).sort();
+    assert.deepEqual(rows, [
+      'R1#e1#R1-PGP|R1#e1|analyst|us.test-model|not-affected',
+      'R2#e1#R2-EE|R2#e1|analyst|us.test-model|not-affected',
+    ]);
+    assert.ok(trailRows.every((r) => typeof r.durationMs === 'number' && /#analyst$/.test(String(r.stepTimestamp))));
+  });
+
+  it('records a dropped client as failed and keeps going', async () => {
+    failClient = 'R1-PGP';
+    assert.deepEqual(await run('general'), ['R2/R2-EE']);
+    const outcomes = Object.fromEntries(trailRows.map((r) => [r.clientId, r.outcome]));
+    assert.deepEqual(outcomes, { 'R1-PGP': 'failed', 'R2-EE': 'not-affected' });
+  });
+
+  it('still emits every hypothesis when the telemetry write fails', async () => {
+    trailFails = true;
+    assert.deepEqual(await run('general'), ['R1/R1-PGP', 'R2/R2-EE']);
   });
 });

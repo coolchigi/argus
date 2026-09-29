@@ -6,6 +6,7 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3
 import { createHash, randomUUID } from 'node:crypto';
 import { extractMainText } from './extract';
 import { describeGuardrailBlock, guarded } from './guardrail';
+import { elapsedMs, recordStep } from './telemetry';
 
 const s3 = new S3Client({});
 const eb = new EventBridgeClient({});
@@ -16,6 +17,8 @@ const BUCKET = requiredEnv('POLICY_CORPUS_BUCKET');
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const RULE_INDEX_TABLE = requiredEnv('RULE_INDEX_TABLE');
 const CLASSIFIER_MODEL = requiredEnv('BEDROCK_CLASSIFIER_MODEL');
+// Optional on purpose: a missing telemetry table must never stop a scan.
+const AUDIT_TRAIL_TABLE = process.env.AUDIT_TRAIL_TABLE;
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
 const SEED_URLS = JSON.parse(process.env.IRCC_SEED_URLS ?? '[]') as string[];
@@ -125,6 +128,7 @@ function isCanadaCaUrl(u: unknown): boolean {
 }
 
 async function scanOne(url: string, runId: string, targetRcicIds?: string[]): Promise<ScanResult> {
+  const startedAt = performance.now();
   try {
     const html = await fetchWithTimeout(url);
     // Change detection, the rule hash and rule_content all use the extracted
@@ -174,6 +178,15 @@ async function scanOne(url: string, runId: string, targetRcicIds?: string[]): Pr
       ...(targetRcicIds ? { targetRcicIds } : {}),
     };
     await emitDelta(delta);
+    // One step per detected change, keyed by the event alone. It carries no
+    // tenant or client data. Never throws.
+    await recordStep(
+      ddb,
+      AUDIT_TRAIL_TABLE,
+      { kind: 'event', policyEventId: delta.eventId },
+      { agent: 'sentinel', modelId: CLASSIFIER_MODEL, durationMs: elapsedMs(startedAt), outcome: 'detected' },
+      log,
+    );
 
     log('info', 'delta-emitted', {
       runId,

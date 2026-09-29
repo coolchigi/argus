@@ -4,6 +4,7 @@ import { KMSClient, GetPublicKeyCommand } from '@aws-sdk/client-kms';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { readGuardrailVerdict } from './guardrail';
+import { parseAssessmentKey, summarize, type Lineage, type StepRow } from './lineage';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
@@ -15,6 +16,10 @@ const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const SIGNING_KEY_ID = requiredEnv('SIGNING_KEY_ID');
 const GUARDRAIL_ID = requiredEnv('BEDROCK_GUARDRAIL_ID');
 const GUARDRAIL_VERSION = requiredEnv('BEDROCK_GUARDRAIL_VERSION');
+// Read only by the lineage routes, so a missing value fails those two routes
+// and nothing else.
+const AUDIT_TRAIL_TABLE = process.env.AUDIT_TRAIL_TABLE;
+const AUDIT_TRAIL_RUN_INDEX = 'byTenantRun';
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 type Confidence = 'low' | 'medium' | 'high';
 
@@ -32,6 +37,8 @@ export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGateway
     if (!rcicId) throw httpError(403, 'missing-tenant-claim');
     if (routeKey === 'GET /impacts') return json(200, await listImpacts(rcicId));
     if (routeKey === 'GET /impacts/{id}') return json(200, await getImpact(rcicId, decodePathParam(event, 'id')));
+    if (routeKey === 'GET /impacts/{id}/lineage') return json(200, await getAssessmentLineage(rcicId, decodePathParam(event, 'id')));
+    if (routeKey === 'GET /policy-events/{id}/lineage') return json(200, await getRunLineage(rcicId, decodePathParam(event, 'id')));
     if (routeKey === 'GET /impacts/{id}/audit-signature') return json(200, await getAuditSignature(rcicId, decodePathParam(event, 'id')));
     if (routeKey === 'POST /impacts/{id}/correction') return json(200, await postCorrection(rcicId, decodePathParam(event, 'id'), parseBody(event)));
     return json(404, { error: 'route-not-found', routeKey });
@@ -80,6 +87,59 @@ async function getAuditSignature(rcicId: string, assessmentKey: string): Promise
       how: 'Decode signatureBase64 from base64; decode canonicalHash from hex; verify with the P-256 public key.',
     },
   };
+}
+
+// Tenant scoping is in the key: every per-client step row's partition starts
+// with the caller's rcicId, taken from the verified token, so a Query can only
+// ever reach this consultant's rows. Event rows (Sentinel, Recall) hold no
+// tenant data, and are returned only alongside at least one of the
+// consultant's own rows, so an unrelated event id reads as empty.
+async function getAssessmentLineage(rcicId: string, assessmentKey: string): Promise<Lineage> {
+  const parsed = parseAssessmentKey(assessmentKey);
+  if (!parsed) throw httpError(400, 'invalid-assessment-key');
+  const own = await queryAll({
+    TableName: auditTrailTable(),
+    KeyConditionExpression: 'assessmentId = :a',
+    ExpressionAttributeValues: { ':a': `${rcicId}#${assessmentKey}` },
+  });
+  const rows = own.length > 0 ? [...(await eventRows(parsed.policyEventId)), ...own] : [];
+  return summarize(rows, { scope: 'assessment', policyEventId: parsed.policyEventId, assessmentKey });
+}
+
+async function getRunLineage(rcicId: string, policyEventId: string): Promise<Lineage> {
+  if (policyEventId.includes('#')) throw httpError(400, 'invalid-policy-event-id');
+  const own = await queryAll({
+    TableName: auditTrailTable(),
+    IndexName: AUDIT_TRAIL_RUN_INDEX,
+    KeyConditionExpression: 'tenantRunKey = :k',
+    ExpressionAttributeValues: { ':k': `${rcicId}#${policyEventId}` },
+  });
+  const rows = own.length > 0 ? [...(await eventRows(policyEventId)), ...own] : [];
+  return summarize(rows, { scope: 'run', policyEventId, assessmentKey: null });
+}
+
+async function eventRows(policyEventId: string): Promise<StepRow[]> {
+  return queryAll({
+    TableName: auditTrailTable(),
+    KeyConditionExpression: 'assessmentId = :a',
+    ExpressionAttributeValues: { ':a': `event#${policyEventId}` },
+  });
+}
+
+async function queryAll(input: ConstructorParameters<typeof QueryCommand>[0]): Promise<StepRow[]> {
+  const out: StepRow[] = [];
+  let ExclusiveStartKey: Record<string, unknown> | undefined;
+  do {
+    const res = await ddb.send(new QueryCommand({ ...input, ExclusiveStartKey }));
+    out.push(...((res.Items ?? []) as StepRow[]));
+    ExclusiveStartKey = res.LastEvaluatedKey;
+  } while (ExclusiveStartKey);
+  return out;
+}
+
+function auditTrailTable(): string {
+  if (!AUDIT_TRAIL_TABLE) throw httpError(500, 'lineage-not-configured');
+  return AUDIT_TRAIL_TABLE;
 }
 
 async function postCorrection(rcicId: string, assessmentKey: string, body: Record<string, unknown>): Promise<{ correction: Record<string, unknown> }> {

@@ -5,7 +5,7 @@ import { before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { EventBridgeClient } from '@aws-sdk/client-eventbridge';
-import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { build } from 'esbuild';
 
 // Runs the real Recall handler against in-memory tables. See the Analyst's
@@ -26,6 +26,10 @@ const rules: Item[] = [
   { rule_hash: 'h-gen', policy_domain: 'general', topic: 'fees', rule_kind: 'page', captured_at: '2026-09-27T00:00:00Z' },
 ];
 const triaged: string[] = [];
+const trailRows: Item[] = [];
+const emitted: Item[] = [];
+// When set, triage says yes for this topic and Recall replays the rule.
+let replayTopic: string | null = null;
 
 type Handler = () => Promise<{ pairsTriaged: number }>;
 let handler: Handler;
@@ -48,6 +52,7 @@ before(async () => {
     IMPACT_ASSESSMENTS_TABLE: 'assessments',
     RCIC_USERS_TABLE: 'users',
     BEDROCK_TRIAGE_MODEL: 'us.test-model',
+    AUDIT_TRAIL_TABLE: 'audit-trail',
     AWS_REGION: 'us-east-1',
   });
 
@@ -60,6 +65,10 @@ before(async () => {
       return { Items: profiles.filter((p) => p.rcicId === rcicId) };
     }
     if (cmd instanceof QueryCommand && input.TableName === 'assessments') return { Items: [] };
+    if (cmd instanceof PutCommand && input.TableName === 'audit-trail') {
+      trailRows.push(input.Item as Item);
+      return {};
+    }
     throw new Error(`unexpected command ${cmd.constructor.name} on ${String(input.TableName)}`);
   };
   (BedrockRuntimeClient.prototype as { send: unknown }).send = async (cmd: ConverseCommand) => {
@@ -70,13 +79,16 @@ before(async () => {
     const topic = /"topic": "([^"]+)"/.exec(joined)?.[1];
     const clientId = /"clientId": "([^"]+)"/.exec(joined)?.[1];
     triaged.push(`${topic}:${clientId}`);
+    const yes = replayTopic !== null && topic === replayTopic;
     return {
       stopReason: 'end_turn',
-      output: { message: { role: 'assistant', content: [{ text: '{"deserves_analysis":false,"rationale":"test"}' }] } },
+      output: { message: { role: 'assistant', content: [{ text: `{"deserves_analysis":${yes},"rationale":"test"}` }] } },
     };
   };
-  (EventBridgeClient.prototype as { send: unknown }).send = async () => {
-    throw new Error('Recall should not emit when every triage says no');
+  (EventBridgeClient.prototype as { send: unknown }).send = async (cmd: { input: { Entries: Array<{ Detail: string }> } }) => {
+    if (replayTopic === null) throw new Error('Recall should not emit when every triage says no');
+    emitted.push(JSON.parse(cmd.input.Entries[0].Detail) as Item);
+    return {};
   };
 
   const origLog = console.log;
@@ -114,6 +126,9 @@ async function run() {
 }
 
 beforeEach(() => {
+  replayTopic = null;
+  trailRows.length = 0;
+  emitted.length = 0;
   users.length = 0;
   profiles.length = 0;
   users.push(
@@ -144,5 +159,28 @@ describe('Recall honours preferences and client status', () => {
   it('a reopened client is triaged again', async () => {
     profiles.find((p) => p.clientId === 'R2-EE-CLOSED')!.status = 'active';
     assert.ok((await run()).includes('ee-draws:R2-EE-CLOSED'));
+  });
+});
+
+describe('Recall step telemetry', () => {
+  it('records one event step per replay, with no tenant or client data', async () => {
+    replayTopic = 'pgp-intake';
+    await run();
+    assert.equal(emitted.length, 1);
+    assert.equal(trailRows.length, 1);
+    const row = trailRows[0];
+    assert.equal(row.assessmentId, `event#${String(emitted[0].eventId)}`);
+    assert.equal(row.agent, 'recall');
+    assert.equal(row.modelId, 'us.test-model');
+    assert.equal(row.outcome, 'replayed');
+    assert.equal(typeof row.durationMs, 'number');
+    assert.equal(row.rcicId, undefined);
+    assert.equal(row.clientId, undefined);
+    assert.equal(row.tenantRunKey, undefined);
+  });
+
+  it('records nothing when every triage says no', async () => {
+    await run();
+    assert.equal(trailRows.length, 0);
   });
 });
