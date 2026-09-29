@@ -34,3 +34,16 @@ test("keys rows by normalized column and drops blank cells, keeping required key
   assert.ok(res.ok);
   assert.deepEqual(res.rows, [{ client_id: "2026-001", program: "pgp", status: "active", consent_confirmed: "" }]);
 });
+
+test("refuses a file with a SIN-shaped case number before upload and names the rows", () => {
+  const ids = ["2026-042", "123456789", "F123456789", "123 456 789", "123-456-789", "C-101", "123-45-6789", "F-123456789", "12345", "1234567890"];
+  const res = parseImport(`${HEAD}\n${ids.map((id) => `${id},pgp,active,true`).join("\n")}\n`);
+  assert.deepEqual(res, { ok: false, error: "sin-shaped-client-id", rows: [3, 5, 6, 8, 9] });
+});
+
+test("accepts a file once the SIN-shaped case numbers are fixed", () => {
+  const ids = ["2026-042", "F123456789", "C-101", "12345", "1234567890"];
+  const res = parseImport(`${HEAD}\n${ids.map((id) => `${id},pgp,active,true`).join("\n")}\n`);
+  assert.ok(res.ok);
+  assert.deepEqual(res.rows.map((r) => r.client_id), ids);
+});

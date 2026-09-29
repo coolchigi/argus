@@ -1,6 +1,7 @@
 // Shared copy and class names for the caseload screens.
 
 import { ApiError } from "@/lib/api";
+import { SIN_SHAPED_ID_MESSAGE, sinShapedRowsMessage } from "./client-id";
 
 export const PII_WARNING = "Use your own case numbers. Don't include names, emails or anything that identifies a person.";
 
@@ -20,7 +21,7 @@ const ROW_ERRORS: Record<string, string> = {
   "client-id-required": "Case number is missing",
   "client-id-looks-like-email": "Case number looks like an email address",
   "client-id-looks-like-phone": "Case number looks like a phone number",
-  "client-id-looks-like-sin": "Case number looks like a SIN",
+  "client-id-looks-like-sin": SIN_SHAPED_ID_MESSAGE,
   "client-id-invalid-pattern": "Case number can use letters, digits, dots, dashes and underscores, up to 40 characters",
   "program-invalid": "Program isn't one Argus tracks",
   "status-invalid": "Status must be active, submitted or closed",
@@ -41,7 +42,7 @@ export function describeRowError(code: string): string {
 }
 
 /** Whole-file errors, from the browser check or the server's 400. */
-export function describeFileError(err: { error: string; columns?: string[]; count?: number; received?: number; max?: number }): string {
+export function describeFileError(err: { error: string; columns?: string[]; count?: number; received?: number; max?: number; rows?: number[] }): string {
   const cols = (err.columns ?? []).join(", ");
   switch (err.error) {
     case "forbidden-column":
@@ -52,6 +53,8 @@ export function describeFileError(err: { error: string; columns?: string[]; coun
       return `We didn't import this file. It's missing required columns: ${cols}.`;
     case "too-many-rows":
       return `We didn't import this file. It has ${err.count ?? err.received} rows and the limit is ${err.max ?? 500}. Split it and import each part.`;
+    case "sin-shaped-client-id":
+      return sinShapedRowsMessage(err.rows ?? []);
     case "empty":
     case "no-rows":
       return "This file has no client rows under the header.";

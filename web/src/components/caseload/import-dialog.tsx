@@ -20,7 +20,7 @@ import { MAX_IMPORT_ROWS, TEMPLATE_CSV, parseImport } from "./csv";
 
 const MAX_FILE_BYTES = 1_000_000;
 
-type FileError = { error: string; columns?: string[]; count?: number; received?: number; max?: number };
+type FileError = { error: string; columns?: string[]; count?: number; received?: number; max?: number; rows?: number[] };
 
 type Props = {
   open: boolean;
