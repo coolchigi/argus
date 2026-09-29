@@ -32,6 +32,9 @@ const ACRONYMS: Record<string, string> = {
   tal: "TAL",
   dli: "DLI",
   sin: "SIN",
+  pr: "PR",
+  eca: "ECA",
+  cip: "CIP",
 };
 
 // Proper nouns keep their capitals inside a sentence-case label.
@@ -127,6 +130,13 @@ export const POLICY_CATEGORY_LABELS: Record<string, string> = {
 export function humanizeCategory(c: string | null | undefined): string {
   if (!c) return "Not set";
   return POLICY_CATEGORY_LABELS[c] ?? humanizeTopic(c);
+}
+
+/** "Found by" on a policy event. Anything unknown reads as Sentinel, the default origin. */
+export function humanizeOrigin(origin: string | null | undefined): string {
+  if (origin === "recall") return "Recall replay";
+  if (origin === "demo") return "Demo trigger";
+  return "Sentinel";
 }
 
 export function humanizeSeverity(s: string | null | undefined): string {

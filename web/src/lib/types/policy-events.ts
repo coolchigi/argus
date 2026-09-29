@@ -14,7 +14,8 @@ export type PolicyEventSeverity = "high" | "medium" | "low";
 
 export type PolicyEventStatus = "action-required" | "done" | "no-impact";
 
-export type PolicyEventOrigin = "sentinel" | "recall";
+// From the first run's id in services/policy-events: `recall-` or `demo-` prefix, else Sentinel.
+export type PolicyEventOrigin = "sentinel" | "recall" | "demo";
 
 export type PolicyEvent = {
   /**
