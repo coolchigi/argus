@@ -77,7 +77,23 @@ export type ClientProfile = {
   pnpProvince?: string;
   intendedStudyLevel?: string;
   palOnFile?: boolean;
+  pgpSponsorStatus?: PgpSponsorStatus;
+  dliType?: DliType;
+  /** yyyy-mm-dd. When the study program starts. */
+  studyStartDate?: string;
+  /** yyyy-mm-dd. When the study permit application went in. */
+  studyPermitAppliedDate?: string;
+  principalPrPathway?: PrPathway;
+  principalPrApplied?: boolean;
 };
+
+// Closed value sets, same lists as services/profiles/src/validate.ts.
+export const PGP_SPONSOR_STATUSES = ["no-interest-form", "interest-form-submitted", "invited-to-apply", "application-submitted"] as const;
+export type PgpSponsorStatus = (typeof PGP_SPONSOR_STATUSES)[number];
+export const DLI_TYPES = ["public", "private"] as const;
+export type DliType = (typeof DLI_TYPES)[number];
+export const PR_PATHWAYS = ["none", "express-entry", "pnp", "quebec", "atlantic", "other-economic", "family", "other"] as const;
+export type PrPathway = (typeof PR_PATHWAYS)[number];
 
 export type ClientAssessment = {
   /** Rule-level policy event id. */
