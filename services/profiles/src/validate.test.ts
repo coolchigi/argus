@@ -16,8 +16,24 @@ describe('client id checks', () => {
     assert.deepEqual(clientIdErrors('046454286'), ['client-id-looks-like-sin']);
   });
 
-  it('accepts ordinary case numbers, including a 9-digit one that fails Luhn', () => {
-    for (const id of ['2026-011', 'C-109', 'file_42', 'A.B-7', '123456789']) assert.deepEqual(clientIdErrors(id), [], id);
+  it('accepts ordinary case numbers', () => {
+    for (const id of ['2026-011', 'C-109', 'file_42', 'A.B-7']) assert.deepEqual(clientIdErrors(id), [], id);
+  });
+
+  // The guardrail blocks these shapes anywhere in the profile it's sent, Luhn
+  // or not, so an id like this would fail every assessment for the client.
+  it('rejects every id the guardrail would block as a SIN or SSN', () => {
+    for (const id of ['123456789', '123 456 789', '123-456-789', '123-45-6789', '123 45 6789', 'F-123456789', 'F.123-45-6789']) {
+      assert.deepEqual(clientIdErrors(id), ['client-id-looks-like-sin'], id);
+    }
+  });
+
+  it('accepts ids the guardrail lets through, including 9 digits glued to a letter', () => {
+    for (const id of ['2026-042', 'F123456789', 'F_123456789', 'C-101', '12345', 'F-2026-042', 'C1234567890']) {
+      assert.deepEqual(clientIdErrors(id), [], id);
+    }
+    // 10 digits is past the SIN shape. The phone rule catches it instead.
+    assert.deepEqual(clientIdErrors('1234567890'), ['client-id-looks-like-phone']);
   });
 
   it('rejects ids outside the pattern', () => {

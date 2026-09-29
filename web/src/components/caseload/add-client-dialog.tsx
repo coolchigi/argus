@@ -12,6 +12,7 @@ import { useCreateProfile } from "@/lib/queries";
 import { CLIENT_STATUSES, type ClientStatus, type CreateProfileRequest } from "@/lib/types/profiles";
 import { CONSENT_LABEL, PII_WARNING, buttonPrimary, buttonSecondary, describeRowError, fieldClass } from "./copy";
 import { clientHref } from "./caseload-table";
+import { SIN_SHAPED_ID_MESSAGE, looksLikeSinOrSsn } from "./client-id";
 
 const STATUS_LABELS: Record<ClientStatus, string> = { active: "Active", submitted: "Submitted", closed: "Closed" };
 
@@ -46,6 +47,8 @@ export function AddClientDialog({ open, onOpenChange }: Props) {
   const [teer, setTeer] = useState("");
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Checked as they type. The guardrail would block every assessment for this client.
+  const sinShaped = looksLikeSinOrSsn(clientId);
 
   function reset() {
     setClientId("");
@@ -62,6 +65,7 @@ export function AddClientDialog({ open, onOpenChange }: Props) {
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    if (sinShaped) return;
     const body: CreateProfileRequest = { clientId: clientId.trim(), program, status, consentConfirmed: true };
     if (crs.trim()) body.currentCrsScore = Number(crs);
     if (noc.trim()) body.nocCode = noc.trim();
@@ -111,11 +115,18 @@ export function AddClientDialog({ open, onOpenChange }: Props) {
               onChange={(e) => setClientId(e.target.value)}
               placeholder="2026-014"
               className={`${fieldClass} font-mono`}
+              aria-invalid={sinShaped || undefined}
               aria-describedby={`${ids.clientId}-hint`}
             />
-            <p id={`${ids.clientId}-hint`} className="text-[12px] text-ink-3">
-              Letters, digits, dots, dashes and underscores.
-            </p>
+            {sinShaped ? (
+              <p id={`${ids.clientId}-hint`} role="alert" className="text-[12px] text-danger-ink">
+                {SIN_SHAPED_ID_MESSAGE}
+              </p>
+            ) : (
+              <p id={`${ids.clientId}-hint`} className="text-[12px] text-ink-3">
+                Letters, digits, dots, dashes and underscores.
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3">
@@ -184,7 +195,7 @@ export function AddClientDialog({ open, onOpenChange }: Props) {
             <button type="button" className={buttonSecondary} onClick={() => onOpenChange(false)}>
               Cancel
             </button>
-            <button type="submit" className={buttonPrimary} disabled={!consent || !clientId.trim() || create.isPending}>
+            <button type="submit" className={buttonPrimary} disabled={!consent || !clientId.trim() || sinShaped || create.isPending}>
               {create.isPending ? "Adding" : "Add client"}
             </button>
           </div>
