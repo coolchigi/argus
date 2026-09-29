@@ -259,6 +259,7 @@ export class ArgusApiStack extends cdk.Stack {
       environment: {
         IMPACT_ASSESSMENTS_TABLE: props.impactAssessmentsTable.tableName,
         TRAINING_CORRECTIONS_TABLE: props.trainingCorrectionTable.tableName,
+        POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         SIGNING_KEY_ID: props.signingKey.keyId,
         NODE_OPTIONS: '--enable-source-maps',
       },
@@ -269,6 +270,7 @@ export class ArgusApiStack extends cdk.Stack {
 
     props.impactAssessmentsTable.grantReadData(impactsHandler);
     props.trainingCorrectionTable.grantReadWriteData(impactsHandler);
+    props.policyRulesTable.grantReadData(impactsHandler);
     impactsHandler.addToRolePolicy(
       new iam.PolicyStatement({
         actions: ['kms:GetPublicKey'],
