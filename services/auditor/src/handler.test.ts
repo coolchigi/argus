@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -379,5 +379,58 @@ describe('Auditor stance on isAffected (ADR-0004)', () => {
     const [flip, narrativeOnly] = fewShotBodies(await audit());
     assert.match(flip, /Consultant verdict: affected \(original: not affected\)/);
     assert.doesNotMatch(narrativeOnly, /Consultant verdict/);
+  });
+});
+
+describe('Auditor stance follows the shared definition of affected', () => {
+  const REASON_2026_031 =
+    'Client 2026-031 is affected by the rule: the exemption applies, but procedurally the client must submit proof of it. The isAffected=false is correct in the sense that no PAL/TAL document is required, but the corrected narrative and action clarify the procedural step that remains.';
+
+  async function auditLogged(detail: Item): Promise<Item[]> {
+    const lines: string[] = [];
+    const origLog = console.log;
+    console.log = (line: string) => lines.push(line);
+    try {
+      await handler({ detail: { ...hypothesis, ...detail } });
+    } finally {
+      console.log = origLog;
+    }
+    return lines.map((l) => JSON.parse(l) as Item);
+  }
+
+  it('gives the Auditor the same definition the Analyst gets', async () => {
+    const { AFFECTED_DEFINITION } = await import('./affected.ts');
+    const req = await audit();
+    const system = (req.system ?? []).flatMap((b) => (typeof b.text === 'string' ? [b.text] : [])).join('\n');
+    assert.ok(system.includes(AFFECTED_DEFINITION), 'the definition is in the plain system prompt');
+    assert.match(AFFECTED_DEFINITION, /new procedural step/);
+    const analystCopy = readFileSync(path.join(here, '..', '..', 'analyst', 'src', 'affected.ts'), 'utf8');
+    assert.equal(readFileSync(path.join(here, 'affected.ts'), 'utf8'), analystCopy, 'the Analyst and Auditor copies have drifted');
+  });
+
+  it('reads a stance whose reason argues the opposite as uncertain, and logs a warning', async () => {
+    modelReply = JSON.stringify({ passed: true, issues: [], affectedStance: 'agree', affectedStanceReason: REASON_2026_031 });
+    const logs = await auditLogged({ clientId: '2026-031', isAffected: false });
+    const v = verdicts[0];
+    assert.equal(v.affectedStance, 'uncertain');
+    assert.match(String(v.affectedStanceReason), /answered "agree" with isAffected=false/);
+    assert.ok(String(v.affectedStanceReason).includes('Client 2026-031 is affected by the rule'), 'the model reason is kept');
+    assert.equal((v.originalHypothesis as Item).isAffected, false);
+    const warn = logs.find((l) => l.msg === 'auditor-stance-contradiction');
+    assert.ok(warn, 'auditor-stance-contradiction was logged');
+    assert.equal(warn.level, 'warn');
+    assert.equal(warn.modelStance, 'agree');
+    assert.equal(warn.clientId, '2026-031');
+    const done = logs.find((l) => l.msg === 'audit-complete');
+    assert.equal(done?.affectedStance, 'uncertain');
+  });
+
+  it('keeps a stance whose reason agrees with it, and logs nothing', async () => {
+    const reason = 'Client 2026-031 is not affected: the rule asks nothing of a client with the profile intendedStudyLevel.';
+    modelReply = JSON.stringify({ passed: true, issues: [], affectedStance: 'agree', affectedStanceReason: reason });
+    const logs = await auditLogged({ clientId: '2026-031', isAffected: false });
+    assert.equal(verdicts[0].affectedStance, 'agree');
+    assert.equal(verdicts[0].affectedStanceReason, reason);
+    assert.ok(!logs.some((l) => l.msg === 'auditor-stance-contradiction'));
   });
 });
