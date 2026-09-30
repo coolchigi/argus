@@ -370,6 +370,20 @@ describe('GET /profiles derived counts', () => {
     assert.deepEqual(needs.body.clients.map((c: any) => c.clientId), []);
   });
 
+  it('sorts and filters on a stance the Auditor contradicted', async () => {
+    store.assessments.push(
+      { ...assessment('C-2', RULE_A, 'run-a1', '2026-09-20T10:00:00.000Z', false), auditorStance: { stance: 'uncertain', reason: 'r', contradicted: true } },
+      { ...assessment('C-3', RULE_A, 'run-a1', '2026-09-20T10:00:00.000Z', false), auditorStance: { stance: 'uncertain', reason: 'r' } },
+    );
+    const all = await call(event('GET /profiles'));
+    const c2 = all.body.clients.find((c: any) => c.clientId === 'C-2');
+    assert.equal(c2.auditorUnsure, 1);
+    assert.equal(c2.actionRequired, 1);
+    assert.equal(all.body.clients[0].clientId, 'C-2');
+    const needs = await call(event('GET /profiles', { qs: { needsAction: 'true' } }));
+    assert.deepEqual(needs.body.clients.map((c: any) => c.clientId), ['C-2']);
+  });
+
   it('ignores another tenant assessments', async () => {
     store.assessments.push(assessment('C-1', RULE_A, 'run-x', '2026-09-20T10:00:00.000Z', true, OTHER));
     const res = await call(event('GET /profiles'));

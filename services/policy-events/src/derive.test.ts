@@ -699,7 +699,7 @@ describe('Auditor disagreement as action required (ADR-0004)', () => {
     const [c] = buildEventImpacts(rows, [], [], new Map());
     assert.equal(c.actionRequired, true);
     assert.equal(c.actionReason, 'auditor-disagrees');
-    assert.deepEqual(c.auditorStance, { stance: 'disagree', reason: 'The profile meets the condition the rule sets.' });
+    assert.deepEqual(c.auditorStance, { stance: 'disagree', reason: 'The profile meets the condition the rule sets.', contradicted: false });
   });
 
   it('puts disagreement ahead of a missing brief, and keeps it after a brief was sent', () => {
@@ -744,3 +744,49 @@ describe('Auditor disagreement as action required (ADR-0004)', () => {
     assert.equal(a.recordKind, 'agent');
   });
 });
+
+describe('A stance the Auditor contradicted is action required', () => {
+  const contradicted = (extra: Record<string, unknown> = {}) => ({
+    auditorStance: { stance: 'uncertain', reason: 'The Auditor answered "agree" with isAffected=false, but its reason argues the opposite.', contradicted: true, ...extra },
+  });
+
+  it('flags a not-affected verdict whose stance the Auditor contradicted', () => {
+    const rows = [row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false, ...contradicted() })];
+    const e = only(events(rows, rules(rule(RULE_A))));
+    assert.equal(e.auditorUnsure, 1);
+    assert.equal(e.auditorDisagrees, 0);
+    assert.equal(e.status, 'action-required');
+    assert.equal(listView([e], {}, new Date('2026-09-29T00:00:00.000Z')).totals.actionRequired, 1);
+    const [c] = buildEventImpacts(rows, [], [], new Map());
+    assert.equal(c.actionReason, 'auditor-unsure');
+    assert.equal(c.actionRequired, true);
+    assert.equal(c.auditorStance?.contradicted, true);
+  });
+
+  it('puts it ahead of a missing brief, and keeps it after a brief was sent', () => {
+    const rows = [row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', contradicted())];
+    assert.equal(buildEventImpacts(rows, [], [], new Map())[0].actionReason, 'auditor-unsure');
+    const sent = [brief(String(rows[0].assessmentKey), 'sent')];
+    assert.equal(only(events(rows, rules(rule(RULE_A)), sent)).status, 'action-required');
+  });
+
+  it('a consultant review clears it', () => {
+    const flagged = row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false, ...contradicted() });
+    const rows = [flagged, review(flagged, '2026-09-22T09:00:00.000Z', { isAffected: false, impactType: 'none' })];
+    const e = only(events(rows, rules(rule(RULE_A))));
+    assert.equal(e.auditorUnsure, 0);
+    assert.equal(e.status, 'no-impact');
+    assert.equal(buildEventImpacts(rows, [], [], new Map())[0].actionReason, null);
+  });
+
+  it('ignores the marker unless it is exactly true on an uncertain stance', () => {
+    for (const extra of [{ contradicted: 'true' }, { contradicted: false }, { stance: 'agree' }]) {
+      const rows = [row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false, ...contradicted(extra) })];
+      const e = only(events(rows, rules(rule(RULE_A))));
+      assert.equal(e.auditorUnsure, 0, JSON.stringify(extra));
+      assert.equal(e.status, 'no-impact', JSON.stringify(extra));
+      assert.equal(buildEventImpacts(rows, [], [], new Map())[0].auditorStance?.contradicted, false);
+    }
+  });
+});
+

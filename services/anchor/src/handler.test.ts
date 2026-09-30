@@ -190,6 +190,52 @@ describe('Anchor signs the Auditor stance (ADR-0004)', () => {
   });
 });
 
+// A stance the Auditor's stance-check read as "uncertain" because its reason
+// argued the opposite. The marker sits inside auditorStance, in sorted place.
+const CONTRADICTED_REASON = 'The Auditor answered "agree" with isAffected=true, but its reason argues the opposite: c1 is not affected.';
+const verdictContradicted = {
+  ...verdict,
+  affectedStance: 'uncertain',
+  affectedStanceReason: CONTRADICTED_REASON,
+  affectedStanceContradicted: true,
+};
+const SIGNED_CANONICAL_CONTRADICTED =
+  '{"assessmentId":"pe1#c1","auditIssues":[{"detail":"delta was -10","type":"magnitude-error"}],"auditorReasoning":"The rule gives 6 points, not 10.","auditorStance":{"contradicted":true,"reason":"The Auditor answered \\"agree\\" with isAffected=true, but its reason argues the opposite: c1 is not affected.","stance":"uncertain"},"citationSourceS3Key":"snapshots/x.html","citationSourceUrl":"https://www.canada.ca/x","clientId":"c1","confidence":"medium","impactType":"crs-delta","isAffected":true,"narrative":"c1 loses 6 points","numericDelta":-6,"policyEventId":"pe1","rcicId":"R1","recommendedAction":"Retake the language test","ruleHash":"h1","rulesUsed":["h1"],"timestamp":"2026-09-29T12:00:00.000Z","topic":"ee-crs-grid"}';
+const SIGNED_HASH_CONTRADICTED = createHash('sha256').update(SIGNED_CANONICAL_CONTRADICTED).digest('hex');
+const SIGNED_CANONICAL_PLAIN_UNCERTAIN = SIGNED_CANONICAL_CONTRADICTED.replace('{"contradicted":true,', '{');
+const SIGNED_HASH_PLAIN_UNCERTAIN = createHash('sha256').update(SIGNED_CANONICAL_PLAIN_UNCERTAIN).digest('hex');
+
+describe('Anchor signs a contradicted stance', () => {
+  it('signs contradicted inside auditorStance', async () => {
+    await anchor({ detail: verdictContradicted });
+    assert.equal(signed[0].toString('hex'), SIGNED_HASH_CONTRADICTED);
+    const item = assessmentPut()?.Item ?? {};
+    assert.equal(item.canonicalHash, SIGNED_HASH_CONTRADICTED);
+    assert.deepEqual(item.auditorStance, { stance: 'uncertain', reason: CONTRADICTED_REASON, contradicted: true });
+    assert.equal(item.isAffected, true);
+  });
+
+  it('keeps the bytes of every stance without the marker', async () => {
+    await anchor({ detail: { ...verdictContradicted, affectedStanceContradicted: undefined } });
+    assert.equal(signed[0].toString('hex'), SIGNED_HASH_PLAIN_UNCERTAIN);
+    assert.equal('contradicted' in ((assessmentPut()?.Item.auditorStance ?? {}) as Item), false);
+  });
+
+  it('signs the marker on "uncertain" only, and only when it is exactly true', async () => {
+    const cases: Array<[Item, string]> = [
+      [{ affectedStance: 'disagree', affectedStanceReason: 'The profile meets the condition the rule sets.', affectedStanceContradicted: true }, SIGNED_HASH_WITH_STANCE],
+      [{ affectedStanceContradicted: 'true' }, SIGNED_HASH_PLAIN_UNCERTAIN],
+      [{ affectedStanceContradicted: false }, SIGNED_HASH_PLAIN_UNCERTAIN],
+    ];
+    for (const [over, hash] of cases) {
+      signed.length = 0;
+      puts.length = 0;
+      await anchor({ detail: { ...verdictContradicted, ...over } });
+      assert.equal(signed[0].toString('hex'), hash, JSON.stringify(over));
+    }
+  });
+});
+
 describe('Anchor step telemetry', () => {
   it('appends a signed step under the tenant-scoped assessment id', async () => {
     await anchor({ detail: verdict });

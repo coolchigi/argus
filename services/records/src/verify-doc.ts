@@ -119,7 +119,7 @@ export function buildVerifyDoc(i: VerifyDocInput): string {
     '',
     'Assessments come in 2 kinds, named by `recordKind`:',
     '',
-    "- `agent`: the pipeline's assessment. Argus signed the Analyst's `isAffected`. On newer records `signedPayload.auditorStance` holds the Auditor's view of that answer (`agree`, `disagree` or `uncertain`) and its reason, under the same signature.",
+    "- `agent`: the pipeline's assessment. Argus signed the Analyst's `isAffected`. On newer records `signedPayload.auditorStance` holds the Auditor's view of that answer (`agree`, `disagree` or `uncertain`) and its reason, under the same signature. `contradicted: true` on an `uncertain` stance means the Auditor's reason argued the opposite of the stance it gave, so Argus recorded it as `uncertain`.",
     "- `consultant-review`: your own verdict, filed as a correction that changed `isAffected`. `supersedes` names the assessment it replaces and `supersedesCanonicalHash` pins that record's hash. The replaced assessment is never edited or deleted, so it's in this file too when it falls in the date range.",
     '',
     'Both kinds verify the same way.',

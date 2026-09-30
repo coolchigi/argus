@@ -94,6 +94,10 @@ type AuditVerdict = {
   auditorReasoning: string;
   affectedStance: AffectedStance;
   affectedStanceReason: string;
+  // Present, and true, only when the stance-check caught a reason that argues
+  // the opposite of the stance and the stance was read as "uncertain".
+  // Anchor signs it, and it counts as action required.
+  affectedStanceContradicted?: true;
   originalHypothesis: ImpactHypothesis;
 };
 
@@ -170,6 +174,7 @@ async function runAudit(
     auditorReasoning: verdict.auditorReasoning,
     affectedStance: verdict.affectedStance,
     affectedStanceReason: verdict.affectedStanceReason,
+    affectedStanceContradicted: verdict.affectedStanceContradicted ?? false,
     correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta || verdict.correctedImpactType !== hyp.impactType,
     groundingCheck: hyp.groundingCheck ?? null,
     fewShotCount: fewShots.length,
@@ -384,14 +389,15 @@ export function readStance(parsed: { affectedStance?: unknown; affectedStanceRea
 
 // A stance whose reason argues the opposite answer is unusable in the same
 // way a missing stance is: nobody can tell which one the Auditor meant. So it
-// reads as "uncertain", and the reason says what the model returned. The
-// consultant sees "uncertain" with its reason on the assessment. An "agree"
-// shows nothing there, so leaving the model's stance would hide it.
+// reads as "uncertain", the reason says what the model returned, and
+// affectedStanceContradicted marks it. Unlike a plain "uncertain", a
+// contradicted one counts as action required, so both an "agree" hiding a
+// dissent and a "disagree" whose reason agrees reach the consultant.
 export function checkStance(
   stance: { affectedStance: AffectedStance; affectedStanceReason: string },
   hyp: Pick<ImpactHypothesis, 'isAffected' | 'hypothesisId' | 'rcicId' | 'clientId' | 'policyEventId' | 'ruleHash'>,
   runId: string,
-): { affectedStance: AffectedStance; affectedStanceReason: string } {
+): { affectedStance: AffectedStance; affectedStanceReason: string; affectedStanceContradicted?: true } {
   if (!stanceContradictsReason(stance.affectedStance, hyp.isAffected, stance.affectedStanceReason)) return stance;
   log('warn', 'auditor-stance-contradiction', {
     runId,
@@ -408,6 +414,7 @@ export function checkStance(
   return {
     affectedStance: 'uncertain',
     affectedStanceReason: (note + stance.affectedStanceReason).slice(0, STANCE_REASON_MAX),
+    affectedStanceContradicted: true,
   };
 }
 

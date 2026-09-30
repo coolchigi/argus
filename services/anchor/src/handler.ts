@@ -37,6 +37,9 @@ type AuditVerdict = {
   // Absent on verdicts from an Auditor older than ADR-0004.
   affectedStance?: unknown;
   affectedStanceReason?: unknown;
+  // Set by the Auditor only when its stance-check read a self-contradicting
+  // stance as "uncertain".
+  affectedStanceContradicted?: unknown;
   originalHypothesis: {
     isAffected: boolean;
     impactType: ImpactType;
@@ -46,15 +49,21 @@ type AuditVerdict = {
   };
 };
 
-type AuditorStance = { stance: 'agree' | 'disagree' | 'uncertain'; reason: string };
+type AuditorStance = { stance: 'agree' | 'disagree' | 'uncertain'; reason: string; contradicted?: true };
 
 // The Auditor's view of the Analyst's isAffected, signed next to it (ADR-0004).
 // A verdict without a usable stance signs exactly the fields it signed before
 // ADR-0004, so the payload only gains the key when there's something to sign.
-export function auditorStanceOf(verdict: Pick<AuditVerdict, 'affectedStance' | 'affectedStanceReason'>): AuditorStance | null {
+// The same goes for contradicted: it's signed only on an "uncertain" the
+// Auditor's stance-check produced, so every other stance keeps its bytes.
+export function auditorStanceOf(
+  verdict: Pick<AuditVerdict, 'affectedStance' | 'affectedStanceReason' | 'affectedStanceContradicted'>,
+): AuditorStance | null {
   const s = verdict.affectedStance;
   if (s !== 'agree' && s !== 'disagree' && s !== 'uncertain') return null;
-  return { stance: s, reason: typeof verdict.affectedStanceReason === 'string' ? verdict.affectedStanceReason : '' };
+  const reason = typeof verdict.affectedStanceReason === 'string' ? verdict.affectedStanceReason : '';
+  if (s === 'uncertain' && verdict.affectedStanceContradicted === true) return { stance: s, reason, contradicted: true };
+  return { stance: s, reason };
 }
 
 type EventBridgeInput = { source?: string; 'detail-type'?: string; detail?: AuditVerdict };
@@ -161,6 +170,7 @@ async function anchor(verdict: AuditVerdict): Promise<{ anchored: boolean; outco
     canonicalHash,
     signatureLength: signature.length,
     auditorStance: auditorStance?.stance ?? null,
+    auditorStanceContradicted: auditorStance?.contradicted ?? false,
   });
 
   return { anchored: true, outcome: alreadySigned ? 'already-signed' : 'signed' };
