@@ -37,9 +37,16 @@ export type AssessmentRow = {
 };
 
 export type RecordKind = 'agent' | 'consultant-review';
-export type AuditorStance = { stance: 'agree' | 'disagree' | 'uncertain'; reason: string };
-/** Disagreement comes first: review the verdict before briefing on it. */
-export type ActionReason = 'auditor-disagrees' | 'brief-needed';
+/**
+ * contradicted is true only on an "uncertain" the Auditor's stance-check
+ * produced, because the Auditor's reason argued the opposite of its stance.
+ */
+export type AuditorStance = { stance: 'agree' | 'disagree' | 'uncertain'; reason: string; contradicted: boolean };
+/**
+ * The Auditor's flags come first: settle the verdict before briefing on it.
+ * auditor-unsure is a stance the Auditor contradicted.
+ */
+export type ActionReason = 'auditor-disagrees' | 'auditor-unsure' | 'brief-needed';
 
 export type BriefRow = {
   briefId: string;
@@ -69,8 +76,10 @@ export type ClientCounts = {
   unsentBriefs: number;
   /** Rules whose current verdict is the agent's and the Auditor disagrees with it. */
   auditorDisagrees: number;
+  /** Rules whose current verdict is the agent's and the Auditor contradicted its own stance on it. */
+  auditorUnsure: number;
   /**
-   * Rules that need the consultant: the Auditor disagrees, or a brief is
+   * Rules that need the consultant: the Auditor disagrees or contradicted itself, or a brief is
    * needed (same rule as policy-events actionReasonOf). The list sorts and
    * the needsAction filter read this.
    */
@@ -130,6 +139,7 @@ export const EMPTY_COUNTS: ClientCounts = {
   affectedCount: 0,
   unsentBriefs: 0,
   auditorDisagrees: 0,
+  auditorUnsure: 0,
   actionRequired: 0,
   lastAssessedAt: null,
   latestAffected: null,
@@ -151,6 +161,7 @@ export function currentFirst(a: AssessmentRow, b: AssessmentRow): number {
 
 export function actionReasonOf(current: AssessmentRow, briefSent: boolean): ActionReason | null {
   if (current.recordKind === 'agent' && current.auditorStance?.stance === 'disagree') return 'auditor-disagrees';
+  if (current.recordKind === 'agent' && current.auditorStance?.contradicted) return 'auditor-unsure';
   if (current.isAffected && !briefSent) return 'brief-needed';
   return null;
 }
@@ -213,6 +224,7 @@ export function countsByClient(assessments: AssessmentRow[], briefs: BriefRow[])
       affectedCount: affected.length,
       unsentBriefs: affected.filter((a) => !sent.has(`${ruleIdOf(a)}#${clientId}`)).length,
       auditorDisagrees: current.filter((a) => a.recordKind === 'agent' && a.auditorStance?.stance === 'disagree').length,
+      auditorUnsure: current.filter((a) => a.recordKind === 'agent' && a.auditorStance?.contradicted === true).length,
       actionRequired: current.filter((a) => actionReasonOf(a, sent.has(`${ruleIdOf(a)}#${clientId}`)) !== null).length,
       lastAssessedAt: current[0]?.timestamp ?? null,
       latestAffected: latest ? { assessmentKey: latest.assessmentKey, policyEventId: latest.policyEventId, topic: latest.topic } : null,
@@ -322,9 +334,9 @@ export function toAssessment(r: Row): AssessmentRow {
 
 function stanceOf(v: unknown): AuditorStance | null {
   if (!v || typeof v !== 'object') return null;
-  const { stance, reason } = v as Row;
+  const { stance, reason, contradicted } = v as Row;
   if (stance !== 'agree' && stance !== 'disagree' && stance !== 'uncertain') return null;
-  return { stance, reason: typeof reason === 'string' ? reason : '' };
+  return { stance, reason: typeof reason === 'string' ? reason : '', contradicted: stance === 'uncertain' && contradicted === true };
 }
 
 export function toBrief(r: Row): BriefRow {

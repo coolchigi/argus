@@ -25,10 +25,18 @@ export type Row = Record<string, unknown>;
 
 export type RecordKind = 'agent' | 'consultant-review';
 export type Stance = 'agree' | 'disagree' | 'uncertain';
-export type AuditorStance = { stance: Stance; reason: string };
+/**
+ * contradicted is true only on an "uncertain" the Auditor's stance-check
+ * produced, because the Auditor's reason argued the opposite of its stance.
+ */
+export type AuditorStance = { stance: Stance; reason: string; contradicted: boolean };
 
-/** Why a client needs the consultant. Disagreement comes first: review the verdict before briefing on it. */
-export type ActionReason = 'auditor-disagrees' | 'brief-needed';
+/**
+ * Why a client needs the consultant. The Auditor's flags come first: settle
+ * the verdict before briefing on it. auditor-unsure is a stance the Auditor
+ * contradicted, so nobody knows which answer it meant.
+ */
+export type ActionReason = 'auditor-disagrees' | 'auditor-unsure' | 'brief-needed';
 
 export type Assessment = {
   assessmentKey: string;
@@ -124,6 +132,8 @@ export type PolicyEvent = {
   awaitingBrief: number;
   /** Clients whose current verdict is the agent's and the Auditor disagrees with it. */
   auditorDisagrees: number;
+  /** Clients whose current verdict is the agent's and the Auditor contradicted its own stance. */
+  auditorUnsure: number;
   /** Clients whose current verdict is a consultant review. */
   consultantReviewed: number;
   correctionsFiled: number;
@@ -331,6 +341,7 @@ export function actionReasonOf(
   briefSent: boolean,
 ): ActionReason | null {
   if (current.recordKind === 'agent' && current.auditorStance?.stance === 'disagree') return 'auditor-disagrees';
+  if (current.recordKind === 'agent' && current.auditorStance?.contradicted) return 'auditor-unsure';
   if (current.isAffected && !briefSent) return 'brief-needed';
   return null;
 }
@@ -378,6 +389,7 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
     let briefsUnsent = 0;
     let awaitingBrief = 0;
     let auditorDisagrees = 0;
+    let auditorUnsure = 0;
     let consultantReviewed = 0;
     let needsAction = 0;
     for (const { current, prior } of clients) {
@@ -387,6 +399,7 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
       if (current.isAffected && !sent) awaitingBrief += 1;
       if (current.recordKind === 'consultant-review') consultantReviewed += 1;
       else if (current.auditorStance?.stance === 'disagree') auditorDisagrees += 1;
+      else if (current.auditorStance?.contradicted) auditorUnsure += 1;
       if (actionReasonOf(current, sent)) needsAction += 1;
     }
 
@@ -428,6 +441,7 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
       briefsUnsent,
       awaitingBrief,
       auditorDisagrees,
+      auditorUnsure,
       consultantReviewed,
       correctionsFiled,
       status,
@@ -788,9 +802,9 @@ export function recordKindOf(r: Row): RecordKind {
 /** The signed auditorStance map, or null when the row has none (signed before ADR-0004). */
 export function stanceOf(v: unknown): AuditorStance | null {
   if (!v || typeof v !== 'object') return null;
-  const { stance, reason } = v as Row;
+  const { stance, reason, contradicted } = v as Row;
   if (stance !== 'agree' && stance !== 'disagree' && stance !== 'uncertain') return null;
-  return { stance, reason: typeof reason === 'string' ? reason : '' };
+  return { stance, reason: typeof reason === 'string' ? reason : '', contradicted: stance === 'uncertain' && contradicted === true };
 }
 
 export function str(v: unknown): string {
