@@ -146,6 +146,8 @@ export type PriorAssessment = {
 export type EventImpact = {
   clientId: string;
   assessmentKey: string;
+  /** The current row's policyEventId. On a consultant review, the run it reviewed. Never parse it from the key. */
+  policyEventId: string;
   /** 'consultant-review' when the consultant's signed verdict is current. */
   recordKind: RecordKind;
   /** On a consultant review, the assessment it replaced. */
@@ -576,6 +578,7 @@ export function buildEventImpacts(rows: Row[], briefs: BriefRow[], corrections: 
     return {
       clientId: current.clientId,
       assessmentKey: current.assessmentKey,
+      policyEventId: str(r.policyEventId),
       recordKind: current.recordKind,
       supersedes: isReview ? strOrNull(r.supersedes) : null,
       reviewedAt: isReview ? (strOrNull(r.reviewedAt) ?? current.timestamp) : null,
