@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -27,6 +27,7 @@ let trailFails = false;
 let failClient: string | null = null;
 const guardedTexts: string[] = [];
 const emittedDetails: Item[] = [];
+const systemPrompts: string[] = [];
 
 type Handler = (event: unknown) => Promise<{ hypothesesEmitted: number }>;
 let handler: Handler;
@@ -74,6 +75,7 @@ before(async () => {
   };
   (BedrockRuntimeClient.prototype as { send: unknown }).send = async (cmd: ConverseCommand) => {
     // The client profile rides in a guarded JSON block. Pull its clientId back out.
+    systemPrompts.push((cmd.input.system ?? []).flatMap((b) => (typeof b.text === 'string' ? [b.text] : [])).join('\n'));
     const blocks = (cmd.input.messages ?? []).flatMap((m) => m.content ?? []);
     for (const b of blocks) {
       const t = b.guardContent && 'text' in b.guardContent ? b.guardContent.text?.text : undefined;
@@ -230,5 +232,19 @@ describe('Analyst passes the whole profile on', () => {
 
     const forwarded = emittedDetails[0].clientProfile as Item;
     for (const [k, v] of Object.entries(extra)) assert.deepEqual(forwarded[k], v, `hypothesis event is missing ${k}`);
+  });
+});
+
+describe('Analyst decides isAffected by the shared definition', () => {
+  it('puts the definition in the system prompt, identical to the Auditor copy', async () => {
+    const { AFFECTED_DEFINITION } = await import('./affected.ts');
+    profiles.push({ rcicId: 'R2', clientId: 'R2-A', program: 'pgp', status: 'active' });
+    systemPrompts.length = 0;
+    assert.deepEqual(await run('pgp', ['R2']), ['R2/R2-A']);
+    assert.equal(systemPrompts.length, 1);
+    assert.ok(systemPrompts[0].includes(AFFECTED_DEFINITION), 'the definition is in the system prompt');
+    assert.match(AFFECTED_DEFINITION, /new procedural step/);
+    const auditorCopy = readFileSync(path.join(here, '..', '..', 'auditor', 'src', 'affected.ts'), 'utf8');
+    assert.equal(readFileSync(path.join(here, 'affected.ts'), 'utf8'), auditorCopy, 'the Analyst and Auditor copies have drifted');
   });
 });

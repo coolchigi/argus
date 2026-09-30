@@ -8,8 +8,10 @@ import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
+import { AFFECTED_DEFINITION } from './affected';
 import { describeGuardrailBlock, guarded, type GroundingCheck } from './guardrail';
 import { ruleWindow } from './rule-window';
+import { stanceContradictsReason } from './stance-check';
 import { elapsedMs, recordStep } from './telemetry';
 
 const bedrock = new BedrockRuntimeClient({});
@@ -267,6 +269,9 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     'You do not change isAffected. You record your stance on it instead. Anchor signs the Analyst\'s isAffected with your stance beside it, and the consultant reviews every disagreement.',
     'Check magnitude: a numericDelta must follow from numbers stated in the rule content and values in the profile.',
     'Return valid JSON only. No preamble.',
+    '',
+    'The Analyst decided isAffected by this definition. Judge it by the same one.',
+    AFFECTED_DEFINITION,
   ];
 
   if (fewShots.length > 0) {
@@ -309,7 +314,8 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     '- If a past correction from this consultant contradicts the Analyst, override the Analyst using the correction pattern, set corrected* fields to the corrected values, and set passed=true so the corrected assessment is published.',
     '- If you correct any field, put the corrected value in the corresponding "corrected*" field. If no correction needed, echo the original value.',
     '- issues array is empty only when passed=true AND no corrections were needed.',
-    '- affectedStance is your answer on the Analyst\'s isAffected, decided from the rule content and the client profile only. "agree": the profile meets or fails the rule\'s conditions the way the Analyst said. "disagree": the rule content and the profile support the opposite answer. "uncertain": the profile is missing a field the rule depends on, or the rule content does not settle it.',
+    '- affectedStance: first decide from the definition of affected, the rule content and the client profile whether this client is affected. Then compare with the Analyst\'s isAffected. "agree": your answer matches the Analyst\'s. "disagree": your answer is the opposite. "uncertain": the profile is missing a field the rule depends on, or the rule content does not settle it.',
+    '- affectedStanceReason must reach the same answer as your stance. With "agree" it concludes what the Analyst concluded, with "disagree" the opposite. If your reason says the client is affected, your stance cannot be "agree" with isAffected=false, and the reverse.',
     '- If a past correction from this consultant set a verdict on the same kind of case, weigh it in your stance the same way you weigh it for the corrected fields.',
     '- affectedStanceReason names the rule condition and the profile field that decide your stance. Use client_id only, never a name or contact detail. State no number, date or threshold the rule content does not contain.',
   ].join('\n');
@@ -376,6 +382,35 @@ export function readStance(parsed: { affectedStance?: unknown; affectedStanceRea
   return { affectedStance: stance, affectedStanceReason: reason || '(no reason given)' };
 }
 
+// A stance whose reason argues the opposite answer is unusable in the same
+// way a missing stance is: nobody can tell which one the Auditor meant. So it
+// reads as "uncertain", and the reason says what the model returned. The
+// consultant sees "uncertain" with its reason on the assessment. An "agree"
+// shows nothing there, so leaving the model's stance would hide it.
+export function checkStance(
+  stance: { affectedStance: AffectedStance; affectedStanceReason: string },
+  hyp: Pick<ImpactHypothesis, 'isAffected' | 'hypothesisId' | 'rcicId' | 'clientId' | 'policyEventId' | 'ruleHash'>,
+  runId: string,
+): { affectedStance: AffectedStance; affectedStanceReason: string } {
+  if (!stanceContradictsReason(stance.affectedStance, hyp.isAffected, stance.affectedStanceReason)) return stance;
+  log('warn', 'auditor-stance-contradiction', {
+    runId,
+    hypothesisId: hyp.hypothesisId,
+    rcicId: hyp.rcicId,
+    clientId: hyp.clientId,
+    policyEventId: hyp.policyEventId,
+    ruleHash: hyp.ruleHash,
+    analystIsAffected: hyp.isAffected,
+    modelStance: stance.affectedStance,
+    affectedStanceReason: stance.affectedStanceReason,
+  });
+  const note = `The Auditor answered "${stance.affectedStance}" with isAffected=${hyp.isAffected}, but its reason argues the opposite: `;
+  return {
+    affectedStance: 'uncertain',
+    affectedStanceReason: (note + stance.affectedStanceReason).slice(0, STANCE_REASON_MAX),
+  };
+}
+
 // The guardrail's contextual grounding check scored the Analyst's answer
 // against the rule text and client profile. It runs in detect mode, so the
 // score is evidence for the Auditor to weigh, never a verdict. Numbers only,
@@ -427,7 +462,7 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     throw new Error(`auditor returned non-JSON: ${raw.slice(0, 200)}`);
   }
   const parsed = JSON.parse(match[0]) as Partial<AuditVerdict>;
-  const stance = readStance(parsed);
+  const stance = checkStance(readStance(parsed), hyp, runId);
 
   return {
     verdictId: randomUUID(),
@@ -464,7 +499,7 @@ async function emitVerdict(verdict: AuditVerdict): Promise<void> {
   );
 }
 
-function log(level: 'debug' | 'info' | 'error', msg: string, fields: Record<string, unknown>): void {
+function log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ level, msg, timestamp: new Date().toISOString(), ...fields }));
 }
 
