@@ -8,7 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { briefIdFor, classifyFailure, PermanentError } from './delivery';
 import { describeGuardrailBlock, guarded } from './guardrail';
 import { ruleWindow } from './rule-window';
-import { checkBriefGrounding, checkDateRoles } from './grounding';
+import { checkBriefGrounding, checkDateRoles, checkModality } from './grounding';
 import { elapsedMs, recordStep } from './telemetry';
 import { checkDraftVoice, withoutClientId } from './voice';
 
@@ -234,6 +234,8 @@ async function composeOne(assessment: Assessment, runId: string): Promise<Outcom
   const grounding = [
     ...checkBriefGrounding(briefText, [...sources.policy, ...sources.client]),
     ...checkDateRoles(briefText, sources.policy, sources.client),
+    // Certainty is IRCC's to set, so only the rule text counts here.
+    ...checkModality(briefText, sources.policy),
   ];
   if (grounding.length > 0) {
     log('warn', 'composer-grounding-check', {
@@ -352,6 +354,8 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
     'Dates and numbers that describe the policy (effective dates, cut-offs, thresholds, validity periods, caps) come only from the rule content. If the rule content gives no date for the change, don\'t give one.',
     'Dates, schools and programs in ABOUT THE READER belong to the reader. Say them as the reader\'s own ("your program", "your school"). Never present them as when, where or to whom the policy applies.',
     'Name another program, visa or permit only if the rule content or the assessment names it.',
+    'Keep the rule content\'s certainty. Where it says may, might, can, in some cases, in most cases, generally or usually, keep that word or its meaning. Never turn it into must, will, always, have to or required. Say must only where the rule content says must for that same case.',
+    'Keep conditions as conditions. If the rule content says something applies in some cases or only if a condition holds, say so, and name the cases or the condition the rule content gives.',
     'The reader has never seen the rule content or the assessment and doesn\'t know Argus exists. Never write "the rule", "the assessment" or any field name. Call the source what it is to the reader: IRCC\'s notice, the change, the update.',
     'When the assessment says something about the reader is unknown, ask the reader for it ("let me know whether..."). Never say a document doesn\'t confirm it.',
     'You match the professional tone RCICs use with their clients: plain language, honest about uncertainty, one clear next step.',
@@ -391,6 +395,7 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
     '- If confidence is low, add one sentence hedging the recommendation.',
     '- No em dashes. No exclamation marks. Use digits for numbers.',
     '- Keep each number, duration, amount and date the same as the rule content or the assessment gives it, in digits.',
+    '- Keep each "may", "in some cases" and "usually" from the rule content as it is. A hedge in IRCC\'s text stays a hedge in the email.',
     '- Paragraph 1 describes the change with the rule content\'s own dates and conditions. A date from ABOUT THE READER goes in paragraph 2, as the reader\'s.',
   ].join('\n');
 

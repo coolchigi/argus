@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PGP_042_ACTIONS, PGP_042_ASSESSMENT, PGP_042_BODY, PGP_RULE_CONTENT } from './fixtures.pgp-042.ts';
-import { checkBriefGrounding, checkDateRoles, normalize } from './grounding.ts';
+import { checkBriefGrounding, checkDateRoles, checkModality, normalize } from './grounding.ts';
 import { checkBriefVoice } from './voice.ts';
 
 const liveSources = [
@@ -134,6 +134,98 @@ describe('checkDateRoles', () => {
   it('reads each line on its own, so a suggested action gets its own sentence', () => {
     const body = 'Your program starts January 11, 2027\nConfirm the exemption applies from January 11, 2027 onward';
     assert.deepEqual(checkDateRoles(body, PAL_POLICY, PAL_CLIENT), POLICY_DATE_FROM_CLIENT);
+  });
+});
+
+// Brief 6fc569f6 (2026-09-30, client 2026-032, PAL/TAL rule bbf49430) and
+// the rule's own wording, copied from the live rule_content. IRCC's
+// typographic apostrophes are kept on purpose.
+const PAL_032_SENTENCE =
+  'If your PAL/TAL has expired or is no longer valid, you must get a new one before you can reapply for a study permit.';
+const PAL_HEDGED = 'In some cases, you may need to get a new, valid PAL/TAL before you can reapply for a study permit.';
+const PAL_RULE_EXCERPT = [
+  '### How long your PAL/TAL is valid for',
+  'Your PAL/TAL is linked to the school you’re applying to. In most cases, it must be used during the year it was issued.',
+  'What should I do if my PAL/TAL is expired?',
+  'You can’t apply for a study permit with a PAL/TAL that has expired or is no longer valid. You must get a new PAL/TAL before you reapply.',
+  '### When to get a new PAL/TAL',
+  `${PAL_HEDGED} The scenarios below will help you find out what to do based on your situation.`,
+  'My PAL/TAL has expired or is no longer valid.',
+  'You must get a new PAL/TAL before submitting your study permit application.',
+  'I’m changing my level of study.',
+  'In most cases, you must get a new PAL/TAL when changing your level of study.',
+].join('\n\n');
+
+describe('checkModality', () => {
+  it('flags the live 2026-032 sentence against the rule sentence that says "in some cases, you may need"', () => {
+    assert.deepEqual(checkModality(PAL_032_SENTENCE, [PAL_HEDGED]), [{ kind: 'modality-strengthened', value: 'must / in some cases' }]);
+  });
+
+  it('passes the same sentence against the full rule, which says must for an expired PAL/TAL', () => {
+    // "You must get a new PAL/TAL before you reapply", under "You can't
+    // apply ... with a PAL/TAL that has expired". The brief kept both the
+    // must and its condition.
+    assert.deepEqual(checkModality(PAL_032_SENTENCE, [PAL_RULE_EXCERPT]), []);
+  });
+
+  it('flags a must that drops the rule\'s "in most cases"', () => {
+    for (const body of [
+      'You must get a new PAL/TAL when changing your level of study.',
+      'Your PAL/TAL must be used during the year it was issued.',
+    ]) {
+      assert.deepEqual(checkModality(body, [PAL_RULE_EXCERPT]), [{ kind: 'modality-strengthened', value: 'must / in most cases' }], body);
+    }
+  });
+
+  it('flags the other strong forms', () => {
+    assert.deepEqual(checkModality('You will need a new, valid PAL/TAL before you can reapply for a study permit.', [PAL_HEDGED]), [
+      { kind: 'modality-strengthened', value: 'will need / in some cases' },
+    ]);
+    assert.deepEqual(checkModality('You have to get a new, valid PAL/TAL to reapply for a study permit.', [PAL_HEDGED]), [
+      { kind: 'modality-strengthened', value: 'have to / in some cases' },
+    ]);
+  });
+
+  it('passes a must the rule also says must', () => {
+    assert.deepEqual(checkModality('You must get a new PAL/TAL before submitting your study permit application.', [PAL_RULE_EXCERPT]), []);
+    assert.deepEqual(checkModality('You must get a new PAL/TAL before you reapply for a study permit.', [PAL_RULE_EXCERPT]), []);
+  });
+
+  it('passes a brief that keeps the hedge', () => {
+    for (const body of [
+      PAL_HEDGED,
+      'You may need a new, valid PAL/TAL before you can reapply for a study permit.',
+      'In most cases, you must get a new PAL/TAL when changing your level of study.',
+      'You might have to get a new, valid PAL/TAL before you can reapply for a study permit.',
+    ]) {
+      assert.deepEqual(checkModality(body, [PAL_RULE_EXCERPT]), [], body);
+    }
+  });
+
+  it('passes a must about something no hedged rule sentence covers', () => {
+    assert.deepEqual(checkModality('You must include proof of the exemption with your study permit application.', [PAL_RULE_EXCERPT]), []);
+  });
+
+  it('reads "can" beside a must as part of the must', () => {
+    const rule = 'You must get a new PAL/TAL before you can reapply for a study permit.';
+    assert.deepEqual(checkModality(rule, [rule]), []);
+  });
+
+  it('reads "May" before a day as the month', () => {
+    const rule = 'Your PAL/TAL must be used for a study permit application by May 1, 2026.';
+    assert.deepEqual(checkModality('You must use your PAL/TAL for your study permit application in 2026.', [rule]), []);
+  });
+
+  it("reads a list item with the line that leads into the list", () => {
+    const rule = 'The PAL/TAL is\n\n- a letter from the province or territory where you plan to study\n- usually required to apply for a study permit';
+    assert.deepEqual(checkModality('A PAL/TAL is required to apply for a study permit.', [rule]), [
+      { kind: 'modality-strengthened', value: 'required to / usually' },
+    ]);
+  });
+
+  it("doesn't pin a hedge on content that came from the sentence before it", () => {
+    const rule = 'You should contact your school (DLI) to find out how to apply for a PAL/TAL. Once you have one, you can apply for a study permit.';
+    assert.deepEqual(checkModality('You must contact your school (DLI) to find out how to apply for a PAL/TAL.', [rule]), []);
   });
 });
 
