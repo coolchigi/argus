@@ -195,8 +195,8 @@ describe('Composer brief voice', () => {
     const req = buildComposeRequest(assessmentFor(pgp), 'rule text');
     const guardedTexts = req.messages[0].content.flatMap((b) => ('guardContent' in b ? [b.guardContent.text.text] : []));
     assert.equal(guardedTexts.length, 2);
-    assert.match(guardedTexts[0], /cannot submit a new interest/);
-    assert.match(guardedTexts[1], /rule text/);
+    assert.match(guardedTexts[0], /rule text/);
+    assert.match(guardedTexts[1], /cannot submit a new interest/);
     assert.match(req.modelId, /^us\./);
     assert.equal(typeof req.inferenceConfig.maxTokens, 'number');
   });
@@ -317,6 +317,80 @@ describe('Composer grounding', () => {
     const line = JSON.stringify(warn);
     assert.doesNotMatch(line, /2026-042/);
     assert.doesNotMatch(line, /intake|sponsor|Grandparents/);
+  });
+
+  // Brief 9aa15dff (2026-09-30): a consultant review for client 2026-031
+  // reached Composer as an INSERT, and the brief gave the client's program
+  // start date as the date of IRCC's change. The rule's date is January 1, 2026.
+  const review = {
+    clientId: '2026-031',
+    assessmentKey: 'review-1790751985760-pe1#2026-031',
+    recordKind: 'consultant-review',
+    topic: 'pal-tal-requirements',
+    impactType: 'procedural',
+    numericDelta: null,
+    narrative: "Client 2026-031 qualifies for the master's exemption from the PAL/TAL requirement, but must include proof of the exemption with the study permit application.",
+    recommendedAction: 'Ask the client to include proof of the exemption with the study permit application.',
+    reviewReasoning: "The profile shows 2026-031 has a public DLI and a master's program starting 2027-01-11, so the client qualifies for the exemption.",
+    citationSourceUrl: 'https://www.canada.ca/pal',
+  };
+  const palRule = "You don't need a PAL or TAL for a master's program at a public DLI starting January 1, 2026.";
+  const palBrief =
+    "IRCC has updated its policy to exempt certain master's programs from the PAL/TAL requirement. This change applies to master's programs at public Designated Learning Institutions (DLIs) starting January 11, 2027.";
+
+  it('gives the model the rule and the reader as separate, labelled, guarded inputs, rule first', () => {
+    const req = buildComposeRequest(assessmentFor(review), palRule);
+    const blocks = req.messages[0].content;
+    const labels = blocks.flatMap((b) => ('text' in b ? [b.text] : []));
+    const guardedTexts = blocks.flatMap((b) => ('guardContent' in b ? [b.guardContent.text.text] : []));
+    assert.match(labels[0], /^RULE CONTENT .*only source for the policy's dates/);
+    assert.match(labels[1], /^ABOUT THE READER .*describe the reader, never the policy/);
+    assert.equal(guardedTexts[0].trim(), palRule);
+    assert.match(guardedTexts[1], /"narrative": "the client qualifies/);
+    const system = req.system.map((b) => b.text).join('\n');
+    assert.match(system, /Dates and numbers that describe the policy .* come only from the rule content/);
+    assert.match(system, /belong to the reader\. Say them as the reader's own/);
+  });
+
+  it("carries a consultant review's reasoning as reader context, without the client id", () => {
+    const req = buildComposeRequest(assessmentFor(review), palRule);
+    const reader = req.messages[0].content.flatMap((b) => ('guardContent' in b ? [b.guardContent.text.text] : []))[1];
+    const json = JSON.parse(reader);
+    assert.equal(json.consultantReasoning, "The profile shows the client has a public DLI and a master's program starting 2027-01-11, so the client qualifies for the exemption.");
+    assert.match(json.recommendedAction, /include proof of the exemption/);
+    assert.doesNotMatch(promptText(req), /2026-031/);
+  });
+
+  it('leaves reviewReasoning out of an agent row, where no consultant wrote it', () => {
+    const req = buildComposeRequest(assessmentFor({ ...review, recordKind: undefined }), palRule);
+    const reader = req.messages[0].content.flatMap((b) => ('guardContent' in b ? [b.guardContent.text.text] : []))[1];
+    assert.equal('consultantReasoning' in JSON.parse(reader), false);
+    assert.doesNotMatch(promptText(req), /The profile shows/);
+  });
+
+  it('warns policy-date-from-client on the live 9aa15dff brief and still writes it', async () => {
+    ruleContent = palRule;
+    modelReply = JSON.stringify({ subject: 'PAL/TAL exemption', bodyMarkdown: palBrief, suggestedActions: ['Include proof of the exemption.'] });
+    const res = await compose([insert(review)]);
+    assert.equal(res.composed, 1);
+    assert.equal(briefs[0].bodyMarkdown, palBrief);
+    const warn = logLines.find((l) => l.msg === 'composer-grounding-check');
+    assert.equal(warn?.level, 'warn');
+    assert.deepEqual(warn?.findings, [
+      { kind: 'program', value: "exempt certain master's program" },
+      { kind: 'policy-date-from-client', value: 'january 11, 2027' },
+    ]);
+    assert.doesNotMatch(JSON.stringify(warn), /2026-031/);
+  });
+
+  it("logs no grounding warning when the brief gives the reviewed start date as the reader's", async () => {
+    ruleContent = palRule;
+    const body =
+      "You don't need a PAL or TAL for a master's program at a public DLI starting January 1, 2026. Your program starts January 11, 2027, so this covers you.";
+    modelReply = JSON.stringify({ subject: 'PAL/TAL exemption', bodyMarkdown: body, suggestedActions: ['Include proof of the exemption.'] });
+    await compose([insert(review)]);
+    assert.equal(briefs.length, 1);
+    assert.equal(logLines.some((l) => l.msg === 'composer-grounding-check'), false);
   });
 
   it('never puts part of a client id in a finding when the body leaks the id', async () => {
