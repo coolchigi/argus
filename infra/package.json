@@ -7,7 +7,8 @@
     "test": "jest",
     "test:guardrail": "node --import tsx --test lib/guardrail-patterns.test.ts lib/guardrail-stack.test.ts",
     "cdk": "cdk",
-    "test:budget": "node --import tsx --test lib/budget-stack.test.ts"
+    "test:budget": "node --import tsx --test lib/budget-stack.test.ts",
+    "test:alarms": "node --import tsx --test lib/failure-alarms.test.ts"
   },
   "devDependencies": {
     "@swc/core": "^1.15.0",

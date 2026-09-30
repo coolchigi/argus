@@ -4,6 +4,8 @@ import * as apigwv2 from 'aws-cdk-lib/aws-apigatewayv2';
 import * as apigwv2auth from 'aws-cdk-lib/aws-apigatewayv2-authorizers';
 import * as apigwv2int from 'aws-cdk-lib/aws-apigatewayv2-integrations';
 import * as bedrock from 'aws-cdk-lib/aws-bedrock';
+import * as cloudwatch from 'aws-cdk-lib/aws-cloudwatch';
+import * as cwActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as cognito from 'aws-cdk-lib/aws-cognito';
 import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as events from 'aws-cdk-lib/aws-events';
@@ -11,11 +13,14 @@ import * as targets from 'aws-cdk-lib/aws-events-targets';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as kms from 'aws-cdk-lib/aws-kms';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
+import * as lambdaDestinations from 'aws-cdk-lib/aws-lambda-destinations';
 import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
+import * as sns from 'aws-cdk-lib/aws-sns';
+import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 
@@ -47,6 +52,9 @@ export interface ArgusApiStackProps extends cdk.StackProps {
 
   readonly policyCorpusBucket: s3.Bucket;
   readonly generatedArtifactsBucket: s3.Bucket;
+
+  /** Gets the failure-queue alarms. Same address as the budget alarms (ARGUS_BUDGET_EMAIL). */
+  readonly operatorEmail: string;
 }
 
 /**
@@ -62,6 +70,38 @@ export class ArgusApiStack extends cdk.Stack {
 
   constructor(scope: Construct, id: string, props: ArgusApiStackProps) {
     super(scope, id, props);
+
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(props.operatorEmail)) {
+      throw new Error('ArgusApiStack needs an operator email (set ARGUS_BUDGET_EMAIL)');
+    }
+    // Operator alarms. CloudWatch alarms can't email on their own, so they
+    // publish here and the topic emails the operator. The address has to
+    // confirm the subscription once after deploy. The messages carry alarm
+    // and queue names only, so the topic stays on default encryption: an
+    // alarm can't publish to a topic under the AWS-managed SNS key.
+    const operatorAlarms = new sns.Topic(this, 'OperatorAlarms', {
+      topicName: 'argus-operator-alarms',
+      displayName: 'Argus operator alarms',
+      enforceSSL: true,
+    });
+    operatorAlarms.addSubscription(new snsSubscriptions.EmailSubscription(props.operatorEmail));
+    // Fires when a failure queue holds any message, and stays in alarm until
+    // someone drains it. One email per transition into alarm.
+    const alarmOnFailures = (id: string, queue: sqs.Queue, what: string) => {
+      const alarm = new cloudwatch.Alarm(this, id, {
+        alarmName: `${queue.queueName}-not-empty`,
+        alarmDescription: `${what} Inspect and redrive or delete the messages in ${queue.queueName}.`,
+        metric: queue.metricApproximateNumberOfMessagesVisible({
+          period: cdk.Duration.minutes(5),
+          statistic: cloudwatch.Stats.MAXIMUM,
+        }),
+        threshold: 0,
+        comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_THRESHOLD,
+        evaluationPeriods: 1,
+        treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+      });
+      alarm.addAlarmAction(new cwActions.SnsAction(operatorAlarms));
+    };
 
     // -----------------------------------------------------------------
     // Placeholder Lambda factory. Real code will be bundled from
@@ -747,6 +787,11 @@ export class ArgusApiStack extends cdk.Stack {
         ],
       }),
     );
+    alarmOnFailures(
+      'ComposerStreamFailuresAlarm',
+      composerFailures,
+      'Composer ran out of retries on an assessment, so its client has no brief.',
+    );
 
     // Alerts dispatcher. Subscribes to argus.composer BriefReady, classifies
     // severity, and sends SES email for high-severity impacts only. Medium and
@@ -761,6 +806,22 @@ export class ArgusApiStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    // Where a BriefReady goes when Alerts can't handle it: the function
+    // failed on every try, or EventBridge couldn't invoke it at all. Each
+    // message holds the event, so it can be redriven once the cause is fixed.
+    const alertsFailures = new sqs.Queue(this, 'AlertsFailures', {
+      queueName: 'argus-alerts-failures',
+      retentionPeriod: cdk.Duration.days(14),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+      enforceSSL: true,
+    });
+    alarmOnFailures(
+      'AlertsFailuresAlarm',
+      alertsFailures,
+      'Alerts gave up on a BriefReady, so a high-severity email may not have gone out.',
+    );
+    const alertsTimeout = cdk.Duration.seconds(30);
+
     const alertsHandler = new nodejs.NodejsFunction(this, 'AlertsHandler', {
       functionName: 'argus-alerts',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -769,7 +830,7 @@ export class ArgusApiStack extends cdk.Stack {
       depsLockFilePath: path.join(__dirname, '../../services/alerts/package-lock.json'),
       entry: path.join(__dirname, '../../services/alerts/src/handler.ts'),
       handler: 'handler',
-      timeout: cdk.Duration.seconds(30),
+      timeout: alertsTimeout,
       memorySize: 256,
       environment: {
         BRIEFS_TABLE: props.briefsTable.tableName,
@@ -777,8 +838,17 @@ export class ArgusApiStack extends cdk.Stack {
         RCIC_USERS_TABLE: props.rcicUsersTable.tableName,
         SES_FROM_EMAIL: alertsFromEmail,
         DEMO_RCIC_EMAIL: alertsDemoRecipient,
+        // Twice the timeout, so a live invocation never loses its claim on a
+        // brief's alert, and a dead one's claim is stale by the time Lambda
+        // retries (1 minute after the first failure, per the Lambda docs).
+        ALERT_CLAIM_LEASE_SECONDS: String(alertsTimeout.toSeconds() * 2),
         NODE_OPTIONS: '--enable-source-maps',
       },
+      // BriefReady arrives as an async invoke. A throw (SES down, or another
+      // delivery of the same brief still sending) gets 2 more tries, then
+      // the event lands in the failure queue with its error.
+      retryAttempts: 2,
+      onFailure: new lambdaDestinations.SqsDestination(alertsFailures),
       logGroup: alertsLogGroup,
       tracing: lambda.Tracing.ACTIVE,
       bundling: { minify: true, target: 'es2022', format: nodejs.OutputFormat.ESM, sourceMap: true },
@@ -787,6 +857,14 @@ export class ArgusApiStack extends cdk.Stack {
     props.briefsTable.grantReadData(alertsHandler);
     props.alertsTable.grantWriteData(alertsHandler);
     props.rcicUsersTable.grantReadData(alertsHandler);
+    // Claims, releases and marks the alert on the brief row. The table only,
+    // since the handler never touches the brief indexes.
+    alertsHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:UpdateItem'],
+        resources: [props.briefsTable.tableArn],
+      }),
+    );
 
     alertsHandler.addToRolePolicy(
       new iam.PolicyStatement({
@@ -805,7 +883,9 @@ export class ArgusApiStack extends cdk.Stack {
         source: ['argus.composer'],
         detailType: ['BriefReady'],
       },
-      targets: [new targets.LambdaFunction(alertsHandler)],
+      // EventBridge keeps its default retry (24 hours) for failures to
+      // invoke. An event it still can't deliver goes to the failure queue.
+      targets: [new targets.LambdaFunction(alertsHandler, { deadLetterQueue: alertsFailures })],
     });
 
     // Briefs service. Handles the consultant-facing brief lifecycle:

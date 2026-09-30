@@ -1,5 +1,5 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { DynamoDBDocumentClient, GetCommand, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import { randomUUID } from 'node:crypto';
 import { alertSeverity, sendsRealtime } from './decide';
@@ -12,6 +12,10 @@ const ALERTS_TABLE = requiredEnv('ALERTS_TABLE');
 const RCIC_USERS_TABLE = requiredEnv('RCIC_USERS_TABLE');
 const SES_FROM_EMAIL = requiredEnv('SES_FROM_EMAIL');
 const DEMO_RCIC_EMAIL = process.env.DEMO_RCIC_EMAIL ?? '';
+// How long a claim on a brief's alert holds before another delivery may take
+// it over. Infra sets it above the function timeout, so a live invocation
+// never loses its claim, and a crashed one frees it before Lambda's retry.
+const CLAIM_LEASE_MS = Number(requiredEnv('ALERT_CLAIM_LEASE_SECONDS')) * 1000;
 
 type ImpactType = 'crs-delta' | 'eligibility-flip' | 'deadline-shift' | 'lmia-implication' | 'french-bonus' | 'procedural' | 'none';
 
@@ -73,15 +77,53 @@ export const handler = async (event: EventBridgeInput | BriefReadyDetail): Promi
     return { dispatched: false, reason: 'brief-not-found' };
   }
 
-  const messageId = await sendEmail(recipient, brief, detail);
-  await recordSend({
-    rcicId: detail.rcicId,
-    briefId: detail.briefId,
-    clientId: detail.clientId,
-    severity,
-    recipient,
-    sesMessageId: messageId,
-  });
+  // Composer sends BriefReady at least once, so the same brief can arrive
+  // twice, sometimes at the same moment. The claim on the brief row lets one
+  // delivery send. See claimAlert for what happens when a step fails.
+  const claim = await claimAlert(detail.rcicId, detail.briefId, runId);
+  if (claim === 'already-sent') {
+    log('info', 'alert-already-sent', { runId, briefId: detail.briefId });
+    return { dispatched: false, reason: 'already-sent' };
+  }
+  if (claim === 'in-flight') {
+    // Another delivery holds the claim and hasn't sent yet. Throwing makes
+    // Lambda retry this one later: by then the email is out, or the claim
+    // has gone stale and this delivery takes it over.
+    log('info', 'alert-in-flight', { runId, briefId: detail.briefId });
+    throw new Error(`alert for brief ${detail.briefId} is in flight in another delivery`);
+  }
+
+  let messageId: string;
+  try {
+    messageId = await sendEmail(recipient, brief, detail);
+  } catch (err) {
+    // Nothing went out, so free the claim and let Lambda retry the send.
+    await releaseClaim(detail.rcicId, detail.briefId, runId).catch((releaseErr: unknown) => {
+      // The retry takes the claim over once the lease runs out.
+      log('error', 'alert-claim-release-failed', { runId, briefId: detail.briefId, error: String(releaseErr) });
+    });
+    throw err;
+  }
+
+  // The email is out. From here a failure gets logged and never thrown: a
+  // throw means a Lambda retry, and a retry after the lease sends again.
+  try {
+    await markSent(detail.rcicId, detail.briefId, runId, messageId);
+  } catch (err) {
+    log('error', 'alert-mark-sent-failed', { runId, briefId: detail.briefId, sesMessageId: messageId, error: String(err) });
+  }
+  try {
+    await recordSend({
+      rcicId: detail.rcicId,
+      briefId: detail.briefId,
+      clientId: detail.clientId,
+      severity,
+      recipient,
+      sesMessageId: messageId,
+    });
+  } catch (err) {
+    log('error', 'alert-record-failed', { runId, briefId: detail.briefId, sesMessageId: messageId, error: String(err) });
+  }
 
   log('info', 'alert-dispatched', {
     runId,
@@ -127,6 +169,70 @@ async function loadBrief(rcicId: string, briefId: string): Promise<StoredBrief |
     suggestedActions: Array.isArray(res.Item.suggestedActions) ? (res.Item.suggestedActions as string[]) : [],
     citationSourceUrl: typeof res.Item.citationSourceUrl === 'string' ? res.Item.citationSourceUrl : undefined,
   };
+}
+
+// The alert's idempotency record lives on the brief row, keyed (rcicId,
+// briefId) like the brief itself. AlertsTable keys on (rcicId, timestamp)
+// and every row there shows up in the activity feed, so a marker row would
+// need a fake timestamp and a filter in every reader.
+//
+// Claim, send, then mark. The claim is a create-only write, so two
+// deliveries can't both send. If the send fails, the claim is released and
+// Lambda retries. If the invocation dies after claiming, the claim goes
+// stale after the lease and the retry takes it over. The one way to get a
+// second email: SES accepted the first, then the sent mark failed or the
+// invocation died before writing it, and a delivery came after the lease.
+// That trade is on purpose. A duplicate email costs the consultant a
+// second read. A lost alert on a high-severity change costs them the
+// same-day heads-up, which is the whole job of this service.
+type Claim = 'claimed' | 'already-sent' | 'in-flight';
+
+async function claimAlert(rcicId: string, briefId: string, runId: string): Promise<Claim> {
+  const now = Date.now();
+  try {
+    await ddb.send(
+      new UpdateCommand({
+        TableName: BRIEFS_TABLE,
+        Key: { rcicId, briefId },
+        UpdateExpression: 'SET alertClaimId = :run, alertClaimedAt = :now',
+        ConditionExpression:
+          'attribute_exists(briefId) AND attribute_not_exists(alertSentAt) AND (attribute_not_exists(alertClaimedAt) OR alertClaimedAt < :stale)',
+        ExpressionAttributeValues: { ':run': runId, ':now': now, ':stale': now - CLAIM_LEASE_MS },
+      }),
+    );
+    return 'claimed';
+  } catch (err) {
+    if ((err as { name?: unknown }).name !== 'ConditionalCheckFailedException') throw err;
+  }
+  // Either the alert went out or another delivery holds a live claim.
+  const res = await ddb.send(new GetCommand({ TableName: BRIEFS_TABLE, Key: { rcicId, briefId }, ConsistentRead: true }));
+  return res.Item?.alertSentAt ? 'already-sent' : 'in-flight';
+}
+
+async function releaseClaim(rcicId: string, briefId: string, runId: string): Promise<void> {
+  await ddb.send(
+    new UpdateCommand({
+      TableName: BRIEFS_TABLE,
+      Key: { rcicId, briefId },
+      UpdateExpression: 'REMOVE alertClaimId, alertClaimedAt',
+      ConditionExpression: 'alertClaimId = :run',
+      ExpressionAttributeValues: { ':run': runId },
+    }),
+  );
+}
+
+async function markSent(rcicId: string, briefId: string, runId: string, sesMessageId: string): Promise<void> {
+  // No claim condition. The email went out, so the mark goes on even if a
+  // slow send let another delivery take the claim over.
+  await ddb.send(
+    new UpdateCommand({
+      TableName: BRIEFS_TABLE,
+      Key: { rcicId, briefId },
+      UpdateExpression: 'SET alertSentAt = :at, alertSesMessageId = :m, alertClaimId = :run',
+      ConditionExpression: 'attribute_exists(briefId)',
+      ExpressionAttributeValues: { ':at': new Date().toISOString(), ':m': sesMessageId, ':run': runId },
+    }),
+  );
 }
 
 async function sendEmail(recipient: string, brief: StoredBrief, detail: BriefReadyDetail): Promise<string> {
