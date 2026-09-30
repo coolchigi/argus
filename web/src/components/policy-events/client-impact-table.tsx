@@ -5,10 +5,11 @@ import { Fragment, useState } from "react";
 import { ArrowRight, ChevronDown } from "lucide-react";
 import { ClientChip } from "@/components/argus/client-chip";
 import { Fingerprint } from "@/components/argus/fingerprint";
+import { AuditorFlagBadge } from "@/components/argus/auditor-flag-badge";
+import { contradictionHeadline, contradictionNoteOf } from "@/lib/assessment-key";
 import { Badge, StatusBadge } from "@/components/argus/status-badge";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { clientActionReason, clientBriefState, clientNeedsAction } from "@/components/policy-events/derive";
-import { ACTION_REASON_LABEL } from "@/lib/assessments";
 import { formatDelta } from "@/lib/format";
 import { humanizeImpactType, humanizeTopic } from "@/lib/humanize";
 import type { PolicyEventImpact } from "@/lib/types/policy-events";
@@ -59,9 +60,14 @@ function Details({ c }: { c: PolicyEventImpact }) {
       {stance && (
         <div className={cn("border-l-2 px-3 py-2", stance.stance === "disagree" ? "border-danger bg-danger-subtle" : "border-brand-ink bg-brand-subtle")}>
           <div className={cn("label mb-1", stance.stance === "disagree" ? "text-danger-ink" : "text-brand-ink")}>
-            {stance.stance === "disagree" ? "The Auditor disagrees" : "The Auditor isn't sure"}
+            {stance.stance === "disagree" ? "The Auditor disagrees" : stance.contradicted ? "The Auditor contradicted itself" : "The Auditor isn't sure"}
           </div>
-          <p className="max-w-[68ch] text-[12px] leading-relaxed text-ink-1">{stance.reason || "No reason recorded."}</p>
+          {stance.contradicted && (
+            <p className="mb-1 max-w-[68ch] text-[12px] font-medium text-ink-1">{contradictionHeadline(contradictionNoteOf(stance.reason), c.isAffected)}</p>
+          )}
+          <p className="max-w-[68ch] text-[12px] leading-relaxed text-ink-1">
+            {(stance.contradicted ? contradictionNoteOf(stance.reason)?.modelReason : null) || stance.reason || "No reason recorded."}
+          </p>
         </div>
       )}
       <div>
@@ -204,7 +210,7 @@ export function ClientImpactTable({ clients, empty }: { clients: PolicyEventImpa
                     <td className="px-4 py-3 align-top">
                       <span className="inline-flex flex-wrap gap-1">
                         {c.isAffected ? <Badge tone="brand">Affected</Badge> : <Badge>Not affected</Badge>}
-                        {clientActionReason(c) === "auditor-disagrees" && <Badge tone="danger">{ACTION_REASON_LABEL["auditor-disagrees"]}</Badge>}
+                        <AuditorFlagBadge reason={clientActionReason(c)} />
                         {c.recordKind === "consultant-review" && <Badge>Reviewed by you</Badge>}
                         {c.correctionsFiled > 0 && <StatusBadge kind="assessment" status="corrected" />}
                       </span>

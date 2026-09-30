@@ -18,11 +18,19 @@ export type RecordKind = "agent" | "consultant-review";
 
 export type Stance = "agree" | "disagree" | "uncertain";
 
-/** The Auditor's view of the Analyst's isAffected, signed with the agent row. */
-export type AuditorStance = { stance: Stance; reason: string };
+/**
+ * The Auditor's view of the Analyst's isAffected, signed with the agent row.
+ * contradicted is true only on an "uncertain" that Argus recorded because the
+ * Auditor's reason argued the opposite of its stance. Absent on older rows.
+ */
+export type AuditorStance = { stance: Stance; reason: string; contradicted?: boolean };
 
-/** Why a client needs the consultant. Disagreement first: settle the verdict before briefing on it. */
-export type ActionReason = "auditor-disagrees" | "brief-needed";
+/**
+ * Why a client needs the consultant. The Auditor's flags first: settle the
+ * verdict before briefing on it. auditor-unsure is a stance the Auditor
+ * contradicted, so nobody can tell which answer it meant.
+ */
+export type ActionReason = "auditor-disagrees" | "auditor-unsure" | "brief-needed";
 
 export type Impact = {
   rcicId: string;

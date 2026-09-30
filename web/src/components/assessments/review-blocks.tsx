@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 import type { AuditorStance, Impact } from "@/lib/argus-types";
+import { contradictionHeadline, contradictionNoteOf } from "@/lib/assessment-key";
 import { Badge } from "@/components/argus/status-badge";
 import { cn } from "@/lib/utils";
 
@@ -29,6 +30,9 @@ export function AuditorView({
   onReview: () => void;
 }) {
   const disagree = stance.stance === "disagree";
+  // A stance the Auditor contradicted: its answer and its reason disagree.
+  const note = !disagree && stance.contradicted ? contradictionNoteOf(stance.reason) : null;
+  const contradicted = !disagree && stance.contradicted === true;
   return (
     <section
       aria-labelledby="auditor-view-heading"
@@ -38,14 +42,16 @@ export function AuditorView({
         <h2 id="auditor-view-heading" className={cn("label", disagree ? "text-danger-ink" : "text-brand-ink")}>
           Auditor&apos;s view
         </h2>
-        <Badge tone={disagree ? "danger" : "brand"}>{disagree ? "Disagrees" : "Not sure"}</Badge>
+        <Badge tone={disagree ? "danger" : "brand"}>{disagree ? "Disagrees" : contradicted ? "Contradicted itself" : "Not sure"}</Badge>
       </div>
       <p className="mt-2 text-[13px] font-medium text-ink-1">
         {disagree
           ? `The Auditor thinks this client is ${verdict(!isAffected)}.`
-          : `The Auditor couldn't confirm this client is ${verdict(isAffected)}.`}
+          : contradicted
+            ? contradictionHeadline(note, isAffected)
+            : `The Auditor couldn't confirm this client is ${verdict(isAffected)}.`}
       </p>
-      <p className="mt-1 max-w-[72ch] text-[13px] leading-relaxed text-ink-1">{stance.reason || "No reason recorded."}</p>
+      <p className="mt-1 max-w-[72ch] text-[13px] leading-relaxed text-ink-1">{(note ? note.modelReason : stance.reason) || "No reason recorded."}</p>
       <p className="mt-2 text-[12px] text-ink-2">
         Signed with this assessment. The verdict below is the Analyst&apos;s. You decide which one stands.
       </p>

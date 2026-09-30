@@ -58,6 +58,8 @@ export type PolicyEvent = {
   awaitingBrief: number;
   /** Clients whose current verdict is the agent's and the Auditor disagrees with it. Optional until #37 is deployed. */
   auditorDisagrees?: number;
+  /** Clients whose current agent verdict carries a stance the Auditor contradicted. Optional until #42 is deployed. */
+  auditorUnsure?: number;
   /** Clients whose current verdict is a consultant review. */
   consultantReviewed?: number;
   /** Corrections filed on any run of this rule. */

@@ -29,12 +29,15 @@ type RuleClient = { ruleHash?: string | null; policyEventId?: string | null; cli
  * What the consultant has to do about one current verdict (ADR-0004), same
  * rule as actionReasonOf in services/policy-events:
  * - an agent row the Auditor disagrees with needs a review, whatever the brief
+ * - so does one whose stance the Auditor contradicted
  * - an affected verdict with no brief sent or copied out on any run needs a brief
- * A consultant review carries no stance, so reviewing clears the first.
+ * A consultant review carries no stance, so reviewing clears the first two.
  */
 export function actionReasonOf(current: Impact, briefDelivered: boolean): ActionReason | null {
   // auditorStanceOf is null on a review.
-  if (auditorStanceOf(current)?.stance === "disagree") return "auditor-disagrees";
+  const stance = auditorStanceOf(current);
+  if (stance?.stance === "disagree") return "auditor-disagrees";
+  if (stance?.contradicted) return "auditor-unsure";
   if (current.isAffected && !briefDelivered) return "brief-needed";
   return null;
 }
@@ -64,8 +67,23 @@ export function countActionRequired(impacts: readonly Impact[], briefs: readonly
 /** Badge copy wherever an action reason shows. */
 export const ACTION_REASON_LABEL: Record<ActionReason, string> = {
   "auditor-disagrees": "Auditor disagrees",
+  "auditor-unsure": "Auditor unsure",
   "brief-needed": "Needs a brief",
 };
+
+/** Badge tone for each reason. Disagreement is the loudest. */
+export const ACTION_REASON_TONE: Record<ActionReason, "danger" | "brand"> = {
+  "auditor-disagrees": "danger",
+  "auditor-unsure": "brand",
+  "brief-needed": "brand",
+};
+
+export type AuditorFlag = Extract<ActionReason, "auditor-disagrees" | "auditor-unsure">;
+
+/** The reasons that ask the consultant to settle the verdict itself. */
+export function isAuditorFlag(r: ActionReason | null | undefined): r is AuditorFlag {
+  return r === "auditor-disagrees" || r === "auditor-unsure";
+}
 
 /**
  * The brief to open from an assessment: one sent or copied out on any run of

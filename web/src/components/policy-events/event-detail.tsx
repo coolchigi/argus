@@ -181,6 +181,14 @@ export function EventDetail({
                 </span>
               </>
             )}
+            {(e.auditorUnsure ?? 0) > 0 && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="text-brand-ink tabular">
+                  Auditor unsure on {e.auditorUnsure} {e.auditorUnsure === 1 ? "client" : "clients"}
+                </span>
+              </>
+            )}
             {(e.consultantReviewed ?? 0) > 0 && (
               <>
                 <span aria-hidden>·</span>

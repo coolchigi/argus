@@ -68,11 +68,13 @@ export function reassessments(runs: number): number {
 }
 
 /** The ↳ line under an event title. null when there's nothing to say. */
-export function eventNote(e: Pick<PolicyEvent, "runs" | "correctionsFiled" | "auditorDisagrees" | "consultantReviewed">): string | null {
+export function eventNote(e: Pick<PolicyEvent, "runs" | "correctionsFiled" | "auditorDisagrees" | "auditorUnsure" | "consultantReviewed">): string | null {
   const parts: string[] = [];
   const disagrees = e.auditorDisagrees ?? 0;
+  const unsure = e.auditorUnsure ?? 0;
   const reviewed = e.consultantReviewed ?? 0;
   if (disagrees > 0) parts.push(`Auditor disagrees on ${disagrees} ${disagrees === 1 ? "client" : "clients"}`);
+  if (unsure > 0) parts.push(`Auditor unsure on ${unsure} ${unsure === 1 ? "client" : "clients"}`);
   const again = reassessments(e.runs);
   if (again > 0) parts.push(`Reassessed ${again}x`);
   if (e.correctionsFiled > 0) {
@@ -114,7 +116,7 @@ export function clientBriefState(c: Pick<PolicyEventImpact, "isAffected" | "brie
 
 /**
  * Why this client needs the consultant. The API works it out (ADR-0004:
- * Auditor disagreement first, then a missing brief). Responses from before
+ * the Auditor's flags first, then a missing brief). Responses from before
  * that fall back to the brief rule.
  */
 export function clientActionReason(c: Pick<PolicyEventImpact, "isAffected" | "brief" | "actionReason">): ActionReason | null {

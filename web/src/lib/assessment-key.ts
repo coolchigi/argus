@@ -46,7 +46,31 @@ export function auditorStanceOf(row: { recordKind?: string | null; auditorStance
   if (isReview(row)) return null;
   const v = row.auditorStance;
   if (!v || typeof v !== "object") return null;
-  const { stance, reason } = v as { stance?: unknown; reason?: unknown };
+  const { stance, reason, contradicted } = v as { stance?: unknown; reason?: unknown; contradicted?: unknown };
   if (stance !== "agree" && stance !== "disagree" && stance !== "uncertain") return null;
-  return { stance, reason: typeof reason === "string" ? reason : "" };
+  return { stance, reason: typeof reason === "string" ? reason : "", contradicted: stance === "uncertain" && contradicted === true };
+}
+
+// The note the Auditor puts in front of a contradicted stance's reason
+// (services/auditor/src/handler.ts, checkStance).
+const CONTRADICTION_NOTE = /^The Auditor answered "(agree|disagree)" with isAffected=(true|false), but its reason argues the opposite: ([\s\S]*)$/;
+
+export type ContradictionNote = { answered: "agree" | "disagree"; analystIsAffected: boolean; modelReason: string };
+
+/** Splits the Auditor's note off a contradicted reason. null when the reason doesn't start with it. */
+export function contradictionNoteOf(reason: string): ContradictionNote | null {
+  const m = CONTRADICTION_NOTE.exec(reason);
+  if (!m) return null;
+  return { answered: m[1] as "agree" | "disagree", analystIsAffected: m[2] === "true", modelReason: m[3].trim() };
+}
+
+/**
+ * The Auditor's note in plain words: what it answered, and that its reason
+ * argues the other way. Falls back when the note can't be read.
+ */
+export function contradictionHeadline(note: ContradictionNote | null, isAffected: boolean): string {
+  const word = (affected: boolean) => (affected ? "affected" : "not affected");
+  if (!note) return `The Auditor's answer and its reason disagree about whether this client is ${word(isAffected)}.`;
+  const said = note.answered === "agree" ? note.analystIsAffected : !note.analystIsAffected;
+  return `The Auditor said this client is ${word(said)}, but its reason argues the opposite.`;
 }

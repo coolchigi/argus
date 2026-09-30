@@ -7,6 +7,7 @@ import type { Correction } from "@/lib/types/corrections";
 import { POLICY_EVENTS_MAX_LIMIT, useBriefs, useCorrections, useImpacts, usePolicyEvents } from "@/lib/queries";
 import {
   ACTION_REASON_LABEL,
+  ACTION_REASON_TONE,
   type AssessmentRail,
   type AssessmentRow,
   countActionRequired,
@@ -255,7 +256,7 @@ function AssessmentCard({ row: r, eventRef }: { row: AssessmentRow; eventRef: st
           </Link>
           <span className="ml-auto flex flex-wrap items-center gap-1.5">
             {r.actionReason && (
-              <Badge tone={r.actionReason === "auditor-disagrees" ? "danger" : "brand"}>{ACTION_REASON_LABEL[r.actionReason]}</Badge>
+              <Badge tone={ACTION_REASON_TONE[r.actionReason]}>{ACTION_REASON_LABEL[r.actionReason]}</Badge>
             )}
             {r.reviewed && <Badge>Reviewed by you</Badge>}
             {r.corrected && <Badge tone="danger">Corrected</Badge>}

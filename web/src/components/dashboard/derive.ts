@@ -59,8 +59,10 @@ function plural(n: number, one: string, many: string): string {
  */
 export function bannerImpactSentence(e: PolicyEvent): string {
   const disagrees = e.auditorDisagrees ?? 0;
+  const unsure = e.auditorUnsure ?? 0;
   const dissent = disagrees > 0 ? ` The Auditor disagrees with ${disagrees} ${plural(disagrees, "verdict", "verdicts")}.` : "";
-  return `${briefSentence(e)}${dissent}`;
+  const contradicted = unsure > 0 ? ` The Auditor contradicted itself on ${unsure} ${plural(unsure, "verdict", "verdicts")}.` : "";
+  return `${briefSentence(e)}${dissent}${contradicted}`;
 }
 
 function briefSentence(e: PolicyEvent): string {
@@ -85,6 +87,8 @@ export type DashboardStats = {
   actionRequired: number;
   /** The part of actionRequired that's there because the Auditor disagrees. */
   auditorDisagrees: number;
+  /** The part of actionRequired that's there because the Auditor contradicted its stance. */
+  auditorUnsure: number;
   /** Affected assessments with no sent brief. */
   briefsToSend: number;
   /** Brief rows that exist but aren't sent, summed over events. */
@@ -109,9 +113,20 @@ export function dashboardStats(input: {
     clientsWaiting: new Set(unsentAffected.map((i) => i.clientId)).size,
     actionRequired: countActionRequired(input.impacts, input.briefs),
     auditorDisagrees: rows.filter((r) => r.actionReason === "auditor-disagrees").length,
+    auditorUnsure: rows.filter((r) => r.actionReason === "auditor-unsure").length,
     briefsToSend: unsentAffected.length,
     briefsDrafted: input.events.reduce((n, e) => n + e.briefsUnsent, 0),
     eventsThisMonth: input.detectedThisMonth,
     correctionsFiled: input.events.reduce((n, e) => n + e.correctionsFiled, 0),
   };
+}
+
+/** "2 briefs to send · Auditor disagrees on 1 · Auditor unsure on 1". */
+export function actionSub(s: DashboardStats): string {
+  const briefs = `${s.briefsToSend} ${s.briefsToSend === 1 ? "brief" : "briefs"} to send`;
+  const flags = [
+    s.auditorDisagrees > 0 ? `Auditor disagrees on ${s.auditorDisagrees}` : null,
+    s.auditorUnsure > 0 ? `Auditor unsure on ${s.auditorUnsure}` : null,
+  ].filter((f): f is string => f !== null);
+  return flags.length > 0 ? [briefs, ...flags].join(" · ") : `${briefs}, ${s.briefsDrafted} drafted`;
 }
