@@ -1,4 +1,5 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
 import { ArrowRight } from "lucide-react";
 import type { AuditorStance, Impact } from "@/lib/argus-types";
 import { Badge } from "@/components/argus/status-badge";
@@ -97,23 +98,32 @@ export function ReviewedByYou({ review, reviewedAtLabel }: { review: Impact; rev
  * Where the agent chain sits on an agent row. A review isn't a pipeline run,
  * so it names the consultant and points at the original's chain instead.
  */
-export function ConsultantReviewLineage({ supersedes }: { supersedes: string | undefined }) {
+export function ConsultantReviewLineage({ supersedes, originalRun }: { supersedes: string | undefined; originalRun?: ReactNode }) {
+  const original = supersedes ? (
+    <Link href={impactHref(supersedes)} className="text-ink-1 underline underline-offset-4 decoration-hairline hover:decoration-ink-1">
+      the original assessment
+    </Link>
+  ) : (
+    "the original assessment"
+  );
   return (
-    <div className="rounded-md border border-border bg-surface">
-      <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3">
-        <span className="text-[12px] font-medium text-ink-primary">Consultant review</span>
-        <span className="text-[12px] text-ink-secondary">You set the verdict. Argus signed it with its signing key.</span>
+    <div className="space-y-2">
+      <div className="rounded-md border border-border bg-surface">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1 px-4 py-3">
+          <span className="text-[12px] font-medium text-ink-primary">Consultant review</span>
+          <span className="text-[12px] text-ink-secondary">You set the verdict. Argus signed it with its signing key.</span>
+        </div>
+        <p className="border-t border-border px-4 py-2 text-[11px] text-ink-2">
+          No agent produced this record.{" "}
+          {originalRun ? <>The run below produced {original}, which your review replaced.</> : <>The agent chain belongs to {original}.</>}
+        </p>
       </div>
-      <p className="border-t border-border px-4 py-2 text-[11px] text-ink-2">
-        No agent produced this record.{" "}
-        {supersedes ? (
-          <Link href={impactHref(supersedes)} className="text-ink-1 underline underline-offset-4 decoration-hairline hover:decoration-ink-1">
-            See how Argus reviewed the original
-          </Link>
-        ) : (
-          "The original assessment holds the agent chain."
-        )}
-      </p>
+      {originalRun && (
+        <section aria-label="The run behind the original assessment" className="space-y-2">
+          <p className="label">Original assessment&apos;s run</p>
+          {originalRun}
+        </section>
+      )}
     </div>
   );
 }

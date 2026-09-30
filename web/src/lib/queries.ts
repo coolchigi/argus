@@ -301,8 +301,8 @@ export function usePatchMe() {
  * GET /impacts/{id}/lineage. Polls every 4s while the run is live (started in
  * the last 10 minutes), so steps land on screen as the agents finish. After
  * that, one fetch. `policyEventId` comes from the row, never the key: a
- * consultant review's key doesn't start with its run id. Pass enabled: false
- * for a review, which no agent produced.
+ * consultant review's key doesn't start with its run id. On a review key the
+ * route answers with the run behind the assessment it replaced (reviewOf).
  */
 export function useAssessmentLineage(assessmentKey: string, policyEventId: string, options: { enabled?: boolean } = {}) {
   return useQuery({

@@ -122,6 +122,8 @@ export type PolicyEventImpact = {
   clientId: string;
   /** The client's current verdict: a consultant review if there is one, else the latest agent row. */
   assessmentKey: string;
+  /** The current row's run. On a consultant review, the run it reviewed. Never parse it from the key. Absent before #37. */
+  policyEventId?: string;
   /** 'consultant-review' when the consultant's signed verdict is current. */
   recordKind?: RecordKind;
   /** On a consultant review, the assessment it replaced. */

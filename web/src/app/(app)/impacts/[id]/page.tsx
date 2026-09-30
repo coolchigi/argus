@@ -18,6 +18,7 @@ import type { Correction } from "@/lib/types/corrections";
 import { briefForAssessment } from "@/lib/assessments";
 import { auditorStanceOf, isReview } from "@/lib/assessment-key";
 import { currentFor } from "@/lib/current-assessments";
+import { reviewedRun } from "@/lib/lineage";
 import {
   isNotFound,
   useAssessmentLineage,
@@ -94,9 +95,12 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
   const title = humanizeTopic(impact.topic);
   useBreadcrumbLabel(`${impact.clientId} · ${title}`);
   const review = isReview(impact);
-  // A review isn't a pipeline run, so it has no lineage of its own.
-  const lineage = useAssessmentLineage(assessmentKey, impact.policyEventId, { enabled: !review });
-  const live = useLiveRun(review ? null : impact.policyEventId, lineage.data);
+  // A review has no run of its own. On a review key the route returns the run
+  // behind the assessment it replaced, with reviewOf set. A review copies that
+  // row's policyEventId, so the row's value is the right run either way.
+  const lineage = useAssessmentLineage(assessmentKey, impact.policyEventId);
+  const originalRun = review ? reviewedRun(lineage.data) : null;
+  const live = useLiveRun(review && !originalRun ? null : impact.policyEventId, lineage.data);
   const eventId = impact.ruleHash || impact.policyEventId;
   const event = usePolicyEvent(eventId, { enabled: !!eventId });
   const briefs = useBriefs();
@@ -164,7 +168,10 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
         {review ? (
           <>
             <ReviewedByYou review={impact} reviewedAtLabel={formatDateTime(impact.reviewedAt ?? impact.timestamp)} />
-            <ConsultantReviewLineage supersedes={impact.supersedes} />
+            <ConsultantReviewLineage
+              supersedes={originalRun?.originalKey ?? impact.supersedes}
+              originalRun={originalRun ? <AgentLineage policyEventId={originalRun.policyEventId} lineage={lineage.data} live={live} /> : undefined}
+            />
           </>
         ) : (
           <>

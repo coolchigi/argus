@@ -162,19 +162,37 @@ export function parseCorrectionKey(
   return { assessmentKey, clientId: assessmentKey.slice(first + 1), correctedAt };
 }
 
-type RunRow = { assessmentKey: string; signedAt: string; recordKind?: string | null };
+/**
+ * On a consultant review, the run behind the agent assessment it replaced,
+ * as the lineage route reports it. null when the lineage isn't about a
+ * review, or comes from an API that doesn't resolve reviews yet.
+ */
+export function reviewedRun(lineage: Lineage | undefined): { originalKey: string; policyEventId: string } | null {
+  if (!lineage || typeof lineage.reviewOf !== "string" || !lineage.reviewOf || !lineage.policyEventId) return null;
+  return { originalKey: lineage.reviewOf, policyEventId: lineage.policyEventId };
+}
+
+type RunRow = { assessmentKey: string; signedAt: string; recordKind?: string | null; policyEventId?: string };
+
+/** The row's run id. Only a response from before #37 lacks it, and only then is an agent key parsed. */
+function runIdOf(row: RunRow): string | null {
+  if (row.policyEventId) return row.policyEventId;
+  const parsed = parseAssessmentKey(row.assessmentKey);
+  return parsed?.recordKind === "agent" ? parsed.policyEventId : null;
+}
 
 /**
  * The pipeline run behind the newest signed agent assessment on an event
- * page. A consultant review isn't a run, so a client whose current verdict is
- * a review counts through the agent rows in its history instead.
+ * page. A consultant review isn't a run, and its signedAt is when you
+ * reviewed, so a client whose current verdict is a review counts through the
+ * agent rows in its history instead.
  */
 export function latestRunId(clients: Array<RunRow & { priorAssessments?: Array<RunRow & { policyEventId: string }> }>): string | null {
   const runs: Array<{ runId: string; at: string }> = [];
   for (const c of clients) {
     if (!isReview(c)) {
-      const parsed = parseAssessmentKey(c.assessmentKey);
-      if (parsed?.recordKind === "agent") runs.push({ runId: parsed.policyEventId, at: c.signedAt });
+      const runId = runIdOf(c);
+      if (runId) runs.push({ runId, at: c.signedAt });
       continue;
     }
     for (const p of c.priorAssessments ?? []) if (!isReview(p) && p.policyEventId) runs.push({ runId: p.policyEventId, at: p.signedAt });

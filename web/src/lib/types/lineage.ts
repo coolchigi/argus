@@ -27,6 +27,12 @@ export type Lineage = {
   scope: "assessment" | "run";
   policyEventId: string;
   assessmentKey: string | null;
+  /**
+   * Set when assessmentKey is a consultant review: the agent assessment it
+   * replaced. The steps and policyEventId are that assessment's run, since a
+   * review has no run of its own. null otherwise, absent before #37.
+   */
+  reviewOf?: string | null;
   /** Earliest step seen. null when nothing was recorded. */
   startedAt: string | null;
   lastStepAt: string | null;

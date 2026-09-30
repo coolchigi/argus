@@ -7,14 +7,10 @@ import { Badge, StatusBadge } from "@/components/argus/status-badge";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { humanizePolicyDomain } from "@/lib/humanize";
 import type { ClientSummary } from "@/lib/types/profiles";
+import { clientNeedsAction } from "@/components/caseload/needs-action";
 
 export function clientHref(clientId: string): string {
   return `/caseload/${encodeURIComponent(clientId)}`;
-}
-
-/** A brief to send, or a verdict the Auditor disagrees with. Drives the dot and the Needs action filter. */
-export function clientNeedsAction(c: Pick<ClientSummary, "unsentBriefs" | "auditorDisagrees">): boolean {
-  return c.unsentBriefs > 0 || (c.auditorDisagrees ?? 0) > 0;
 }
 
 function actionLabel(c: ClientSummary): string {

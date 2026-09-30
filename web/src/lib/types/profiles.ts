@@ -40,6 +40,12 @@ export type ClientSummary = {
   unsentBriefs: number;
   /** Rules whose current verdict is the agent's and the Auditor disagrees with it. Optional until #37 is deployed. */
   auditorDisagrees?: number;
+  /**
+   * Rules that need the consultant: the Auditor disagrees or a brief is
+   * needed, each rule once. The list sorts on it and needsAction=true filters
+   * on it. Optional until #37 is deployed.
+   */
+  actionRequired?: number;
   /** ISO. Newest current assessment. null when never assessed. */
   lastAssessedAt: string | null;
   latestAffected: LatestAffected | null;
