@@ -14,18 +14,29 @@ import { cn } from "@/lib/utils";
 import { humanizeSignatureAlgorithm, humanizeTopic } from "@/lib/humanize";
 import { checkItYourselfSnippet } from "@/lib/receipt-snippet";
 import { JWKS_PATH } from "@/lib/sample-receipt";
-import { receiptKind, type PublicVerify, type ReceiptKind } from "@/lib/types/public";
+import { receiptRecord, type PublicVerify, type ReceiptRecord } from "@/lib/types/public";
 
 type Stage = "loading" | "loaded" | "verifying" | "sealBar" | "settled" | "invalid" | "notfound" | "error";
 
-const KIND_COPY: Record<ReceiptKind, { title: string; covers: string }> = {
+const KIND_COPY: Record<ReceiptRecord, { title: string; label: string; noun: string; covers: string }> = {
   assessment: {
     title: "Assessment receipt",
+    label: "Assessment",
+    noun: "assessment",
     covers:
       "The fingerprint is a SHA-256 hash of the full signed assessment: the IRCC rule it cites, the finding, the recommended action and the time it was signed.",
   },
+  "consultant-review": {
+    title: "Consultant review receipt",
+    label: "Consultant review",
+    noun: "review",
+    covers:
+      "The fingerprint is a SHA-256 hash of the consultant's signed review: their verdict and reasoning, the IRCC rule it cites, the fingerprint of the assessment it replaces and the time it was signed.",
+  },
   brief: {
     title: "Brief receipt",
+    label: "Sent brief",
+    noun: "brief",
     covers:
       "The fingerprint is a SHA-256 hash of the brief exactly as it was sent: subject, body, suggested actions, a hash of the recipient address, the sender and the send time.",
   },
@@ -86,8 +97,7 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
   }
 
   const verifiedGlow = stage === "sealBar" || stage === "settled";
-  const kind = data ? receiptKind(data) : "assessment";
-  const copy = KIND_COPY[kind];
+  const copy = KIND_COPY[data ? receiptRecord(data) : "assessment"];
 
   return (
     <div className="relative min-h-screen flex flex-col bg-canvas">
@@ -148,6 +158,7 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
             </div>
 
             <div className="rounded-lg border border-border bg-surface px-5 py-6 space-y-5 sm:px-8 sm:py-8">
+              <ReceiptField label="Record" value={copy.label} />
               {data.topic && <ReceiptField label="Topic" value={humanizeTopic(data.topic)} />}
               <ReceiptField label="Signed at" value={formatDateTime(data.signedAt)} tabular />
               <ReceiptField label="Algorithm" value={humanizeSignatureAlgorithm(data.signatureAlgorithm)} />
@@ -183,7 +194,7 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
                   </div>
                   <p className="text-[12px] leading-relaxed text-red text-center">
                     This signature couldn&rsquo;t be verified. Something is wrong here. Please contact the
-                    consultant who sent you this link before relying on the {kind}.
+                    consultant who sent you this link before relying on the {copy.noun}.
                   </p>
                 </div>
               ) : (

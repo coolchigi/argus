@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Brief, Impact } from "./argus-types.ts";
-import { briefForAssessment, countActionRequired, deriveAssessmentRows, parseAssessmentTab } from "./assessments.ts";
+import { actionReasonOf, briefForAssessment, countActionRequired, deriveAssessmentRows, parseAssessmentTab } from "./assessments.ts";
 
 const imp = (over: Partial<Impact>): Impact =>
   ({ assessmentKey: "run2#C1", policyEventId: "run2", ruleHash: "r1", clientId: "C1", isAffected: true, timestamp: "2026-09-28T10:00:00Z", ...over }) as Impact;
@@ -47,6 +47,53 @@ describe("countActionRequired", () => {
     const rows = deriveAssessmentRows(impacts, briefs, [{ ruleHash: "r1", clientId: "C1" }]);
     assert.equal(countActionRequired(impacts, briefs), rows.filter((r) => r.actionRequired).length);
     assert.equal(countActionRequired(impacts, briefs), 1);
+  });
+});
+
+describe("action reasons (ADR-0004)", () => {
+  const disagree = { stance: "disagree" as const, reason: "The profile shows a PNP nomination." };
+
+  it("flags an agent verdict the Auditor disagrees with, even after a brief went out", () => {
+    const [row] = deriveAssessmentRows([imp({ auditorStance: disagree })], [brief({ status: "sent" })], []);
+    assert.equal(row.actionReason, "auditor-disagrees");
+    assert.equal(row.actionRequired, true);
+    assert.equal(row.rail, "action");
+  });
+
+  it("flags an unaffected verdict the Auditor disagrees with", () => {
+    assert.equal(actionReasonOf(imp({ isAffected: false, auditorStance: disagree }), false), "auditor-disagrees");
+  });
+
+  it("puts disagreement ahead of a missing brief", () => {
+    assert.equal(actionReasonOf(imp({ auditorStance: disagree }), false), "auditor-disagrees");
+  });
+
+  it("doesn't flag agree or uncertain", () => {
+    assert.equal(actionReasonOf(imp({ isAffected: false, auditorStance: { stance: "uncertain", reason: "x" } }), false), null);
+    assert.equal(actionReasonOf(imp({ isAffected: false, auditorStance: { stance: "agree", reason: "x" } }), false), null);
+  });
+
+  it("clears the flag once the consultant's review is the current verdict", () => {
+    const review = imp({ assessmentKey: "review-1-run2#C1", recordKind: "consultant-review", isAffected: false, auditorStance: disagree });
+    const [row] = deriveAssessmentRows([review], [], []);
+    assert.equal(row.actionReason, null);
+    assert.equal(row.reviewed, true);
+  });
+
+  it("still needs a brief when the review says affected and nothing went out", () => {
+    const review = imp({ assessmentKey: "review-1-run2#C1", recordKind: "consultant-review", isAffected: true });
+    assert.equal(deriveAssessmentRows([review], [], [])[0].actionReason, "brief-needed");
+  });
+
+  it("counts disagreements in the badge the same way the tab does", () => {
+    const impacts = [
+      imp({ isAffected: false, auditorStance: disagree }),
+      imp({ clientId: "C2", assessmentKey: "run2#C2" }),
+      imp({ clientId: "C3", assessmentKey: "run2#C3", isAffected: false }),
+    ];
+    const rows = deriveAssessmentRows(impacts, [], []);
+    assert.equal(countActionRequired(impacts, []), 2);
+    assert.equal(countActionRequired(impacts, []), rows.filter((r) => r.actionRequired).length);
   });
 });
 

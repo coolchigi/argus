@@ -4,10 +4,15 @@
 // Clients appear as opaque client IDs only. Brief text and recipient details
 // never leave the service.
 
+import type { RecordKind as AssessmentRecordKind } from "../argus-types";
+
+/** Export kinds. Not the same thing as an assessment's recordKind. */
 export type RecordKind = "assessments" | "briefs";
 
 export type LedgerEntry = {
   kind: "assessment" | "brief";
+  /** Assessments only: "agent" or "consultant-review". null on briefs, absent before ADR-0004. */
+  recordKind?: AssessmentRecordKind | null;
   /** assessmentKey for assessments, briefId for briefs. */
   id: string;
   clientId: string;
@@ -42,5 +47,6 @@ export type ExportResponse = {
   fileName: string;
   from: string;
   to: string;
-  counts: { assessments: number; briefs: number };
+  /** assessments includes consultantReviews. */
+  counts: { assessments: number; consultantReviews?: number; briefs: number };
 };

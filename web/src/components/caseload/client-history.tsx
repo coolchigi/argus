@@ -7,6 +7,7 @@ import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { formatDelta } from "@/lib/format";
 import { humanizeImpactType, humanizeTopic } from "@/lib/humanize";
 import type { ClientAssessment, ClientBrief } from "@/lib/types/profiles";
+import { ACTION_REASON_LABEL } from "@/lib/assessments";
 
 function impactHref(assessmentKey: string) {
   return `/impacts/${encodeURIComponent(assessmentKey)}`;
@@ -15,6 +16,18 @@ function impactHref(assessmentKey: string) {
 function assessmentStatus(a: ClientAssessment): "action-required" | "done" | "no-impact" {
   if (!a.isAffected) return "no-impact";
   return a.needsBrief ? "action-required" : "done";
+}
+
+/** "Reassessed, 3 runs. The earlier run said not affected." Reviews read as yours, not as runs. */
+function historyNote(a: ClientAssessment): string | null {
+  const previous = a.priorAssessments[0];
+  if (a.recordKind === "consultant-review") {
+    const replaced = a.priorAssessments.find((p) => p.assessmentKey === a.supersedes);
+    return replaced ? `You changed the verdict. It said ${replaced.isAffected ? "affected" : "not affected"}.` : "You changed the verdict.";
+  }
+  if (a.runs <= 1) return null;
+  const was = previous && previous.isAffected !== a.isAffected ? `The earlier run said ${previous.isAffected ? "affected" : "not affected"}.` : "Same verdict as before.";
+  return `Reassessed, ${a.runs} runs. ${was}`;
 }
 
 /** One row per policy change: the client's current assessment, with a note when it was reassessed. */
@@ -37,19 +50,16 @@ export function AssessmentList({ assessments }: { assessments: ClientAssessment[
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[11px] text-ink-3">
                 <span>{humanizeImpactType(a.impactType)}</span>
                 {a.numericDelta !== null && <span className={a.numericDelta < 0 ? "text-danger-ink" : "text-ink-2"}>{formatDelta(a.numericDelta)}</span>}
-                <span>Assessed {formatDayMonthYear(a.signedAt)}</span>
-                {a.runs > 1 && (
-                  <span>
-                    Reassessed, {a.runs} runs.{" "}
-                    {a.priorAssessments[0] && a.priorAssessments[0].isAffected !== a.isAffected
-                      ? `The earlier run said ${a.priorAssessments[0].isAffected ? "affected" : "not affected"}.`
-                      : "Same verdict as before."}
-                  </span>
-                )}
+                <span>
+                  {a.recordKind === "consultant-review" ? "Reviewed" : "Assessed"} {formatDayMonthYear(a.signedAt)}
+                </span>
+                {historyNote(a) && <span>{historyNote(a)}</span>}
               </div>
               {a.isAffected && a.recommendedAction && <p className="max-w-prose text-[13px] text-ink-2">{a.recommendedAction}</p>}
             </div>
             <div className="relative z-10 flex shrink-0 flex-col items-end gap-1.5">
+              {a.actionReason === "auditor-disagrees" && <Badge tone="danger">{ACTION_REASON_LABEL["auditor-disagrees"]}</Badge>}
+              {a.recordKind === "consultant-review" && <Badge>Reviewed by you</Badge>}
               <StatusBadge kind="assessment" status={assessmentStatus(a)} />
               {a.canonicalHash && <Fingerprint hash={a.canonicalHash} signed={a.signed} href={`/verify/${a.canonicalHash}`} />}
             </div>

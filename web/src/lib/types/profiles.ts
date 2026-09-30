@@ -7,6 +7,7 @@
 // client), the latest run, so a replay never double counts.
 
 import type { PolicyDomain } from "@/lib/humanize";
+import type { ActionReason, AuditorStance, RecordKind } from "@/lib/argus-types";
 
 export type ClientStatus = "active" | "submitted" | "closed";
 
@@ -37,6 +38,14 @@ export type ClientSummary = {
   affectedCount: number;
   /** Rules whose current assessment is affected with no sent brief on any run. Drives "Needs action". */
   unsentBriefs: number;
+  /** Rules whose current verdict is the agent's and the Auditor disagrees with it. Optional until #37 is deployed. */
+  auditorDisagrees?: number;
+  /**
+   * Rules that need the consultant: the Auditor disagrees or a brief is
+   * needed, each rule once. The list sorts on it and needsAction=true filters
+   * on it. Optional until #37 is deployed.
+   */
+  actionRequired?: number;
   /** ISO. Newest current assessment. null when never assessed. */
   lastAssessedAt: string | null;
   latestAffected: LatestAffected | null;
@@ -103,6 +112,12 @@ export type ClientAssessment = {
   policyEventId: string;
   ruleHash: string;
   topic: string;
+  /** 'consultant-review' when the consultant's signed verdict is current. */
+  recordKind?: RecordKind;
+  /** On a consultant review, the assessment it replaced. */
+  supersedes?: string | null;
+  auditorStance?: AuditorStance | null;
+  actionReason?: ActionReason | null;
   isAffected: boolean;
   impactType: string;
   numericDelta: number | null;
@@ -113,7 +128,7 @@ export type ClientAssessment = {
   signedAt: string;
   /** Assessments of this rule for this client, current included. More than 1 means reassessed. */
   runs: number;
-  priorAssessments: Array<{ assessmentKey: string; signedAt: string; isAffected: boolean; canonicalHash: string | null }>;
+  priorAssessments: Array<{ assessmentKey: string; recordKind?: RecordKind; signedAt: string; isAffected: boolean; canonicalHash: string | null }>;
   /** A sent brief from any run, else a brief on the current assessment, else null. */
   brief: { briefId: string; status: string; sentAt: string | null } | null;
   /** Affected and no sent brief on any run. */

@@ -9,6 +9,7 @@ import { ProgressLine } from "@/components/argus/progress-line";
 import { Switch } from "@/components/argus/switch";
 import { AddClientDialog } from "@/components/caseload/add-client-dialog";
 import { CaseloadTable } from "@/components/caseload/caseload-table";
+import { clientNeedsAction } from "@/components/caseload/needs-action";
 import { PII_WARNING, buttonPrimary, buttonSecondary } from "@/components/caseload/copy";
 import { ImportDialog } from "@/components/caseload/import-dialog";
 import { EmptyState } from "@/components/empty-state";
@@ -43,13 +44,13 @@ export default function CaseloadPage() {
   const [addOpen, setAddOpen] = useState(false);
 
   const all = useMemo(() => profiles.data?.clients ?? [], [profiles.data]);
-  const needsActionCount = useMemo(() => all.filter((c) => c.unsentBriefs > 0).length, [all]);
+  const needsActionCount = useMemo(() => all.filter(clientNeedsAction).length, [all]);
   const rows = useMemo(() => {
     const q = search.trim().toLowerCase();
     return all
       .filter((c) => status === "all" || c.status === status)
       .filter((c) => program === "all" || c.program === program)
-      .filter((c) => !needsAction || c.unsentBriefs > 0)
+      .filter((c) => !needsAction || clientNeedsAction(c))
       .filter((c) => matches(c, q));
   }, [all, search, program, status, needsAction]);
 
@@ -107,7 +108,7 @@ export default function CaseloadPage() {
         title="Client caseload"
         meta={
           profiles.data
-            ? `${profiles.data.total} ${profiles.data.total === 1 ? "client" : "clients"}, ${needsActionCount} with briefs to send`
+            ? `${profiles.data.total} ${profiles.data.total === 1 ? "client" : "clients"}, ${needsActionCount} needing action`
             : "Loading"
         }
         actions={actions}

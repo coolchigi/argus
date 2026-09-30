@@ -30,6 +30,8 @@ type Props = {
   autoVerify?: boolean;
   /** Called with the fetched signature material once loaded. */
   onLoaded?: (sig: ReceiptSignature) => void;
+  /** A consultant review is signed with the same key and verifies the same way. Only the copy changes. */
+  review?: boolean;
 };
 
 type ReceiptSignature = Omit<AuditSignature, "assessmentKey">;
@@ -75,6 +77,7 @@ export function SignatureReceipt({
   signedAt,
   autoVerify = false,
   onLoaded,
+  review = false,
 }: Props) {
   const [stage, setStage] = useState<Stage>("idle");
   const [loaded, setLoaded] = useState<LoadedState>({ sig: null, verifiedAt: null, message: null });
@@ -219,7 +222,9 @@ export function SignatureReceipt({
                 ? "Signature invalid"
                 : kind === "brief"
                   ? "Send receipt"
-                  : "Signature receipt"}
+                  : review
+                    ? "Review receipt"
+                    : "Signature receipt"}
           </span>
         </div>
 
@@ -238,7 +243,7 @@ export function SignatureReceipt({
             ) : isVerifying ? (
               <VerifyingCaret />
             ) : (
-              <span className="text-[13px] text-ink-primary">Signed by Argus</span>
+              <span className="text-[13px] text-ink-primary">{review ? "Your review, signed by Argus" : "Signed by Argus"}</span>
             )}
           </ReceiptRow>
 

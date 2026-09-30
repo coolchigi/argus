@@ -10,14 +10,20 @@ export const ACTIVITY_LIMIT = 8;
 
 const KIND_LABEL: Record<ActivityKind, string> = {
   "assessment-signed": "Assessment signed",
+  "consultant-review-signed": "Your review signed",
   "brief-sent": "Brief sent",
   "correction-filed": "Correction filed",
   "alert-emailed": "Alert emailed",
 };
 
-/** Seal-green only for a signed assessment that carries its fingerprint. */
+/** A signed record, Argus's or the consultant's review. These carry a fingerprint. */
+function isSigned(item: ActivityItem): boolean {
+  return item.kind === "assessment-signed" || item.kind === "consultant-review-signed";
+}
+
+/** Seal-green only for a signed record that carries its fingerprint. */
 function dotClass(item: ActivityItem): string {
-  if (item.kind === "assessment-signed" && item.fingerprint) return "bg-seal";
+  if (isSigned(item) && item.fingerprint) return "bg-seal";
   if (item.kind === "correction-filed") return "bg-danger";
   if (item.kind === "alert-emailed") return "bg-brand";
   return "bg-ink-3";
@@ -89,10 +95,10 @@ export function ActivityFeed({
                       {formatFeedTime(item.at)}
                     </time>
                   </div>
-                  {(item.clientId || (item.kind === "assessment-signed" && item.fingerprint)) && (
+                  {(item.clientId || (isSigned(item) && item.fingerprint)) && (
                     <div className="mt-1.5 flex flex-wrap items-center gap-2">
                       {item.clientId && <ClientChip clientId={item.clientId} />}
-                      {item.kind === "assessment-signed" && item.fingerprint && (
+                      {isSigned(item) && item.fingerprint && (
                         <Fingerprint hash={item.fingerprint} signed chars={8} href={`/verify/${item.fingerprint}`} />
                       )}
                     </div>

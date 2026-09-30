@@ -5,7 +5,8 @@ import { currentAssessments } from "@/lib/current-assessments";
 import { countActionRequired } from "@/lib/assessments";
 import { ApiError, api } from "@/lib/api";
 import type { AuditSignature, Brief, Impact } from "@/lib/argus-types";
-import type { CorrectionsResponse } from "@/lib/types/corrections";
+import type { CorrectionResponse, CorrectionsResponse } from "@/lib/types/corrections";
+import type { CorrectionBody } from "@/lib/correction-form";
 import type {
   ActivityResponse,
   PolicyEventDetailResponse,
@@ -299,15 +300,42 @@ export function usePatchMe() {
 /**
  * GET /impacts/{id}/lineage. Polls every 4s while the run is live (started in
  * the last 10 minutes), so steps land on screen as the agents finish. After
- * that, one fetch.
+ * that, one fetch. `policyEventId` comes from the row, never the key: a
+ * consultant review's key doesn't start with its run id. On a review key the
+ * route answers with the run behind the assessment it replaced (reviewOf).
  */
-export function useAssessmentLineage(assessmentKey: string) {
-  const policyEventId = assessmentKey.split("#")[0];
+export function useAssessmentLineage(assessmentKey: string, policyEventId: string, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.lineage(assessmentKey),
     queryFn: () => api<Lineage>(`/impacts/${encodeURIComponent(assessmentKey)}/lineage`),
     refetchInterval: (q) => (isLive(policyEventId, q.state.data, Date.now()) ? LIVE_POLL_MS : false),
     retry: retryUnlessNotFound,
+    enabled: options.enabled ?? true,
+  });
+}
+
+/** POST /impacts/{id}/correction. A verdict change comes back with the signed review. */
+export function useFileCorrection(assessmentKey: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: CorrectionBody) =>
+      api<CorrectionResponse>(`/impacts/${encodeURIComponent(assessmentKey)}/correction`, { method: "POST", body }),
+    onSuccess: (res) => {
+      if (res.review) qc.setQueryData(queryKeys.impact(res.review.assessmentKey), res.review);
+      void qc.invalidateQueries({ queryKey: queryKeys.impactCorrections(assessmentKey) });
+      void qc.invalidateQueries({ queryKey: queryKeys.corrections() });
+      void qc.invalidateQueries({ queryKey: ["policy-event-impacts"] });
+      void qc.invalidateQueries({ queryKey: ["policy-events"] });
+      if (res.review) {
+        // A review is a new signed record and the current verdict everywhere.
+        void qc.invalidateQueries({ queryKey: queryKeys.impacts() });
+        void qc.invalidateQueries({ queryKey: queryKeys.briefs() });
+        void qc.invalidateQueries({ queryKey: ["activity"] });
+        void qc.invalidateQueries({ queryKey: ["profiles"] });
+        void qc.invalidateQueries({ queryKey: ["profile"] });
+        void qc.invalidateQueries({ queryKey: ["records"] });
+      }
+    },
   });
 }
 

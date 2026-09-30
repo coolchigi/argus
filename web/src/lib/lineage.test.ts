@@ -12,6 +12,7 @@ import {
   LIVE_WINDOW_MS,
   modelFamily,
   parseCorrectionKey,
+  reviewedRun,
   runOrigin,
 } from "./lineage.ts";
 import type { Lineage, LineageAgent } from "./types/lineage.ts";
@@ -178,4 +179,44 @@ test("latestRunId picks the run of the newest signed assessment", () => {
     "e2",
   );
   assert.equal(latestRunId([]), null);
+});
+
+test("latestRunId reads the run from the row, not the key", () => {
+  // A key that doesn't start with its run id must not matter when policyEventId is there.
+  assert.equal(latestRunId([{ assessmentKey: "whatever#C1", policyEventId: "e7", signedAt: "2026-09-28T10:00:00Z" }]), "e7");
+  // Responses from before #37 have no policyEventId, so the agent key is parsed.
+  assert.equal(latestRunId([{ assessmentKey: "e3#C1", signedAt: "2026-09-28T10:00:00Z" }]), "e3");
+});
+
+test("reviewedRun reports the original's run only for a resolved review", () => {
+  const lineage = (over: Partial<Lineage>): Lineage => ({
+    scope: "assessment",
+    policyEventId: "e2",
+    assessmentKey: "review-1-e2#C2",
+    startedAt: null,
+    lastStepAt: null,
+    agents: [],
+    fewShotCorrectionKeys: [],
+    ...over,
+  });
+  assert.deepEqual(reviewedRun(lineage({ reviewOf: "e2#C2" })), { originalKey: "e2#C2", policyEventId: "e2" });
+  assert.equal(reviewedRun(lineage({ reviewOf: null })), null);
+  // An API from before the fix answers a review key without reviewOf.
+  assert.equal(reviewedRun(lineage({})), null);
+  assert.equal(reviewedRun(undefined), null);
+});
+
+test("latestRunId never returns a review key's prefix as a run", () => {
+  // C2's current verdict is a review signed after every run. Its run is the agent row it replaced.
+  const clients = [
+    { assessmentKey: "e1#C1", signedAt: "2026-09-28T10:00:00Z" },
+    {
+      assessmentKey: "review-1727700000000-e2#C2",
+      recordKind: "consultant-review",
+      signedAt: "2026-09-30T10:00:00Z",
+      priorAssessments: [{ assessmentKey: "e2#C2", policyEventId: "e2", signedAt: "2026-09-29T10:00:00Z" }],
+    },
+  ];
+  assert.equal(latestRunId(clients), "e2");
+  assert.equal(latestRunId([{ ...clients[1], priorAssessments: [] }]), null);
 });

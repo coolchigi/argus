@@ -9,6 +9,21 @@ export type ImpactType =
 
 export type Confidence = "low" | "medium" | "high";
 
+/**
+ * "agent" for a row Anchor signed at the end of a pipeline run.
+ * "consultant-review" for a verdict the consultant signed by correcting one
+ * (ADR-0004). Rows without recordKind are agent rows.
+ */
+export type RecordKind = "agent" | "consultant-review";
+
+export type Stance = "agree" | "disagree" | "uncertain";
+
+/** The Auditor's view of the Analyst's isAffected, signed with the agent row. */
+export type AuditorStance = { stance: Stance; reason: string };
+
+/** Why a client needs the consultant. Disagreement first: settle the verdict before briefing on it. */
+export type ActionReason = "auditor-disagrees" | "brief-needed";
+
 export type Impact = {
   rcicId: string;
   assessmentKey: string;
@@ -28,6 +43,19 @@ export type Impact = {
   canonicalHash?: string;
   signingKeyId?: string;
   signatureAlgorithm?: string;
+  /** Absent on agent rows. */
+  recordKind?: RecordKind;
+  /** Agent rows signed after ADR-0004. */
+  auditorStance?: AuditorStance | null;
+  // Consultant reviews only.
+  /** The assessmentKey of the row this review replaces. That row stays on record. */
+  supersedes?: string;
+  supersedesCanonicalHash?: string | null;
+  /** The consultant's rcicId. */
+  reviewedBy?: string;
+  reviewedAt?: string;
+  /** The consultant's reasoning, guardrail-checked and signed. */
+  reviewReasoning?: string;
 };
 
 export type Brief = {

@@ -7,9 +7,18 @@ import { Badge, StatusBadge } from "@/components/argus/status-badge";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { humanizePolicyDomain } from "@/lib/humanize";
 import type { ClientSummary } from "@/lib/types/profiles";
+import { clientNeedsAction } from "@/components/caseload/needs-action";
 
 export function clientHref(clientId: string): string {
   return `/caseload/${encodeURIComponent(clientId)}`;
+}
+
+function actionLabel(c: ClientSummary): string {
+  const parts: string[] = [];
+  if (c.unsentBriefs > 0) parts.push(`${c.unsentBriefs} ${c.unsentBriefs === 1 ? "brief" : "briefs"} to send`);
+  const d = c.auditorDisagrees ?? 0;
+  if (d > 0) parts.push(`the Auditor disagrees with ${d} ${d === 1 ? "verdict" : "verdicts"}`);
+  return parts.length > 0 ? `, ${parts.join(", ")}` : "";
 }
 
 function nocLine(c: ClientSummary): string | null {
@@ -26,7 +35,16 @@ const COLUMNS: Column<ClientSummary>[] = [
     key: "client",
     header: "Client",
     // The row link wraps this cell, so the chip renders as a span.
-    cell: (c) => <ClientChip clientId={c.clientId} needsAction={c.unsentBriefs > 0} />,
+    cell: (c) => (
+      <div className="flex flex-col items-start gap-1">
+        <ClientChip clientId={c.clientId} needsAction={clientNeedsAction(c)} />
+        {(c.auditorDisagrees ?? 0) > 0 && (
+          <Badge tone="danger">
+            Auditor disagrees{(c.auditorDisagrees ?? 0) > 1 ? ` · ${c.auditorDisagrees}` : ""}
+          </Badge>
+        )}
+      </div>
+    ),
   },
   {
     key: "program",
@@ -107,9 +125,7 @@ export function CaseloadTable({ clients, loading, empty }: Props) {
       getRowKey={(c) => c.clientId}
       caption="Your clients, one row each"
       rowHref={(c) => clientHref(c.clientId)}
-      rowLinkLabel={(c) =>
-        `Open client ${c.clientId}${c.unsentBriefs > 0 ? `, ${c.unsentBriefs} ${c.unsentBriefs === 1 ? "brief" : "briefs"} to send` : ""}`
-      }
+      rowLinkLabel={(c) => `Open client ${c.clientId}${actionLabel(c)}`}
       loading={loading}
       placeholderRows={6}
       empty={empty}

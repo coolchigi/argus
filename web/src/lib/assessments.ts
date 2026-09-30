@@ -1,7 +1,8 @@
 // Derived assessment states for the Assessments screen and the sidebar
 // badge. Nothing here is stored. See PHASE8_PLAN section 1b.
 
-import type { Brief, Impact } from "./argus-types";
+import type { ActionReason, Brief, Impact } from "./argus-types";
+import { auditorStanceOf, isReview } from "./assessment-key.ts";
 import { isDelivered } from "./briefs.ts";
 import { ruleClientKey, sentRuleClientKeys } from "./current-assessments.ts";
 
@@ -12,8 +13,11 @@ import { ruleClientKey, sentRuleClientKeys } from "./current-assessments.ts";
 export type AssessmentRail = "action" | "corrected" | "done" | "no-impact";
 
 export type AssessmentRow = Impact & {
-  /** Affected, and no brief sent or copied out on any run of this rule for this client. */
+  /** actionReason is set. */
   actionRequired: boolean;
+  actionReason: ActionReason | null;
+  /** The consultant's signed review is the current verdict. */
+  reviewed: boolean;
   /** A correction exists on any run of this rule for this client. */
   corrected: boolean;
   rail: AssessmentRail;
@@ -21,16 +25,31 @@ export type AssessmentRow = Impact & {
 
 type RuleClient = { ruleHash?: string | null; policyEventId?: string | null; clientId: string };
 
+/**
+ * What the consultant has to do about one current verdict (ADR-0004), same
+ * rule as actionReasonOf in services/policy-events:
+ * - an agent row the Auditor disagrees with needs a review, whatever the brief
+ * - an affected verdict with no brief sent or copied out on any run needs a brief
+ * A consultant review carries no stance, so reviewing clears the first.
+ */
+export function actionReasonOf(current: Impact, briefDelivered: boolean): ActionReason | null {
+  // auditorStanceOf is null on a review.
+  if (auditorStanceOf(current)?.stance === "disagree") return "auditor-disagrees";
+  if (current.isAffected && !briefDelivered) return "brief-needed";
+  return null;
+}
+
 /** `impacts` must be the current assessments, one per (rule, client). */
 export function deriveAssessmentRows(impacts: readonly Impact[], briefs: readonly Brief[], corrections: readonly RuleClient[]): AssessmentRow[] {
   const delivered = sentRuleClientKeys(briefs);
   const corrected = new Set(corrections.map(ruleClientKey));
   return impacts.map((i) => {
     const key = ruleClientKey(i);
-    const actionRequired = i.isAffected && !delivered.has(key);
+    const actionReason = actionReasonOf(i, delivered.has(key));
+    const actionRequired = actionReason !== null;
     const isCorrected = corrected.has(key);
     const rail: AssessmentRail = actionRequired ? "action" : isCorrected ? "corrected" : i.isAffected ? "done" : "no-impact";
-    return { ...i, actionRequired, corrected: isCorrected, rail };
+    return { ...i, actionRequired, actionReason, reviewed: isReview(i), corrected: isCorrected, rail };
   });
 }
 
@@ -41,6 +60,12 @@ export function deriveAssessmentRows(impacts: readonly Impact[], briefs: readonl
 export function countActionRequired(impacts: readonly Impact[], briefs: readonly Brief[]): number {
   return deriveAssessmentRows(impacts, briefs, []).filter((r) => r.actionRequired).length;
 }
+
+/** Badge copy wherever an action reason shows. */
+export const ACTION_REASON_LABEL: Record<ActionReason, string> = {
+  "auditor-disagrees": "Auditor disagrees",
+  "brief-needed": "Needs a brief",
+};
 
 /**
  * The brief to open from an assessment: one sent or copied out on any run of

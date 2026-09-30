@@ -7,7 +7,8 @@ import { ClientChip } from "@/components/argus/client-chip";
 import { Fingerprint } from "@/components/argus/fingerprint";
 import { Badge, StatusBadge } from "@/components/argus/status-badge";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
-import { clientBriefState, clientNeedsAction } from "@/components/policy-events/derive";
+import { clientActionReason, clientBriefState, clientNeedsAction } from "@/components/policy-events/derive";
+import { ACTION_REASON_LABEL } from "@/lib/assessments";
 import { formatDelta } from "@/lib/format";
 import { humanizeImpactType, humanizeTopic } from "@/lib/humanize";
 import type { PolicyEventImpact } from "@/lib/types/policy-events";
@@ -37,8 +38,32 @@ function BriefCell({ c }: { c: PolicyEventImpact }) {
 
 function Details({ c }: { c: PolicyEventImpact }) {
   const assessmentHref = `/impacts/${encodeURIComponent(c.assessmentKey)}`;
+  const review = c.recordKind === "consultant-review";
+  const stance = c.auditorStance && c.auditorStance.stance !== "agree" ? c.auditorStance : null;
   return (
     <div className="space-y-4">
+      {review && (
+        <p className="border-l-2 border-brand-ink bg-brand-subtle px-3 py-2 text-[12px] leading-relaxed text-ink-1">
+          You reviewed this verdict{c.reviewedAt ? ` on ${formatDayMonthYear(c.reviewedAt)}` : ""}. Your signed review is the current record.
+          {c.supersedes && (
+            <>
+              {" "}
+              <Link href={`/impacts/${encodeURIComponent(c.supersedes)}`} className="underline underline-offset-4 hover:text-ink-1">
+                Open the original assessment
+              </Link>
+              , which stays on record.
+            </>
+          )}
+        </p>
+      )}
+      {stance && (
+        <div className={cn("border-l-2 px-3 py-2", stance.stance === "disagree" ? "border-danger bg-danger-subtle" : "border-brand-ink bg-brand-subtle")}>
+          <div className={cn("label mb-1", stance.stance === "disagree" ? "text-danger-ink" : "text-brand-ink")}>
+            {stance.stance === "disagree" ? "The Auditor disagrees" : "The Auditor isn't sure"}
+          </div>
+          <p className="max-w-[68ch] text-[12px] leading-relaxed text-ink-1">{stance.reason || "No reason recorded."}</p>
+        </div>
+      )}
       <div>
         <div className="label mb-1.5">What changes for this client</div>
         <p className="max-w-[68ch] text-[13px] leading-relaxed text-ink-1">{c.narrative || "No narrative recorded."}</p>
@@ -67,6 +92,7 @@ function Details({ c }: { c: PolicyEventImpact }) {
                   {formatDayMonthYear(p.signedAt)}
                 </time>
                 <span>{p.isAffected ? "Affected" : "Not affected"}</span>
+                {p.recordKind === "consultant-review" && <span className="text-ink-1">Your review</span>}
                 {p.correctionsFiled > 0 && <StatusBadge kind="assessment" status="corrected" />}
                 {p.canonicalHash && <Fingerprint hash={p.canonicalHash} signed chars={8} href={`/verify/${p.canonicalHash}`} />}
                 <Link
@@ -86,7 +112,7 @@ function Details({ c }: { c: PolicyEventImpact }) {
           href={assessmentHref}
           className="inline-flex h-8 items-center gap-1.5 rounded-sm border border-control bg-surface px-3 text-[12px] text-ink-1 transition-colors hover:bg-sunk"
         >
-          Open assessment
+          {review ? "Open your review" : "Open assessment"}
           <ArrowRight aria-hidden className="h-3 w-3" strokeWidth={1.75} />
         </Link>
         {c.brief && (
@@ -129,7 +155,8 @@ export function ClientImpactTable({ clients, empty }: { clients: PolicyEventImpa
   }
 
   return (
-    <div className="overflow-x-auto border border-hairline bg-card">
+    // relative keeps the sr-only labels inside the scroller, or they widen the page on phones.
+    <div className="relative overflow-x-auto border border-hairline bg-card">
       <table className="w-full border-collapse text-[13px]">
         <caption className="sr-only">Clients assessed against this change</caption>
         <thead className="bg-surface">
@@ -177,6 +204,8 @@ export function ClientImpactTable({ clients, empty }: { clients: PolicyEventImpa
                     <td className="px-4 py-3 align-top">
                       <span className="inline-flex flex-wrap gap-1">
                         {c.isAffected ? <Badge tone="brand">Affected</Badge> : <Badge>Not affected</Badge>}
+                        {clientActionReason(c) === "auditor-disagrees" && <Badge tone="danger">{ACTION_REASON_LABEL["auditor-disagrees"]}</Badge>}
+                        {c.recordKind === "consultant-review" && <Badge>Reviewed by you</Badge>}
                         {c.correctionsFiled > 0 && <StatusBadge kind="assessment" status="corrected" />}
                       </span>
                     </td>

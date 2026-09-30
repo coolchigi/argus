@@ -8,7 +8,7 @@
 // earlier ones are history. Nothing here is read from the (still empty)
 // argus-policy-events table.
 
-import type { Confidence, ImpactType } from "../argus-types";
+import type { ActionReason, AuditorStance, Confidence, ImpactType, RecordKind } from "../argus-types";
 
 export type PolicyEventSeverity = "high" | "medium" | "low";
 
@@ -56,11 +56,15 @@ export type PolicyEvent = {
   briefsUnsent: number;
   /** Clients whose current assessment is affected and who have no sent brief on any run. */
   awaitingBrief: number;
+  /** Clients whose current verdict is the agent's and the Auditor disagrees with it. Optional until #37 is deployed. */
+  auditorDisagrees?: number;
+  /** Clients whose current verdict is a consultant review. */
+  consultantReviewed?: number;
   /** Corrections filed on any run of this rule. */
   correctionsFiled: number;
   /**
-   * no-impact: no client's current assessment is affected.
-   * action-required: awaitingBrief > 0.
+   * action-required: a client needs a brief or the Auditor disagrees with a current verdict.
+   * no-impact: otherwise, when no client's current assessment is affected.
    * done: every affected client has a sent brief.
    */
   status: PolicyEventStatus;
@@ -106,6 +110,7 @@ export type PolicyEventImpactBrief = {
 /** An earlier run's assessment for the same client and rule. */
 export type PolicyEventPriorAssessment = {
   assessmentKey: string;
+  recordKind?: RecordKind;
   policyEventId: string;
   signedAt: string;
   isAffected: boolean;
@@ -115,8 +120,20 @@ export type PolicyEventPriorAssessment = {
 
 export type PolicyEventImpact = {
   clientId: string;
-  /** The client's current (latest) assessment. */
+  /** The client's current verdict: a consultant review if there is one, else the latest agent row. */
   assessmentKey: string;
+  /** The current row's run. On a consultant review, the run it reviewed. Never parse it from the key. Absent before #37. */
+  policyEventId?: string;
+  /** 'consultant-review' when the consultant's signed verdict is current. */
+  recordKind?: RecordKind;
+  /** On a consultant review, the assessment it replaced. */
+  supersedes?: string | null;
+  /** On a consultant review, when it was signed. */
+  reviewedAt?: string | null;
+  /** The Auditor's signed stance on the current agent verdict. null on reviews and older rows. */
+  auditorStance?: AuditorStance | null;
+  actionRequired?: boolean;
+  actionReason?: ActionReason | null;
   /** From ClientProfiles. null when the profile is missing. */
   program: string | null;
   clientStatus: string | null;
@@ -150,7 +167,7 @@ export type PolicyEventImpactsResponse = {
   clients: PolicyEventImpact[];
 };
 
-export type ActivityKind = "assessment-signed" | "brief-sent" | "correction-filed" | "alert-emailed";
+export type ActivityKind = "assessment-signed" | "consultant-review-signed" | "brief-sent" | "correction-filed" | "alert-emailed";
 
 export type ActivityRef = {
   kind: "event" | "assessment" | "brief";
@@ -168,7 +185,7 @@ export type ActivityItem = {
   /** The rule-level policy event this item belongs to. null when it can't be traced to an assessment. */
   eventId: string | null;
   clientId: string | null;
-  /** Assessment canonicalHash. Set only on assessment-signed items. */
+  /** Assessment canonicalHash. Set only on assessment-signed and consultant-review-signed items. */
   fingerprint: string | null;
 };
 
