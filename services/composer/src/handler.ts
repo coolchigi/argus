@@ -7,7 +7,7 @@ import type { DynamoDBStreamEvent, DynamoDBRecord } from 'aws-lambda';
 import { randomUUID } from 'node:crypto';
 import { describeGuardrailBlock, guarded } from './guardrail';
 import { ruleWindow } from './rule-window';
-import { checkBriefGrounding } from './grounding';
+import { checkBriefGrounding, checkDateRoles } from './grounding';
 import { elapsedMs, recordStep } from './telemetry';
 import { checkBriefVoice, withoutClientId } from './voice';
 
@@ -50,6 +50,10 @@ type Assessment = {
   confidence: Confidence;
   citationSourceUrl: string;
   auditorReasoning?: string;
+  // Set on a consultant review (ADR-0004, services/impacts-service/src/review.ts).
+  // Its narrative and recommendedAction are the consultant's own wording.
+  recordKind?: string;
+  reviewReasoning?: string;
   timestamp: string;
 };
 
@@ -155,8 +159,12 @@ async function composeOne(assessment: Assessment, runId: string): Promise<'compo
   // client id first, so no finding can carry part of it. The log line holds
   // the findings and ids that don't name the client, never the brief text.
   // No assessmentKey: it ends in the client id.
-  const briefText = [draft.bodyMarkdown, ...draft.suggestedActions].join('\n');
-  const grounding = checkBriefGrounding(withoutClientId(briefText, assessment.clientId), groundingSources(assessment, rule.content));
+  const briefText = withoutClientId([draft.bodyMarkdown, ...draft.suggestedActions].join('\n'), assessment.clientId);
+  const sources = groundingSources(assessment, rule.content);
+  const grounding = [
+    ...checkBriefGrounding(briefText, [...sources.policy, ...sources.client]),
+    ...checkDateRoles(briefText, sources.policy, sources.client),
+  ];
   if (grounding.length > 0) {
     log('warn', 'composer-grounding-check', {
       runId,
@@ -207,18 +215,32 @@ async function loadRule(ruleHash: string): Promise<{ content: string; severity: 
   };
 }
 
-// What a brief is allowed to state facts from: the full rule text (the model
-// may see an excerpt of a long rule, but a fact from anywhere in the rule is
-// still the rule's) and the signed assessment fields the prompt carries, with
+// What a brief is allowed to state facts from, split by role. Policy facts
+// come from the full rule text (the model may see an excerpt of a long rule,
+// but a fact from anywhere in the rule is still the rule's) and the citation.
+// Client facts come from the signed assessment text the prompt carries, with
 // the client id taken out the same way, so the id can't ground a number.
-function groundingSources(assessment: Assessment, ruleContent: string): string[] {
-  return [
-    ruleContent,
-    withoutClientId(assessment.narrative, assessment.clientId),
-    withoutClientId(assessment.recommendedAction, assessment.clientId),
-    assessment.citationSourceUrl,
-    assessment.numericDelta === null ? '' : String(assessment.numericDelta),
-  ];
+function groundingSources(assessment: Assessment, ruleContent: string): { policy: string[]; client: string[] } {
+  return {
+    policy: [ruleContent, assessment.citationSourceUrl],
+    client: [
+      ...clientTexts(assessment),
+      assessment.numericDelta === null ? '' : String(assessment.numericDelta),
+    ],
+  };
+}
+
+// The assessment's free text about this client. On a consultant review that
+// includes the consultant's reasoning, which often carries profile facts
+// (school, program, start date) that the narrative only sums up.
+function clientTexts(assessment: Assessment): string[] {
+  const texts = [assessment.narrative, assessment.recommendedAction, consultantReasoning(assessment)];
+  return texts.map((t) => withoutClientId(t ?? '', assessment.clientId));
+}
+
+function consultantReasoning(assessment: Assessment): string | undefined {
+  if (assessment.recordKind !== 'consultant-review') return undefined;
+  return typeof assessment.reviewReasoning === 'string' && assessment.reviewReasoning.trim() ? assessment.reviewReasoning : undefined;
 }
 
 export function buildComposeRequest(assessment: Assessment, ruleContent: string): ConverseCommandInput {
@@ -230,7 +252,10 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
     'Write to the client directly, in second person: "you", "your application". Write in the consultant\'s voice, first person: "I recommend".',
     'Never write "your client" and never describe the client in the third person. The assessment below calls the reader "the client". Turn that into "you".',
     'Never write a name, a client id or a placeholder like [CLIENT NAME]. No greeting and no sign-off: the RCIC adds both when they send it.',
+    'You get two inputs. RULE CONTENT is IRCC\'s own text. ABOUT THE READER is the signed assessment of this reader\'s file: facts about them (their school, program, start date, status) and what the change means for them.',
     'Every fact about IRCC programs, dates, numbers, durations, fees or eligibility must come from the rule content or the assessment below. If neither says it, leave it out, even if you believe it is true.',
+    'Dates and numbers that describe the policy (effective dates, cut-offs, thresholds, validity periods, caps) come only from the rule content. If the rule content gives no date for the change, don\'t give one.',
+    'Dates, schools and programs in ABOUT THE READER belong to the reader. Say them as the reader\'s own ("your program starts on ..."). Never present them as when, where or to whom the policy applies.',
     'Name another program, visa or permit only if the rule content or the assessment names it.',
     'The reader has never seen the rule content or the assessment and doesn\'t know Argus exists. Never write "the rule", "the assessment" or any field name. Call the source what it is to the reader: IRCC\'s notice, the change, the update.',
     'When the assessment says something about the reader is unknown, ask the reader for it ("let me know whether..."). Never say a document doesn\'t confirm it.',
@@ -240,6 +265,7 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
 
   // The client id stays out of the prompt entirely. The model has no use for
   // it, and a body that carries it reads as a note about the client.
+  const reasoning = consultantReasoning(assessment);
   const assessmentJson = JSON.stringify(
     {
       topic: assessment.topic,
@@ -247,6 +273,7 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
       numericDelta: assessment.numericDelta,
       narrative: withoutClientId(assessment.narrative, assessment.clientId),
       recommendedAction: withoutClientId(assessment.recommendedAction, assessment.clientId),
+      ...(reasoning ? { consultantReasoning: withoutClientId(reasoning, assessment.clientId) } : {}),
       confidence: assessment.confidence,
       citation: assessment.citationSourceUrl,
     },
@@ -269,20 +296,22 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
     '- If confidence is low, add one sentence hedging the recommendation.',
     '- No em dashes. No exclamation marks. Use digits for numbers.',
     '- Keep each number, duration, amount and date the same as the rule content or the assessment gives it, in digits.',
+    '- Paragraph 1 describes the change with the rule content\'s own dates and conditions. A date from ABOUT THE READER goes in paragraph 2, as the reader\'s.',
   ].join('\n');
 
-  // The assessment text and the rule text are outside content. See
-  // guardrail.ts for the tagging rule.
+  // The rule text and the assessment text are outside content. See
+  // guardrail.ts for the tagging rule. Rule first, so the policy's own facts
+  // are set before the model reads the reader's.
   return {
     modelId: COMPOSER_MODEL,
     system: [{ text: system }],
     messages: [{
       role: 'user',
       content: [
-        { text: 'ASSESSMENT (signed and audit-verified):\n' },
-        guarded(assessmentJson + '\n\n'),
-        { text: 'RULE CONTENT (source of truth, a long rule is shown as an excerpt, marked in brackets):\n' },
+        { text: 'RULE CONTENT (IRCC\'s text, the only source for the policy\'s dates, numbers and conditions. A long rule is shown as an excerpt, marked in brackets):\n' },
         guarded(snippet + '\n\n'),
+        { text: 'ABOUT THE READER (the signed assessment of this reader\'s file. Its dates, schools and programs describe the reader, never the policy. "consultantReasoning" is the consultant\'s own reasoning, present when they reviewed the file):\n' },
+        guarded(assessmentJson + '\n\n'),
         { text: instructions },
       ],
     }],
