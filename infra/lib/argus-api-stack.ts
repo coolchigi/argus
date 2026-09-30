@@ -16,6 +16,7 @@ import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
 import * as s3 from 'aws-cdk-lib/aws-s3';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
 
 const IRCC_SEED_URLS = [
@@ -691,6 +692,14 @@ export class ArgusApiStack extends cdk.Stack {
 
     props.policyRulesTable.grantReadData(composerHandler);
     props.briefsTable.grantWriteData(composerHandler);
+    // A redelivered record reads the brief it may already have written, so a
+    // retry never drafts a second brief for the same assessment.
+    composerHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:GetItem'],
+        resources: [props.briefsTable.tableArn],
+      }),
+    );
     props.impactAssessmentsTable.grantStreamRead(composerHandler);
 
     composerHandler.addToRolePolicy(
@@ -710,14 +719,29 @@ export class ArgusApiStack extends cdk.Stack {
       }),
     );
 
+    // Where a stream record goes once Composer's retries run out. Lambda sends
+    // the record's shard and sequence range here (the record itself stays in
+    // the stream for 24 hours, and the assessment row stays in its table for
+    // good). Without it, a record that keeps failing leaves only a log line.
+    const composerFailures = new sqs.Queue(this, 'ComposerStreamFailures', {
+      queueName: 'argus-composer-stream-failures',
+      retentionPeriod: cdk.Duration.days(14),
+      encryption: sqs.QueueEncryption.SQS_MANAGED,
+      enforceSSL: true,
+    });
+
     composerHandler.addEventSource(
       new lambdaEventSources.DynamoEventSource(props.impactAssessmentsTable, {
         startingPosition: lambda.StartingPosition.LATEST,
         batchSize: 5,
         maxBatchingWindow: cdk.Duration.seconds(5),
+        // The handler returns batchItemFailures only for failures a retry can
+        // fix (throttling, 5xx). It drops bad input, guardrail blocks and
+        // missing rules itself, so these retries go to transient errors.
         retryAttempts: 3,
         bisectBatchOnError: true,
         reportBatchItemFailures: true,
+        onFailure: new lambdaEventSources.SqsDlq(composerFailures),
         filters: [
           lambda.FilterCriteria.filter({ eventName: lambda.FilterRule.isEqual('INSERT') }),
         ],
