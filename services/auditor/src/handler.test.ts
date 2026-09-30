@@ -413,6 +413,7 @@ describe('Auditor stance follows the shared definition of affected', () => {
     const logs = await auditLogged({ clientId: '2026-031', isAffected: false });
     const v = verdicts[0];
     assert.equal(v.affectedStance, 'uncertain');
+    assert.equal(v.affectedStanceContradicted, true);
     assert.match(String(v.affectedStanceReason), /answered "agree" with isAffected=false/);
     assert.ok(String(v.affectedStanceReason).includes('Client 2026-031 is affected by the rule'), 'the model reason is kept');
     assert.equal((v.originalHypothesis as Item).isAffected, false);
@@ -431,6 +432,27 @@ describe('Auditor stance follows the shared definition of affected', () => {
     const logs = await auditLogged({ clientId: '2026-031', isAffected: false });
     assert.equal(verdicts[0].affectedStance, 'agree');
     assert.equal(verdicts[0].affectedStanceReason, reason);
+    assert.equal('affectedStanceContradicted' in verdicts[0], false);
     assert.ok(!logs.some((l) => l.msg === 'auditor-stance-contradiction'));
+  });
+
+  it('marks a "disagree" whose reason argues the Analyst answer, so the dissent is not lost', async () => {
+    const reason = 'Client c1 is affected: the rule requires the profile program to file a new form.';
+    modelReply = JSON.stringify({ passed: true, issues: [], affectedStance: 'disagree', affectedStanceReason: reason });
+    await auditLogged({ isAffected: true });
+    assert.equal(verdicts[0].affectedStance, 'uncertain');
+    assert.equal(verdicts[0].affectedStanceContradicted, true);
+    assert.match(String(verdicts[0].affectedStanceReason), /answered "disagree" with isAffected=true/);
+  });
+
+  it('never takes the marker from the model reply', async () => {
+    const reason = 'Client c1 is affected: the rule requires the profile program to file a new form.';
+    for (const affectedStance of ['agree', 'uncertain']) {
+      verdicts.length = 0;
+      modelReply = JSON.stringify({ passed: true, issues: [], affectedStance, affectedStanceReason: reason, affectedStanceContradicted: true });
+      await auditLogged({ isAffected: true });
+      assert.equal(verdicts[0].affectedStance, affectedStance);
+      assert.equal('affectedStanceContradicted' in verdicts[0], false, affectedStance);
+    }
   });
 });

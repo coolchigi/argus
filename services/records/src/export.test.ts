@@ -44,6 +44,8 @@ before(async () => {
     // ADR-0004: an agent row signed with the Auditor's stance, and a
     // consultant review of C-101 that flips it to not affected.
     assessmentRow(key, { rcicId: TENANT, clientId: 'C-104', timestamp: '2026-09-20T08:00:00.000Z', auditorStance: { stance: 'disagree', reason: 'The profile meets the condition.' } }),
+    // A stance the Auditor's stance-check read as uncertain, with the signed marker.
+    assessmentRow(key, { rcicId: TENANT, clientId: 'C-105', timestamp: '2026-09-21T08:00:00.000Z', auditorStance: { stance: 'uncertain', reason: 'The Auditor answered "agree" with isAffected=true, but its reason argues the opposite.', contradicted: true } }),
     reviewRow(key, c101, { reviewedAt: '2026-09-22T12:00:00.000Z', isAffected: false }),
     assessmentRow(key, { rcicId: TENANT, clientId: 'C-102', timestamp: '2026-09-18T15:30:00.000Z', numericDelta: null, auditIssues: ['cutoff date unclear'] }, { highS: true }),
     assessmentRow(key, { rcicId: TENANT, clientId: 'C-103', timestamp: '2026-08-31T23:59:59.999Z' }),
@@ -82,6 +84,7 @@ describe('signed export', () => {
       records.map((r) => `${r.kind}:${r.id}`),
       [
         `assessment:review-${Date.parse('2026-09-22T12:00:00.000Z')}-evt-2026-09-12-ee-draw#C-101`,
+        'assessment:evt-2026-09-12-ee-draw#C-105',
         'assessment:evt-2026-09-12-ee-draw#C-104',
         'assessment:evt-2026-09-12-ee-draw#C-102',
         'brief:b-1',
@@ -117,7 +120,7 @@ describe('signed export', () => {
     const { status, out } = runScript();
     assert.equal(status, 0, out);
     const lines = out.trim().split('\n');
-    assert.equal(lines.length, 5, out);
+    assert.equal(lines.length, 6, out);
     assert.ok(lines.every((l) => l.startsWith('OK ')), out);
     assert.ok(out.includes('signature valid, payload matches'), out);
   });
@@ -176,7 +179,7 @@ describe('signed export', () => {
     assert.equal(agent.supersedes, null);
     assert.equal(agent.signedPayload.isAffected, true);
     assert.deepEqual(byId('#C-104').signedPayload.auditorStance, { stance: 'disagree', reason: 'The profile meets the condition.' });
-    assert.match(verifyDoc, /4 signed assessments \(1 of them consultant reviews\)/);
+    assert.match(verifyDoc, /5 signed assessments \(1 of them consultant reviews\)/);
   });
 
   it('fails a consultant review whose verdict was flipped after signing', () => {
@@ -201,6 +204,21 @@ describe('signed export', () => {
       const { status, out } = runScript();
       assert.equal(status, 1, out);
       assert.match(out, /FAIL assessment evt-2026-09-12-ee-draw#C-104 signature valid, payload CHANGED/);
+    } finally {
+      writeRecords(records);
+    }
+  });
+
+  it('fails an agent record whose contradicted marker was dropped after signing', () => {
+    const edited = structuredClone(records);
+    const row = edited.find((r) => r.id.endsWith('#C-105'))!;
+    assert.equal(row.signedPayload.auditorStance.contradicted, true);
+    delete row.signedPayload.auditorStance.contradicted;
+    writeRecords(edited);
+    try {
+      const { status, out } = runScript();
+      assert.equal(status, 1, out);
+      assert.match(out, /FAIL assessment evt-2026-09-12-ee-draw#C-105 signature valid, payload CHANGED/);
     } finally {
       writeRecords(records);
     }

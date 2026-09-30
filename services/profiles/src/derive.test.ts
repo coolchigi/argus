@@ -91,3 +91,43 @@ describe('caseload current verdict (ADR-0004)', () => {
     assert.equal(clientAssessments([a], [])[0].actionReason, null);
   });
 });
+
+const contradicted = (extra: Row = {}) => ({
+  auditorStance: { stance: 'uncertain', reason: 'The Auditor answered "agree" with isAffected=false, but its reason argues the opposite.', contradicted: true, ...extra },
+});
+
+describe('a stance the Auditor contradicted needs action', () => {
+  it('counts it as auditor-unsure on the current agent verdict', () => {
+    const rows = [agent('run-1', '2026-09-20T00:00:00.000Z', contradicted())].map(toAssessment);
+    const counts = countsByClient(rows, []).get('C-1');
+    assert.equal(counts?.auditorUnsure, 1);
+    assert.equal(counts?.auditorDisagrees, 0);
+    assert.equal(counts?.actionRequired, 1);
+    const [c] = clientAssessments(rows, []);
+    assert.equal(c.actionReason, 'auditor-unsure');
+    assert.equal(c.auditorStance?.contradicted, true);
+  });
+
+  it('comes before a missing brief', () => {
+    const rows = [agent('run-1', '2026-09-20T00:00:00.000Z', { isAffected: true, impactType: 'procedural', ...contradicted() })].map(toAssessment);
+    assert.equal(clientAssessments(rows, [])[0].actionReason, 'auditor-unsure');
+    assert.equal(countsByClient(rows, []).get('C-1')?.actionRequired, 1, 'one rule counts once');
+  });
+
+  it('a consultant review clears it', () => {
+    const a1 = agent('run-1', '2026-09-20T00:00:00.000Z', contradicted());
+    const rows = [a1, review(a1, '2026-09-22T00:00:00.000Z', { auditorStance: undefined })].map(toAssessment);
+    const counts = countsByClient(rows, []).get('C-1');
+    assert.equal(counts?.auditorUnsure, 0);
+    assert.equal(counts?.actionRequired, 0);
+    assert.equal(clientAssessments(rows, [])[0].actionReason, null);
+  });
+
+  it('ignores the marker unless it is exactly true on an uncertain stance', () => {
+    for (const extra of [{ contradicted: 'true' }, { contradicted: false }, { stance: 'agree' }]) {
+      const rows = [agent('run-1', '2026-09-20T00:00:00.000Z', contradicted(extra))].map(toAssessment);
+      assert.equal(countsByClient(rows, []).get('C-1')?.actionRequired, 0, JSON.stringify(extra));
+      assert.equal(clientAssessments(rows, [])[0].auditorStance?.contradicted, false);
+    }
+  });
+});

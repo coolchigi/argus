@@ -99,6 +99,7 @@ export const ASSESSMENT_SIGNED_FIELDS = [
   'auditIssues',
   'timestamp',
   // ADR-0004, agent rows: the Auditor's stance on the Analyst's isAffected.
+  // Copied whole, so a contradicted marker inside it rehashes with it.
   'auditorStance',
   // ADR-0004, consultant reviews.
   'recordKind',
