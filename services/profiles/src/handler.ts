@@ -35,6 +35,10 @@ const ASSESSMENT_FIELDS = [
   'timestamp',
   'canonicalHash',
   'signatureAlgorithm',
+  // ADR-0004: which record is current, and whether the Auditor disagrees.
+  'recordKind',
+  'supersedes',
+  'auditorStance',
 ];
 
 // Bodies, subjects and recipient hashes stay in the table.

@@ -586,3 +586,161 @@ describe('humanizeTopic', () => {
     assert.ok(items.some((i) => i.title === 'Assessment signed for PAL/TAL requirements'));
   });
 });
+
+// ADR-0004. A consultant review as impacts-service writes it: its own key,
+// the original run's policyEventId, and recordKind consultant-review.
+function review(of: Row, reviewedAt: string, extra: Row = {}): Row {
+  const key = `review-${Date.parse(reviewedAt)}-${String(of.policyEventId)}#${String(of.clientId)}`;
+  return {
+    ...of,
+    assessmentKey: key,
+    recordKind: 'consultant-review',
+    supersedes: of.assessmentKey,
+    reviewedBy: 'R1',
+    reviewedAt,
+    timestamp: reviewedAt,
+    canonicalHash: `hash-${key}`,
+    auditorStance: undefined,
+    ...extra,
+  };
+}
+
+const stance = (s: string) => ({ auditorStance: { stance: s, reason: 'The profile meets the condition the rule sets.' } });
+
+describe('current verdict with consultant reviews (ADR-0004)', () => {
+  const agent = row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false });
+
+  it('a review beats a newer agent replay of the same rule', () => {
+    const rows = [
+      agent,
+      review(agent, '2026-09-22T09:00:00.000Z', { isAffected: true, impactType: 'eligibility-flip' }),
+      row(RUN_A2, RULE_A, 'C-1', '2026-09-25T10:01:00.000Z', { isAffected: false }),
+    ];
+    const e = only(events(rows, rules(rule(RULE_A))));
+    assert.equal(e.affectedCount, 1);
+    assert.equal(e.consultantReviewed, 1);
+    assert.equal(e.awaitingBrief, 1);
+    assert.equal(e.status, 'action-required');
+    assert.equal(e.runs, 2, 'a review is not a pipeline run');
+    const [c] = buildEventImpacts(rows, [], [], new Map());
+    assert.equal(c.recordKind, 'consultant-review');
+    assert.equal(c.isAffected, true);
+    assert.equal(c.supersedes, agent.assessmentKey);
+    assert.equal(c.reviewedAt, '2026-09-22T09:00:00.000Z');
+    assert.equal(c.actionReason, 'brief-needed');
+    // History in time order, the newer agent replay first.
+    assert.deepEqual(c.priorAssessments.map((p) => [p.policyEventId, p.recordKind]), [[RUN_A2, 'agent'], [RUN_A1, 'agent']]);
+  });
+
+  it("carries each current row's own policyEventId, so the web never parses a key", () => {
+    const r = review(agent, '2026-09-22T09:00:00.000Z', { isAffected: true });
+    const replay = row(RUN_A2, RULE_A, 'C-2', '2026-09-25T10:01:00.000Z');
+    const byClient = new Map(buildEventImpacts([agent, r, replay], [], [], new Map()).map((c) => [c.clientId, c]));
+    // The review key starts with `review-`, but its run is the one it reviewed.
+    assert.ok(byClient.get('C-1')?.assessmentKey.startsWith('review-'));
+    assert.equal(byClient.get('C-1')?.policyEventId, RUN_A1);
+    assert.equal(byClient.get('C-2')?.policyEventId, RUN_A2);
+  });
+
+  it('the newest review wins when there are several', () => {
+    const first = review(agent, '2026-09-22T09:00:00.000Z', { isAffected: true });
+    const second = review(first, '2026-09-23T09:00:00.000Z', { isAffected: false, supersedes: first.assessmentKey });
+    // Input order must not matter.
+    for (const rows of [[agent, first, second], [second, agent, first]]) {
+      const [c] = buildEventImpacts(rows, [], [], new Map());
+      assert.equal(c.assessmentKey, second.assessmentKey);
+      assert.equal(c.isAffected, false);
+      assert.equal(only(events(rows, rules(rule(RULE_A)))).status, 'no-impact');
+    }
+  });
+
+  it('a flip to not affected stops the unsent draft on the agent row from counting', () => {
+    const affected = row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z');
+    const draft = brief(String(affected.assessmentKey), 'draft');
+    const before = only(events([affected], rules(rule(RULE_A)), [draft]));
+    assert.equal(before.briefsUnsent, 1);
+    assert.equal(before.status, 'action-required');
+
+    const rows = [affected, review(affected, '2026-09-22T09:00:00.000Z', { isAffected: false, impactType: 'none' })];
+    const after = only(events(rows, rules(rule(RULE_A)), [draft]));
+    assert.equal(after.briefsUnsent, 0);
+    assert.equal(after.awaitingBrief, 0);
+    assert.equal(after.status, 'no-impact');
+    const [c] = buildEventImpacts(rows, [draft], [], new Map());
+    assert.equal(c.brief, null, 'the draft belongs to a superseded verdict');
+    assert.equal(c.actionRequired, false);
+  });
+
+  it('a flip to affected is done once the brief Composer drafted on the review is sent', () => {
+    const r = review(agent, '2026-09-22T09:00:00.000Z', { isAffected: true, impactType: 'eligibility-flip' });
+    const draft = brief(String(r.assessmentKey), 'draft');
+    assert.equal(only(events([agent, r], rules(rule(RULE_A)), [draft])).briefsUnsent, 1);
+    const sent = only(events([agent, r], rules(rule(RULE_A)), [brief(String(r.assessmentKey), 'sent')]));
+    assert.equal(sent.briefsSent, 1);
+    assert.equal(sent.status, 'done');
+  });
+
+  it('lists a review in the activity feed as a consultant review', () => {
+    const r = review(agent, '2026-09-22T09:00:00.000Z', { isAffected: true });
+    const { items } = buildActivity([agent, r].map(toAssessment), [], [], [], { limit: 10, before: null });
+    assert.deepEqual(items.map((i) => i.kind), ['consultant-review-signed', 'assessment-signed']);
+    assert.match(items[0].title, /^Consultant review signed for /);
+  });
+});
+
+describe('Auditor disagreement as action required (ADR-0004)', () => {
+  it('flags a not-affected verdict the Auditor disagrees with', () => {
+    const rows = [row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false, ...stance('disagree') })];
+    const e = only(events(rows, rules(rule(RULE_A))));
+    assert.equal(e.affectedCount, 0);
+    assert.equal(e.auditorDisagrees, 1);
+    assert.equal(e.status, 'action-required');
+    assert.equal(listView([e], {}, new Date('2026-09-29T00:00:00.000Z')).totals.actionRequired, 1);
+    const [c] = buildEventImpacts(rows, [], [], new Map());
+    assert.equal(c.actionRequired, true);
+    assert.equal(c.actionReason, 'auditor-disagrees');
+    assert.deepEqual(c.auditorStance, { stance: 'disagree', reason: 'The profile meets the condition the rule sets.' });
+  });
+
+  it('puts disagreement ahead of a missing brief, and keeps it after a brief was sent', () => {
+    const rows = [row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', stance('disagree'))];
+    const [c] = buildEventImpacts(rows, [], [], new Map());
+    assert.equal(c.actionReason, 'auditor-disagrees');
+    const sent = [brief(String(rows[0].assessmentKey), 'sent')];
+    assert.equal(only(events(rows, rules(rule(RULE_A)), sent)).status, 'action-required');
+  });
+
+  for (const s of ['agree', 'uncertain']) {
+    it(`does not flag stance ${s}`, () => {
+      const rows = [row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false, ...stance(s) })];
+      const e = only(events(rows, rules(rule(RULE_A))));
+      assert.equal(e.auditorDisagrees, 0);
+      assert.equal(e.status, 'no-impact');
+    });
+  }
+
+  it('a consultant review clears the disagreement', () => {
+    const disputed = row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false, ...stance('disagree') });
+    const rows = [disputed, review(disputed, '2026-09-22T09:00:00.000Z', { isAffected: false, impactType: 'none' })];
+    const e = only(events(rows, rules(rule(RULE_A))));
+    assert.equal(e.auditorDisagrees, 0);
+    assert.equal(e.status, 'no-impact');
+    const [c] = buildEventImpacts(rows, [], [], new Map());
+    assert.equal(c.auditorStance, null);
+    assert.equal(c.actionReason, null);
+  });
+
+  it('only the current run counts: a disagreement on an older run is history', () => {
+    const rows = [
+      row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false, ...stance('disagree') }),
+      row(RUN_A2, RULE_A, 'C-1', '2026-09-25T10:01:00.000Z', { isAffected: false, ...stance('agree') }),
+    ];
+    assert.equal(only(events(rows, rules(rule(RULE_A)))).auditorDisagrees, 0);
+  });
+
+  it('reads a row signed before ADR-0004 as having no stance', () => {
+    const a = toAssessment(row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z'));
+    assert.equal(a.auditorStance, null);
+    assert.equal(a.recordKind, 'agent');
+  });
+});

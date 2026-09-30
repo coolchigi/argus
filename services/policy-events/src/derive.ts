@@ -10,10 +10,25 @@ import { createHash } from 'node:crypto';
 // - the latest one by timestamp is the client's current assessment
 // - the earlier ones are history
 // Counts read the current assessment only, so a replay never double counts.
+//
+// ADR-0004 adds consultant reviews: signed rows (recordKind
+// "consultant-review") a consultant wrote by correcting the verdict. A
+// review beats every agent row for the same (rule, client), and the newest
+// review wins among reviews. So a replay of the rule never undoes a
+// consultant's verdict. Agent rows can carry the Auditor's stance on
+// isAffected, and a current agent row the Auditor disagrees with needs the
+// consultant's attention.
 
 export type Severity = 'high' | 'medium' | 'low';
 export type EventStatus = 'action-required' | 'done' | 'no-impact';
 export type Row = Record<string, unknown>;
+
+export type RecordKind = 'agent' | 'consultant-review';
+export type Stance = 'agree' | 'disagree' | 'uncertain';
+export type AuditorStance = { stance: Stance; reason: string };
+
+/** Why a client needs the consultant. Disagreement comes first: review the verdict before briefing on it. */
+export type ActionReason = 'auditor-disagrees' | 'brief-needed';
 
 export type Assessment = {
   assessmentKey: string;
@@ -25,6 +40,9 @@ export type Assessment = {
   timestamp: string;
   canonicalHash: string | null;
   signatureAlgorithm: string | null;
+  recordKind: RecordKind;
+  /** Agent rows signed after ADR-0004. null on older rows and on consultant reviews. */
+  auditorStance: AuditorStance | null;
 };
 
 export type Rule = {
@@ -104,6 +122,10 @@ export type PolicyEvent = {
   briefsSent: number;
   briefsUnsent: number;
   awaitingBrief: number;
+  /** Clients whose current verdict is the agent's and the Auditor disagrees with it. */
+  auditorDisagrees: number;
+  /** Clients whose current verdict is a consultant review. */
+  consultantReviewed: number;
   correctionsFiled: number;
   status: EventStatus;
   lastActivityAt: string;
@@ -113,6 +135,7 @@ export type ImpactBrief = { briefId: string; assessmentKey: string; status: stri
 
 export type PriorAssessment = {
   assessmentKey: string;
+  recordKind: RecordKind;
   policyEventId: string;
   signedAt: string;
   isAffected: boolean;
@@ -123,6 +146,18 @@ export type PriorAssessment = {
 export type EventImpact = {
   clientId: string;
   assessmentKey: string;
+  /** The current row's policyEventId. On a consultant review, the run it reviewed. Never parse it from the key. */
+  policyEventId: string;
+  /** 'consultant-review' when the consultant's signed verdict is current. */
+  recordKind: RecordKind;
+  /** On a consultant review, the assessment it replaced. */
+  supersedes: string | null;
+  /** On a consultant review, when it was signed. */
+  reviewedAt: string | null;
+  /** The Auditor's signed stance on the current agent verdict. null on reviews and older rows. */
+  auditorStance: AuditorStance | null;
+  actionRequired: boolean;
+  actionReason: ActionReason | null;
   program: string | null;
   clientStatus: string | null;
   currentCrsScore: number | null;
@@ -143,7 +178,7 @@ export type EventImpact = {
 export type ActivityItem = {
   id: string;
   at: string;
-  kind: 'assessment-signed' | 'brief-sent' | 'correction-filed' | 'alert-emailed';
+  kind: 'assessment-signed' | 'consultant-review-signed' | 'brief-sent' | 'correction-filed' | 'alert-emailed';
   title: string;
   ref: { kind: 'event' | 'assessment' | 'brief'; id: string };
   eventId: string | null;
@@ -251,8 +286,24 @@ export function resolveEventId(assessments: Array<{ ruleHash: string; policyEven
 
 type ClientRuns<T> = { clientId: string; current: T; prior: T[] };
 
-/** Newest first per client. Ties on timestamp break on assessmentKey so the pick is stable. */
-export function splitCurrent<T extends { clientId: string; assessmentKey: string; timestamp: string }>(list: T[]): ClientRuns<T>[] {
+type Ranked = { assessmentKey: string; timestamp: string; recordKind?: RecordKind };
+
+/**
+ * The current-verdict order (ADR-0004): consultant reviews before agent rows,
+ * then newest first. Ties on timestamp break on assessmentKey so the pick is
+ * stable. Rows without recordKind are agent rows.
+ */
+export function currentFirst(a: Ranked, b: Ranked): number {
+  const review = (x: Ranked) => (x.recordKind === 'consultant-review' ? 1 : 0);
+  return review(b) - review(a) || newestFirst(a, b);
+}
+
+function newestFirst(a: Ranked, b: Ranked): number {
+  return b.timestamp.localeCompare(a.timestamp) || b.assessmentKey.localeCompare(a.assessmentKey);
+}
+
+/** Per client: the current verdict (see currentFirst), then the rest, newest first. */
+export function splitCurrent<T extends { clientId: string } & Ranked>(list: T[]): ClientRuns<T>[] {
   const byClient = new Map<string, T[]>();
   for (const a of list) {
     const key = a.clientId || a.assessmentKey;
@@ -262,10 +313,26 @@ export function splitCurrent<T extends { clientId: string; assessmentKey: string
   }
   const out: ClientRuns<T>[] = [];
   for (const [clientId, runs] of byClient) {
-    runs.sort((a, b) => b.timestamp.localeCompare(a.timestamp) || b.assessmentKey.localeCompare(a.assessmentKey));
-    out.push({ clientId, current: runs[0], prior: runs.slice(1) });
+    runs.sort(currentFirst);
+    const [current, ...rest] = runs;
+    // History reads in time order, whatever kind of record each one is.
+    out.push({ clientId, current, prior: rest.sort(newestFirst) });
   }
   return out;
+}
+
+/**
+ * What the consultant has to do for one client on one rule, from the current
+ * verdict. A consultant review carries no Auditor stance, so reviewing a
+ * disagreement clears it.
+ */
+export function actionReasonOf(
+  current: { isAffected: boolean; recordKind: RecordKind; auditorStance: AuditorStance | null },
+  briefSent: boolean,
+): ActionReason | null {
+  if (current.recordKind === 'agent' && current.auditorStance?.stance === 'disagree') return 'auditor-disagrees';
+  if (current.isAffected && !briefSent) return 'brief-needed';
+  return null;
 }
 
 function indexBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
@@ -310,11 +377,17 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
     let briefsSent = 0;
     let briefsUnsent = 0;
     let awaitingBrief = 0;
+    let auditorDisagrees = 0;
+    let consultantReviewed = 0;
+    let needsAction = 0;
     for (const { current, prior } of clients) {
       const sent = [current, ...prior].some((a) => (briefsByAssessment.get(a.assessmentKey) ?? []).some((b) => isDelivered(b.status)));
       if (sent) briefsSent += 1;
       else if ((briefsByAssessment.get(current.assessmentKey) ?? []).length > 0) briefsUnsent += 1;
       if (current.isAffected && !sent) awaitingBrief += 1;
+      if (current.recordKind === 'consultant-review') consultantReviewed += 1;
+      else if (current.auditorStance?.stance === 'disagree') auditorDisagrees += 1;
+      if (actionReasonOf(current, sent)) needsAction += 1;
     }
 
     const activity: string[] = [];
@@ -332,7 +405,7 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
 
     const current = clients.map((c) => c.current);
     const affectedCount = current.filter((a) => a.isAffected).length;
-    const status: EventStatus = affectedCount === 0 ? 'no-impact' : awaitingBrief > 0 ? 'action-required' : 'done';
+    const status: EventStatus = needsAction > 0 ? 'action-required' : affectedCount === 0 ? 'no-impact' : 'done';
 
     events.push({
       eventId,
@@ -354,6 +427,8 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
       briefsSent,
       briefsUnsent,
       awaitingBrief,
+      auditorDisagrees,
+      consultantReviewed,
       correctionsFiled,
       status,
       lastActivityAt: activity.reduce((max, t) => (t > max ? t : max), detectedAt),
@@ -485,15 +560,31 @@ export function buildEventImpacts(rows: Row[], briefs: BriefRow[], corrections: 
   const correctionCounts = new Map<string, number>();
   for (const c of corrections) correctionCounts.set(c.assessmentKey, (correctionCounts.get(c.assessmentKey) ?? 0) + 1);
 
-  const withKeys = rows.map((r) => ({ row: r, clientId: str(r.clientId), assessmentKey: str(r.assessmentKey), timestamp: str(r.timestamp) }));
+  const withKeys = rows.map((r) => ({
+    row: r,
+    clientId: str(r.clientId),
+    assessmentKey: str(r.assessmentKey),
+    timestamp: str(r.timestamp),
+    recordKind: recordKindOf(r),
+  }));
   const clients = splitCurrent(withKeys).map(({ current, prior }) => {
     const r = current.row;
     const profile = profiles.get(current.clientId);
     const sentBrief = pickBrief([current, ...prior].flatMap((a) => (briefsByAssessment.get(a.assessmentKey) ?? []).filter((b) => isDelivered(b.status))));
     const brief = sentBrief ?? pickBrief(briefsByAssessment.get(current.assessmentKey) ?? []);
+    const isReview = current.recordKind === 'consultant-review';
+    const auditorStance = isReview ? null : stanceOf(r.auditorStance);
+    const actionReason = actionReasonOf({ isAffected: r.isAffected === true, recordKind: current.recordKind, auditorStance }, sentBrief !== null);
     return {
       clientId: current.clientId,
       assessmentKey: current.assessmentKey,
+      policyEventId: str(r.policyEventId),
+      recordKind: current.recordKind,
+      supersedes: isReview ? strOrNull(r.supersedes) : null,
+      reviewedAt: isReview ? (strOrNull(r.reviewedAt) ?? current.timestamp) : null,
+      auditorStance,
+      actionRequired: actionReason !== null,
+      actionReason,
       program: profile ? strOrNull(profile.program) : null,
       clientStatus: profile ? strOrNull(profile.status) : null,
       currentCrsScore: profile ? numOrNull(profile.currentCrsScore) : null,
@@ -510,6 +601,7 @@ export function buildEventImpacts(rows: Row[], briefs: BriefRow[], corrections: 
       assessmentCount: prior.length + 1,
       priorAssessments: prior.map((p) => ({
         assessmentKey: p.assessmentKey,
+        recordKind: p.recordKind,
         policyEventId: str(p.row.policyEventId),
         signedAt: p.timestamp,
         isAffected: p.row.isAffected === true,
@@ -546,11 +638,12 @@ export function buildActivity(
 
   for (const a of assessments) {
     if (!a.canonicalHash || !a.timestamp) continue;
+    const kind = a.recordKind === 'consultant-review' ? 'consultant-review-signed' : 'assessment-signed';
     items.push({
-      id: `assessment-signed:${a.assessmentKey}`,
+      id: `${kind}:${a.assessmentKey}`,
       at: a.timestamp,
-      kind: 'assessment-signed',
-      title: `Assessment signed for ${humanizeTopic(a.topic)}`,
+      kind,
+      title: `${kind === 'consultant-review-signed' ? 'Consultant review signed' : 'Assessment signed'} for ${humanizeTopic(a.topic)}`,
       ref: { kind: 'assessment', id: a.assessmentKey },
       eventId: eventIdOf(a) || null,
       clientId: a.clientId || null,
@@ -682,7 +775,22 @@ export function toAssessment(r: Row): Assessment {
     timestamp: str(r.timestamp),
     canonicalHash: strOrNull(r.canonicalHash),
     signatureAlgorithm: strOrNull(r.signatureAlgorithm),
+    recordKind: recordKindOf(r),
+    auditorStance: recordKindOf(r) === 'consultant-review' ? null : stanceOf(r.auditorStance),
   };
+}
+
+/** Rows without recordKind were all written by Anchor. */
+export function recordKindOf(r: Row): RecordKind {
+  return r.recordKind === 'consultant-review' ? 'consultant-review' : 'agent';
+}
+
+/** The signed auditorStance map, or null when the row has none (signed before ADR-0004). */
+export function stanceOf(v: unknown): AuditorStance | null {
+  if (!v || typeof v !== 'object') return null;
+  const { stance, reason } = v as Row;
+  if (stance !== 'agree' && stance !== 'disagree' && stance !== 'uncertain') return null;
+  return { stance, reason: typeof reason === 'string' ? reason : '' };
 }
 
 export function str(v: unknown): string {

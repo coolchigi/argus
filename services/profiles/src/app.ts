@@ -98,12 +98,12 @@ export function createApp(store: Store, opts: { now?: () => Date; log?: Log } = 
       const clientId = str(p.clientId);
       return { ...pick(p, LIST_FIELDS), clientId, ...(counts.get(clientId) ?? EMPTY_COUNTS) };
     });
-    all.sort((a, b) => b.unsentBriefs - a.unsentBriefs || a.clientId.localeCompare(b.clientId));
+    all.sort((a, b) => b.actionRequired - a.actionRequired || a.clientId.localeCompare(b.clientId));
 
     const clients = all
       .filter((c) => status === 'all' || c.status === status)
       .filter((c) => !qs.program || c.program === qs.program)
-      .filter((c) => qs.needsAction !== 'true' || c.unsentBriefs > 0);
+      .filter((c) => qs.needsAction !== 'true' || c.actionRequired > 0);
     log('info', 'profiles-listed', { rcicId, total: all.length, returned: clients.length, assessments: assessments.length });
     return { clients, total: all.length };
   }

@@ -66,6 +66,14 @@ type AuditIssue = {
   detail: string;
 };
 
+// The Auditor's view of the Analyst's isAffected (ADR-0004). It never
+// changes isAffected. Anchor signs it next to the Analyst's answer, and a
+// "disagree" puts the assessment in front of the consultant.
+export type AffectedStance = 'agree' | 'disagree' | 'uncertain';
+const STANCES: readonly AffectedStance[] = ['agree', 'disagree', 'uncertain'];
+// Long enough for the 1 to 2 sentences the prompt asks for.
+const STANCE_REASON_MAX = 600;
+
 type AuditVerdict = {
   verdictId: string;
   timestamp: string;
@@ -82,6 +90,8 @@ type AuditVerdict = {
   correctedRecommendedAction: string;
   correctedConfidence: Confidence;
   auditorReasoning: string;
+  affectedStance: AffectedStance;
+  affectedStanceReason: string;
   originalHypothesis: ImpactHypothesis;
 };
 
@@ -156,6 +166,8 @@ async function runAudit(
     correctedNarrative: verdict.correctedNarrative,
     correctedRecommendedAction: verdict.correctedRecommendedAction,
     auditorReasoning: verdict.auditorReasoning,
+    affectedStance: verdict.affectedStance,
+    affectedStanceReason: verdict.affectedStanceReason,
     correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta || verdict.correctedImpactType !== hyp.impactType,
     groundingCheck: hyp.groundingCheck ?? null,
     fewShotCount: fewShots.length,
@@ -188,6 +200,10 @@ export type Correction = {
   correctedNarrative: string | null;
   correctedRecommendedAction?: string | null;
   correctedConfidence?: string | null;
+  // The consultant's verdict, on rows filed after ADR-0004. Absent when the
+  // correction only fixed the narrative, or on older rows.
+  originalIsAffected?: boolean | null;
+  correctedIsAffected?: boolean | null;
   correctorReasoning: string;
 };
 
@@ -248,6 +264,7 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     'Check every claim in the hypothesis (numbers, dates, codes, conditions, program names) against the rule content. A fact the rule content does not contain is a citation issue: flag it and leave it out of your corrected values.',
     'Check the client universe: does the rule cover this client\'s program and situation as the profile describes it?',
     'Check isAffected: for each condition the rule sets, does the profile show the client meets it or fails it? Where the profile is missing a field the rule depends on, say so and lower the confidence.',
+    'You do not change isAffected. You record your stance on it instead. Anchor signs the Analyst\'s isAffected with your stance beside it, and the consultant reviews every disagreement.',
     'Check magnitude: a numericDelta must follow from numbers stated in the rule content and values in the profile.',
     'Return valid JSON only. No preamble.',
   ];
@@ -281,7 +298,9 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     '  "correctedNarrative": "one sentence, use client_id only",',
     '  "correctedRecommendedAction": "one concrete step",',
     '  "correctedConfidence": "low" | "medium" | "high",',
-    '  "auditorReasoning": "2 to 3 sentences explaining the audit outcome"',
+    '  "auditorReasoning": "2 to 3 sentences explaining the audit outcome",',
+    '  "affectedStance": "agree" | "disagree" | "uncertain",',
+    '  "affectedStanceReason": "1 to 2 sentences, use client_id only"',
     '}',
     '',
     'Rules:',
@@ -290,6 +309,9 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     '- If a past correction from this consultant contradicts the Analyst, override the Analyst using the correction pattern, set corrected* fields to the corrected values, and set passed=true so the corrected assessment is published.',
     '- If you correct any field, put the corrected value in the corresponding "corrected*" field. If no correction needed, echo the original value.',
     '- issues array is empty only when passed=true AND no corrections were needed.',
+    '- affectedStance is your answer on the Analyst\'s isAffected, decided from the rule content and the client profile only. "agree": the profile meets or fails the rule\'s conditions the way the Analyst said. "disagree": the rule content and the profile support the opposite answer. "uncertain": the profile is missing a field the rule depends on, or the rule content does not settle it.',
+    '- If a past correction from this consultant set a verdict on the same kind of case, weigh it in your stance the same way you weigh it for the corrected fields.',
+    '- affectedStanceReason names the rule condition and the profile field that decide your stance. Use client_id only, never a name or contact detail. State no number, date or threshold the rule content does not contain.',
   ].join('\n');
 
   // Rule text, client profile and the Analyst's hypothesis are all outside
@@ -310,7 +332,8 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
         { text: instructions },
       ],
     }],
-    inferenceConfig: { maxTokens: 1200, temperature: 0.1 },
+    // 1500 leaves room for the 2 stance fields on top of the old 1200 budget.
+    inferenceConfig: { maxTokens: 1500, temperature: 0.1 },
     guardrailConfig: guardrailConfig(),
   };
 }
@@ -319,10 +342,15 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
 // narrative, recommended action and confidence. Each one the consultant set
 // is shown, so a corrected action or confidence teaches too.
 function correctionBody(c: Correction): string {
-  const lines = [
+  const lines: string[] = [];
+  if (typeof c.correctedIsAffected === 'boolean') {
+    const was = typeof c.originalIsAffected === 'boolean' ? ` (original: ${affectedWord(c.originalIsAffected)})` : '';
+    lines.push(`- Consultant verdict: ${affectedWord(c.correctedIsAffected)}${was}`);
+  }
+  lines.push(
     `- Original: impactType=${c.originalImpactType}, numericDelta=${c.originalNumericDelta ?? 'null'}, narrative="${c.originalNarrative}"`,
     `- Corrected: impactType=${c.correctedImpactType}, numericDelta=${c.correctedNumericDelta ?? 'null'}, narrative="${c.correctedNarrative ?? '(none)'}"`,
-  ];
+  );
   if (c.correctedRecommendedAction) {
     const was = c.originalRecommendedAction ? ` (original: "${c.originalRecommendedAction}")` : '';
     lines.push(`- Corrected recommendedAction: "${c.correctedRecommendedAction}"${was}`);
@@ -333,6 +361,19 @@ function correctionBody(c: Correction): string {
   }
   lines.push(`- Consultant reasoning: ${c.correctorReasoning}`);
   return lines.join('\n');
+}
+
+function affectedWord(v: boolean): string {
+  return v ? 'affected' : 'not affected';
+}
+
+// A missing or unknown stance reads as "uncertain": the model said nothing
+// usable, so it can't count as agreement or as a dissent.
+export function readStance(parsed: { affectedStance?: unknown; affectedStanceReason?: unknown }): { affectedStance: AffectedStance; affectedStanceReason: string } {
+  const stance = STANCES.includes(parsed.affectedStance as AffectedStance) ? (parsed.affectedStance as AffectedStance) : null;
+  const reason = typeof parsed.affectedStanceReason === 'string' ? parsed.affectedStanceReason.trim().slice(0, STANCE_REASON_MAX) : '';
+  if (!stance) return { affectedStance: 'uncertain', affectedStanceReason: '(no stance returned)' };
+  return { affectedStance: stance, affectedStanceReason: reason || '(no reason given)' };
 }
 
 // The guardrail's contextual grounding check scored the Analyst's answer
@@ -386,6 +427,7 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     throw new Error(`auditor returned non-JSON: ${raw.slice(0, 200)}`);
   }
   const parsed = JSON.parse(match[0]) as Partial<AuditVerdict>;
+  const stance = readStance(parsed);
 
   return {
     verdictId: randomUUID(),
@@ -403,6 +445,7 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     correctedRecommendedAction: parsed.correctedRecommendedAction ?? hyp.recommendedAction,
     correctedConfidence: (parsed.correctedConfidence ?? hyp.confidence) as Confidence,
     auditorReasoning: parsed.auditorReasoning ?? '(no reasoning)',
+    ...stance,
     originalHypothesis: hyp,
   };
 }

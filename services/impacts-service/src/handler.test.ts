@@ -4,7 +4,8 @@ import path from 'node:path';
 import { before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { type ApplyGuardrailCommand, type ApplyGuardrailCommandOutput, BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
-import { GetPublicKeyCommand, KMSClient } from '@aws-sdk/client-kms';
+import { GetPublicKeyCommand, KMSClient, SignCommand } from '@aws-sdk/client-kms';
+import { createHash } from 'node:crypto';
 import { DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { build } from 'esbuild';
 
@@ -18,7 +19,8 @@ const outDir = path.join(here, '..', 'node_modules', '.cache', 'argus-test');
 const outfile = path.join(outDir, 'impacts-handler.mjs');
 
 type Item = Record<string, unknown>;
-const puts: Array<{ TableName: string; Item: Item }> = [];
+const puts: Array<{ TableName: string; Item: Item; ConditionExpression?: string }> = [];
+const kmsSigned: Buffer[] = [];
 const guardrailCalls: ApplyGuardrailCommand['input'][] = [];
 const logs: string[] = [];
 
@@ -44,6 +46,16 @@ const assessment: Item = {
   narrative: 'c1 should watch the next draw',
   recommendedAction: 'Monitor the next draw',
   confidence: 'high',
+  rulesUsed: ['h1'],
+  citationSourceUrl: 'https://www.canada.ca/x',
+  citationSourceS3Key: 'snapshots/x.html',
+  auditorReasoning: 'fine',
+  auditIssues: [],
+  timestamp: '2026-09-20T00:00:00.000Z',
+  canonicalHash: 'a'.repeat(64),
+  signatureBase64: 'c2ln',
+  signingKeyId: 'key',
+  signatureAlgorithm: 'ECDSA_SHA_256',
 };
 
 before(async () => {
@@ -72,7 +84,7 @@ before(async () => {
   });
 
   (DynamoDBDocumentClient.prototype as { send: unknown }).send = async (cmd: { input: Item }) => {
-    const input = cmd.input as { TableName: string; Key?: Item; Item?: Item };
+    const input = cmd.input as { TableName: string; Key?: Item; Item?: Item; ConditionExpression?: string };
     if (cmd instanceof GetCommand && input.TableName === 'assessments') {
       const k = input.Key ?? {};
       return { Item: k.rcicId === assessment.rcicId && k.assessmentKey === assessment.assessmentKey ? assessment : undefined };
@@ -86,7 +98,7 @@ before(async () => {
       return { Item: sentBriefs.find((b) => b.rcicId === k.rcicId && b.briefId === k.briefId) };
     }
     if (cmd instanceof PutCommand) {
-      puts.push({ TableName: input.TableName, Item: input.Item ?? {} });
+      puts.push({ TableName: input.TableName, Item: input.Item ?? {}, ConditionExpression: input.ConditionExpression });
       return {};
     }
     throw new Error(`unexpected command ${cmd.constructor.name} on ${input.TableName}`);
@@ -99,6 +111,13 @@ before(async () => {
 
   (KMSClient.prototype as { send: unknown }).send = async (cmd: unknown) => {
     if (cmd instanceof GetPublicKeyCommand) return { PublicKey: new Uint8Array([48, 1, 2, 3]) };
+    if (cmd instanceof SignCommand) {
+      assert.equal(cmd.input.MessageType, 'DIGEST');
+      assert.equal(cmd.input.SigningAlgorithm, 'ECDSA_SHA_256');
+      assert.equal(cmd.input.KeyId, 'key');
+      kmsSigned.push(Buffer.from(cmd.input.Message as Uint8Array));
+      return { Signature: new Uint8Array([9, 8, 7]) };
+    }
     throw new Error('unexpected kms command');
   };
 
@@ -162,6 +181,7 @@ function fakeQuery(input: Item) {
 
 beforeEach(() => {
   puts.length = 0;
+  kmsSigned.length = 0;
   guardrailCalls.length = 0;
   logs.length = 0;
   guardrailResponse = passed;
@@ -284,6 +304,143 @@ describe('POST /impacts/{id}/correction guardrail check', () => {
   });
 });
 
+// The verifier's canonical form (records VERIFY.md, web signature check),
+// written out again here so a drift in review.ts fails this file.
+function canonical(v: unknown): string {
+  if (v === null) return 'null';
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  if (typeof v === 'object') {
+    const o = v as Item;
+    return `{${Object.keys(o).sort().map((k) => `${JSON.stringify(k)}:${canonical(o[k])}`).join(',')}}`;
+  }
+  return JSON.stringify(v);
+}
+
+const SIGNATURE_COLUMNS = ['assessmentKey', 'canonicalHash', 'signatureBase64', 'signingKeyId', 'signatureAlgorithm'];
+const REVIEW_SIGNED_FIELDS = [
+  'assessmentId', 'recordKind', 'supersedes', 'supersedesCanonicalHash', 'rcicId', 'clientId', 'policyEventId', 'ruleHash',
+  'topic', 'isAffected', 'impactType', 'numericDelta', 'narrative', 'recommendedAction', 'confidence', 'rulesUsed',
+  'citationSourceUrl', 'citationSourceS3Key', 'reviewedBy', 'reviewedAt', 'reviewReasoning', 'timestamp',
+];
+
+describe('POST /impacts/{id}/correction with a changed verdict (ADR-0004)', () => {
+  const flip = {
+    correctorReasoning: 'c1 holds no attestation letter, so the new requirement does not reach the file',
+    correctedIsAffected: false,
+    correctedImpactType: 'none',
+    correctedNarrative: 'c1 is not affected by the attestation requirement',
+    correctedRecommendedAction: 'No action needed',
+  };
+  const reviewPut = () => puts.find((p) => p.TableName === 'assessments');
+  const correctionPut = () => puts.find((p) => p.TableName === 'argus-training-corrections');
+
+  it('signs a new consultant-review row and leaves the agent row untouched', async () => {
+    const res = await postCorrection(flip);
+    assert.equal(res.statusCode, 200);
+    const review = reviewPut();
+    assert.ok(review, 'a review row was written');
+    const row = review.Item;
+    assert.notEqual(row.assessmentKey, 'pe1#c1', 'the agent row is never overwritten');
+    assert.match(String(row.assessmentKey), /^review-\d{13}-pe1#c1$/);
+    assert.equal(review.ConditionExpression, 'attribute_not_exists(rcicId) AND attribute_not_exists(assessmentKey)');
+    assert.equal(puts.filter((p) => p.TableName === 'assessments').length, 1);
+    assert.equal(row.recordKind, 'consultant-review');
+    assert.equal(row.supersedes, 'pe1#c1');
+    assert.equal(row.supersedesCanonicalHash, 'a'.repeat(64));
+    assert.equal(row.reviewedBy, 'R1');
+    assert.equal(row.reviewedAt, row.timestamp);
+    assert.equal(row.isAffected, false);
+    assert.equal(row.impactType, 'none');
+    assert.equal(row.narrative, flip.correctedNarrative);
+    assert.equal(row.recommendedAction, flip.correctedRecommendedAction);
+    assert.equal(row.reviewReasoning, flip.correctorReasoning);
+    // Copied from the agent row, since no correction touches them.
+    assert.equal(row.confidence, 'high');
+    assert.equal(row.ruleHash, 'h1');
+    assert.deepEqual(row.rulesUsed, ['h1']);
+    assert.equal(row.citationSourceUrl, 'https://www.canada.ca/x');
+  });
+
+  it('stores exactly the signed fields plus the signature columns, and the hash re-verifies', async () => {
+    await postCorrection(flip);
+    const row = reviewPut()?.Item ?? {};
+    assert.deepEqual(Object.keys(row).sort(), [...REVIEW_SIGNED_FIELDS, ...SIGNATURE_COLUMNS].sort());
+    const signedPayload = Object.fromEntries(REVIEW_SIGNED_FIELDS.map((k) => [k, row[k]]));
+    const hash = createHash('sha256').update(canonical(signedPayload)).digest('hex');
+    assert.equal(row.canonicalHash, hash);
+    // KMS signed that hash as a 32-byte digest.
+    assert.equal(kmsSigned.length, 1);
+    assert.equal(kmsSigned[0].toString('hex'), hash);
+    assert.equal(row.signatureBase64, Buffer.from([9, 8, 7]).toString('base64'));
+    assert.equal(row.signingKeyId, 'key');
+  });
+
+  it('still writes the training correction, pointing at the review', async () => {
+    const res = await postCorrection(flip);
+    const correction = correctionPut()?.Item ?? {};
+    assert.equal(correction.originalIsAffected, true);
+    assert.equal(correction.correctedIsAffected, false);
+    assert.equal(correction.reviewAssessmentKey, reviewPut()?.Item.assessmentKey);
+    const body = JSON.parse(res.body) as Item;
+    assert.equal((body.review as Item).assessmentKey, reviewPut()?.Item.assessmentKey);
+    assert.equal('signatureBase64' in (body.review as Item), false);
+  });
+
+  it('writes no review when the consultant keeps the same verdict', async () => {
+    const res = await postCorrection({ ...flip, correctedIsAffected: true, correctedImpactType: 'procedural' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(reviewPut(), undefined);
+    assert.equal(kmsSigned.length, 0);
+    assert.equal(correctionPut()?.Item.correctedIsAffected, true);
+    assert.equal((JSON.parse(res.body) as Item).review, null);
+  });
+
+  it('writes no review for a narrative-only correction', async () => {
+    const res = await postCorrection({ correctorReasoning: 'wording', correctedImpactType: 'procedural', correctedNarrative: 'c1 should watch' });
+    assert.equal(res.statusCode, 200);
+    assert.equal(reviewPut(), undefined);
+    assert.equal(correctionPut()?.Item.correctedIsAffected, null);
+  });
+
+  const refusals: Array<[string, Item, string]> = [
+    ['a verdict change with no narrative', { ...flip, correctedNarrative: '' }, 'verdict-change-needs-correctedNarrative'],
+    ['a verdict change with no action', { ...flip, correctedRecommendedAction: undefined }, 'verdict-change-needs-correctedRecommendedAction'],
+    ['a verdict that is not a boolean', { ...flip, correctedIsAffected: 'false' }, 'correctedIsAffected-must-be-boolean'],
+  ];
+  for (const [label, body, code] of refusals) {
+    it(`refuses ${label} and writes nothing`, async () => {
+      const res = await postCorrection(body);
+      assert.equal(res.statusCode, 400);
+      assert.equal((JSON.parse(res.body) as Item).error, code);
+      assert.equal(puts.length, 0);
+      assert.equal(kmsSigned.length, 0);
+    });
+  }
+
+  it('refuses an affected verdict with impact type none, since Composer would draft nothing', async () => {
+    assessment.isAffected = false;
+    try {
+      const res = await postCorrection({ ...flip, correctedIsAffected: true, correctedImpactType: 'none' });
+      assert.equal(res.statusCode, 400);
+      assert.equal((JSON.parse(res.body) as Item).error, 'affected-verdict-needs-an-impact-type');
+      assert.equal(puts.length, 0);
+    } finally {
+      assessment.isAffected = true;
+    }
+  });
+
+  it('signs nothing when the guardrail blocks the text', async () => {
+    guardrailResponse = {
+      action: 'GUARDRAIL_INTERVENED',
+      assessments: [{ sensitiveInformationPolicy: { piiEntities: [{ type: 'NAME', match: 'x', action: 'BLOCKED', detected: true }], regexes: [] } }],
+    };
+    const res = await postCorrection(flip);
+    assert.equal(res.statusCode, 422);
+    assert.equal(kmsSigned.length, 0);
+    assert.equal(puts.length, 0);
+  });
+});
+
 async function get(routeKey: string, pathParameters: Record<string, string> | undefined, tenant: string | null = 'R1') {
   const origLog = console.log;
   console.log = () => {};
@@ -338,6 +495,7 @@ describe('GET /public/verify/{hash}', () => {
     const { status, body } = await get('GET /public/verify/{hash}', { hash: ASSESSMENT_HASH }, null);
     assert.equal(status, 200);
     assert.equal(body.kind, 'assessment');
+    assert.equal(body.recordKind, 'agent');
     assert.equal(body.scheme, 'kms-digest-v1');
     assert.equal(body.canonicalHash, ASSESSMENT_HASH);
   });

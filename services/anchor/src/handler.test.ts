@@ -148,6 +148,48 @@ describe('Anchor signing', () => {
   });
 });
 
+// ADR-0004: the same verdict from an Auditor that returns a stance. The
+// signed bytes are the old ones plus one auditorStance key, in sorted place.
+const verdictWithStance = {
+  ...verdict,
+  affectedStance: 'disagree',
+  affectedStanceReason: 'The profile meets the condition the rule sets.',
+};
+const SIGNED_CANONICAL_WITH_STANCE =
+  '{"assessmentId":"pe1#c1","auditIssues":[{"detail":"delta was -10","type":"magnitude-error"}],"auditorReasoning":"The rule gives 6 points, not 10.","auditorStance":{"reason":"The profile meets the condition the rule sets.","stance":"disagree"},"citationSourceS3Key":"snapshots/x.html","citationSourceUrl":"https://www.canada.ca/x","clientId":"c1","confidence":"medium","impactType":"crs-delta","isAffected":true,"narrative":"c1 loses 6 points","numericDelta":-6,"policyEventId":"pe1","rcicId":"R1","recommendedAction":"Retake the language test","ruleHash":"h1","rulesUsed":["h1"],"timestamp":"2026-09-29T12:00:00.000Z","topic":"ee-crs-grid"}';
+const SIGNED_HASH_WITH_STANCE = createHash('sha256').update(SIGNED_CANONICAL_WITH_STANCE).digest('hex');
+
+describe('Anchor signs the Auditor stance (ADR-0004)', () => {
+  it('signs the stance and reason next to the Analyst isAffected', async () => {
+    const res = await anchor({ detail: verdictWithStance });
+    assert.equal(res.anchored, true);
+    assert.equal(signed[0].toString('hex'), SIGNED_HASH_WITH_STANCE);
+    const item = assessmentPut()?.Item ?? {};
+    assert.equal(item.canonicalHash, SIGNED_HASH_WITH_STANCE);
+    assert.deepEqual(item.auditorStance, { stance: 'disagree', reason: 'The profile meets the condition the rule sets.' });
+    // The stance never overrides the verdict.
+    assert.equal(item.isAffected, true);
+  });
+
+  it('stores exactly the signed fields plus the signature columns', async () => {
+    await anchor({ detail: verdictWithStance });
+    const item = assessmentPut()?.Item ?? {};
+    const signedKeys = Object.keys(JSON.parse(SIGNED_CANONICAL_WITH_STANCE) as Item);
+    const storageKeys = ['assessmentKey', 'canonicalHash', 'signatureBase64', 'signingKeyId', 'signatureAlgorithm'];
+    assert.deepEqual(Object.keys(item).sort(), [...signedKeys, ...storageKeys].sort());
+  });
+
+  it('signs the pre-ADR-0004 bytes when the stance is missing or unusable', async () => {
+    for (const bad of [{}, { affectedStance: 'maybe', affectedStanceReason: 'x' }, { affectedStance: null }]) {
+      signed.length = 0;
+      puts.length = 0;
+      await anchor({ detail: { ...verdict, ...bad } });
+      assert.equal(signed[0].toString('hex'), SIGNED_HASH, JSON.stringify(bad));
+      assert.equal('auditorStance' in (assessmentPut()?.Item ?? {}), false);
+    }
+  });
+});
+
 describe('Anchor step telemetry', () => {
   it('appends a signed step under the tenant-scoped assessment id', async () => {
     await anchor({ detail: verdict });

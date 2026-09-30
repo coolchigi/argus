@@ -38,6 +38,13 @@ export type Lineage = {
   scope: 'assessment' | 'run';
   policyEventId: string;
   assessmentKey: string | null;
+  /**
+   * Set when assessmentKey is a consultant review (ADR-0004). A review has no
+   * pipeline run of its own, so the steps are the ones behind the agent
+   * assessment it replaced, and this is that assessment's key. policyEventId
+   * is that assessment's run. null otherwise.
+   */
+  reviewOf: string | null;
   /** Earliest step seen. null when no step was recorded (assessments signed before telemetry). */
   startedAt: string | null;
   lastStepAt: string | null;
@@ -99,7 +106,7 @@ function median(values: number[]): number | null {
  */
 export function summarize(
   rows: StepRow[],
-  scope: { scope: 'assessment' | 'run'; policyEventId: string; assessmentKey: string | null },
+  scope: { scope: 'assessment' | 'run'; policyEventId: string; assessmentKey: string | null; reviewOf?: string | null },
 ): Lineage {
   const latest = new Map<string, CleanStep>();
   let startedAt: string | null = null;
@@ -133,5 +140,5 @@ export function summarize(
     });
   }
 
-  return { ...scope, startedAt, lastStepAt, agents, fewShotCorrectionKeys: [...fewShot] };
+  return { ...scope, reviewOf: scope.reviewOf ?? null, startedAt, lastStepAt, agents, fewShotCorrectionKeys: [...fewShot] };
 }

@@ -327,6 +327,49 @@ describe('GET /profiles derived counts', () => {
     assert.equal(needs.body.total, 3);
   });
 
+  it('sorts and filters on the action-required rule, so a disagreement alone needs action (ADR-0004)', async () => {
+    // C-2: not affected, but the Auditor disagrees. No brief is owed.
+    // C-3: not affected, Auditor agrees. Nothing to do.
+    store.assessments.push(
+      { ...assessment('C-2', RULE_A, 'run-a1', '2026-09-20T10:00:00.000Z', false), auditorStance: { stance: 'disagree', reason: 'r' } },
+      { ...assessment('C-3', RULE_A, 'run-a1', '2026-09-20T10:00:00.000Z', false), auditorStance: { stance: 'agree', reason: 'r' } },
+    );
+    const all = await call(event('GET /profiles'));
+    const c2 = all.body.clients.find((c: any) => c.clientId === 'C-2');
+    assert.equal(c2.unsentBriefs, 0);
+    assert.equal(c2.auditorDisagrees, 1);
+    assert.equal(c2.actionRequired, 1);
+    assert.equal(all.body.clients[0].clientId, 'C-2', 'a disagreement sorts above clients with nothing to do');
+    const needs = await call(event('GET /profiles', { qs: { needsAction: 'true' } }));
+    assert.deepEqual(needs.body.clients.map((c: any) => c.clientId), ['C-2']);
+  });
+
+  it('counts a rule once when it both needs a brief and has a disagreement', async () => {
+    store.assessments.push(
+      { ...assessment('C-3', RULE_A, 'run-a1', '2026-09-20T10:00:00.000Z', true), auditorStance: { stance: 'disagree', reason: 'r' } },
+      assessment('C-3', RULE_B, 'run-b1', '2026-09-21T10:00:00.000Z', true),
+      assessment('C-1', RULE_A, 'run-a1', '2026-09-20T10:00:00.000Z', true),
+    );
+    const res = await call(event('GET /profiles'));
+    const c3 = res.body.clients.find((c: any) => c.clientId === 'C-3');
+    assert.equal(c3.actionRequired, 2);
+    assert.deepEqual(res.body.clients.map((c: any) => c.clientId), ['C-3', 'C-1', 'C-2']);
+  });
+
+  it('a consultant review that settles a disagreement clears the action', async () => {
+    const disputed = { ...assessment('C-2', RULE_A, 'run-a1', '2026-09-20T10:00:00.000Z', false), auditorStance: { stance: 'disagree', reason: 'r' } };
+    store.assessments.push(disputed, {
+      ...disputed,
+      assessmentKey: 'review-1-run-a1#C-2',
+      recordKind: 'consultant-review',
+      supersedes: 'run-a1#C-2',
+      auditorStance: undefined,
+      timestamp: '2026-09-22T10:00:00.000Z',
+    });
+    const needs = await call(event('GET /profiles', { qs: { needsAction: 'true' } }));
+    assert.deepEqual(needs.body.clients.map((c: any) => c.clientId), []);
+  });
+
   it('ignores another tenant assessments', async () => {
     store.assessments.push(assessment('C-1', RULE_A, 'run-x', '2026-09-20T10:00:00.000Z', true, OTHER));
     const res = await call(event('GET /profiles'));

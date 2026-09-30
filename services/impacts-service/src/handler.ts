@@ -1,10 +1,11 @@
 import { ApplyGuardrailCommand, BedrockRuntimeClient } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
-import { KMSClient, GetPublicKeyCommand } from '@aws-sdk/client-kms';
+import { KMSClient, GetPublicKeyCommand, SignCommand } from '@aws-sdk/client-kms';
 import { BatchGetCommand, DynamoDBDocumentClient, GetCommand, PutCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { readGuardrailVerdict } from './guardrail';
 import { parseAssessmentKey, summarize, type Lineage, type StepRow } from './lineage';
+import { buildReviewPayload, canonicalHash as hashPayload, RECORD_KIND_REVIEW } from './review';
 import { COUNTER_KINDS, counterKey, jwkFromSpki, publicConsultant, sumStats, windowDays, type CounterRow, type Jwk, type PublicConsultant, type PublicStats } from './public';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -108,15 +109,52 @@ async function getAuditSignature(rcicId: string, assessmentKey: string): Promise
 // tenant data, and are returned only alongside at least one of the
 // consultant's own rows, so an unrelated event id reads as empty.
 async function getAssessmentLineage(rcicId: string, assessmentKey: string): Promise<Lineage> {
-  const parsed = parseAssessmentKey(assessmentKey);
+  const agentKey = assessmentKey.startsWith(REVIEW_KEY_PREFIX) ? await supersededAgentKey(rcicId, assessmentKey) : assessmentKey;
+  const parsed = parseAssessmentKey(agentKey);
   if (!parsed) throw httpError(400, 'invalid-assessment-key');
   const own = await queryAll({
     TableName: auditTrailTable(),
     KeyConditionExpression: 'assessmentId = :a',
-    ExpressionAttributeValues: { ':a': `${rcicId}#${assessmentKey}` },
+    ExpressionAttributeValues: { ':a': `${rcicId}#${agentKey}` },
   });
   const rows = own.length > 0 ? [...(await eventRows(parsed.policyEventId)), ...own] : [];
-  return summarize(rows, { scope: 'assessment', policyEventId: parsed.policyEventId, assessmentKey });
+  return summarize(rows, {
+    scope: 'assessment',
+    policyEventId: parsed.policyEventId,
+    assessmentKey,
+    reviewOf: agentKey === assessmentKey ? null : agentKey,
+  });
+}
+
+// Review keys are `review-${ms}-${policyEventId}#${clientId}` (review.ts).
+// Agent keys start with a policyEventId, which never starts with this.
+const REVIEW_KEY_PREFIX = 'review-';
+const MAX_REVIEW_HOPS = 20;
+
+/**
+ * A consultant review has no pipeline run. Its lineage is the run behind
+ * the agent assessment it replaced, found by following `supersedes` through
+ * any reviews of reviews. Every read is a GetItem in the caller's own
+ * partition, so another tenant's row can't be reached.
+ */
+async function supersededAgentKey(rcicId: string, reviewKey: string): Promise<string> {
+  let key = reviewKey;
+  for (let hop = 0; hop < MAX_REVIEW_HOPS && key.startsWith(REVIEW_KEY_PREFIX); hop += 1) {
+    const res = await ddb.send(
+      new GetCommand({
+        TableName: IMPACT_ASSESSMENTS_TABLE,
+        Key: { rcicId, assessmentKey: key },
+        ProjectionExpression: 'recordKind, supersedes',
+      }),
+    );
+    if (!res.Item) throw httpError(404, 'assessment-not-found');
+    if (res.Item.recordKind !== RECORD_KIND_REVIEW || typeof res.Item.supersedes !== 'string' || !res.Item.supersedes) {
+      throw httpError(500, 'review-without-supersedes');
+    }
+    key = res.Item.supersedes;
+  }
+  if (key.startsWith(REVIEW_KEY_PREFIX)) throw httpError(500, 'review-chain-too-long');
+  return key;
 }
 
 async function getRunLineage(rcicId: string, policyEventId: string): Promise<Lineage> {
@@ -155,7 +193,11 @@ function auditTrailTable(): string {
   return AUDIT_TRAIL_TABLE;
 }
 
-async function postCorrection(rcicId: string, assessmentKey: string, body: Record<string, unknown>): Promise<{ correction: Record<string, unknown> }> {
+async function postCorrection(
+  rcicId: string,
+  assessmentKey: string,
+  body: Record<string, unknown>,
+): Promise<{ correction: Record<string, unknown>; review: Record<string, unknown> | null }> {
   const assessmentRes = await ddb.send(new GetCommand({ TableName: IMPACT_ASSESSMENTS_TABLE, Key: { rcicId, assessmentKey } }));
   if (!assessmentRes.Item) throw httpError(404, 'assessment-not-found');
   const original = assessmentRes.Item;
@@ -166,6 +208,19 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
   const correctedNarrative = optionalString(body, 'correctedNarrative');
   const correctedRecommendedAction = optionalString(body, 'correctedRecommendedAction');
   const correctedConfidence = optionalEnum<Confidence>(body, 'correctedConfidence', ['low', 'medium', 'high']);
+  const correctedIsAffected = optionalBoolean(body, 'correctedIsAffected');
+  const originalIsAffected = original.isAffected === true;
+  // ADR-0004: a correction that changes isAffected becomes a signed
+  // consultant review. One that only fixes the wording stays a training row.
+  const changesVerdict = correctedIsAffected !== null && correctedIsAffected !== originalIsAffected;
+  if (changesVerdict) {
+    // The review replaces the verdict, so it needs its own wording. The old
+    // narrative argues the opposite answer, and Composer drafts from it.
+    if (!correctedNarrative) throw httpError(400, 'verdict-change-needs-correctedNarrative');
+    if (!correctedRecommendedAction) throw httpError(400, 'verdict-change-needs-correctedRecommendedAction');
+    // Composer skips impact type none, so an affected verdict would get no brief.
+    if (correctedIsAffected && correctedImpactType === 'none') throw httpError(400, 'affected-verdict-needs-an-impact-type');
+  }
 
   await rejectIfGuardrailIntervenes(rcicId, assessmentKey, [correctorReasoning, correctedNarrative, correctedRecommendedAction]);
 
@@ -176,6 +231,19 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
   const policyDomain = await loadPolicyDomain(ruleHash);
 
   const timestamp = new Date().toISOString();
+  const review = changesVerdict
+    ? await writeReview(rcicId, original, {
+        isAffected: correctedIsAffected,
+        impactType: correctedImpactType,
+        numericDelta: correctedNumericDelta,
+        narrative: correctedNarrative ?? '',
+        recommendedAction: correctedRecommendedAction ?? '',
+        confidence: correctedConfidence ?? String(original.confidence ?? 'medium'),
+        reviewReasoning: correctorReasoning,
+        reviewedAt: timestamp,
+      })
+    : null;
+
   const correctionKey = `${assessmentKey}#${timestamp}`;
   const item = {
     rcicId,
@@ -196,6 +264,10 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
     correctedNarrative,
     correctedRecommendedAction,
     correctedConfidence,
+    originalIsAffected,
+    correctedIsAffected,
+    // The signed consultant review this correction produced, if it changed the verdict.
+    reviewAssessmentKey: review ? String(review.assessmentKey) : null,
     correctorReasoning,
     correctedAt: timestamp,
   };
@@ -209,8 +281,70 @@ async function postCorrection(rcicId: string, assessmentKey: string, body: Recor
     topic: item.topic,
     originalDelta: item.originalNumericDelta,
     correctedDelta: correctedNumericDelta,
+    originalIsAffected,
+    correctedIsAffected,
+    reviewAssessmentKey: item.reviewAssessmentKey,
   });
-  return { correction: item };
+  return { correction: item, review: review ? stripInternal(review) : null };
+}
+
+/**
+ * Signs and stores a consultant review as its own ImpactAssessments row
+ * (ADR-0004). Same scheme as Anchor: KMS Sign over the SHA-256 of the
+ * canonical payload, MessageType DIGEST. Signed here, in the request, so the
+ * consultant gets the signed record back or an error, never a pending state.
+ * Anchor stays the pipeline's signing step: it signs Auditor verdicts, and a
+ * consultant review isn't one. The put is create-only, so no existing row is
+ * ever overwritten.
+ */
+async function writeReview(
+  rcicId: string,
+  original: Record<string, unknown>,
+  fields: {
+    isAffected: boolean;
+    impactType: string;
+    numericDelta: number | null;
+    narrative: string;
+    recommendedAction: string;
+    confidence: string;
+    reviewReasoning: string;
+    reviewedAt: string;
+  },
+): Promise<Record<string, unknown>> {
+  const payload = buildReviewPayload({ rcicId, original, ...fields });
+  const hash = hashPayload(payload);
+  const signed = await kms.send(
+    new SignCommand({
+      KeyId: SIGNING_KEY_ID,
+      Message: Buffer.from(hash, 'hex'),
+      MessageType: 'DIGEST',
+      SigningAlgorithm: 'ECDSA_SHA_256',
+    }),
+  );
+  if (!signed.Signature) throw new Error('kms returned no signature');
+  const row = {
+    ...payload,
+    assessmentKey: String(payload.assessmentId),
+    canonicalHash: hash,
+    signatureBase64: Buffer.from(signed.Signature).toString('base64'),
+    signingKeyId: SIGNING_KEY_ID,
+    signatureAlgorithm: 'ECDSA_SHA_256',
+  };
+  await ddb.send(
+    new PutCommand({
+      TableName: IMPACT_ASSESSMENTS_TABLE,
+      Item: row,
+      ConditionExpression: 'attribute_not_exists(rcicId) AND attribute_not_exists(assessmentKey)',
+    }),
+  );
+  log('info', 'consultant-review-signed', {
+    rcicId,
+    assessmentKey: row.assessmentKey,
+    supersedes: payload.supersedes,
+    isAffected: fields.isAffected,
+    canonicalHash: hash,
+  });
+  return row;
 }
 
 /**
@@ -309,6 +443,8 @@ async function publicVerify(canonicalHash: string): Promise<Record<string, unkno
   const publicKey = await loadPublicKey();
   return {
     kind: 'assessment',
+    // 'agent' for Anchor's rows, 'consultant-review' for a signed consultant verdict (ADR-0004).
+    recordKind: item.recordKind === RECORD_KIND_REVIEW ? RECORD_KIND_REVIEW : 'agent',
     scheme: SIGNATURE_SCHEME,
     fingerprint: cleanHash,
     topic: String(item.topic ?? ''),
@@ -477,6 +613,13 @@ function requireEnum<T extends string>(body: Record<string, unknown>, key: strin
   const v = body[key];
   if (typeof v !== 'string' || !allowed.includes(v as T)) throw httpError(400, `invalid-${key}-must-be-one-of-${allowed.join('|')}`);
   return v as T;
+}
+
+function optionalBoolean(body: Record<string, unknown>, key: string): boolean | null {
+  const v = body[key];
+  if (v === undefined || v === null) return null;
+  if (typeof v !== 'boolean') throw httpError(400, `${key}-must-be-boolean`);
+  return v;
 }
 
 function optionalEnum<T extends string>(body: Record<string, unknown>, key: string, allowed: readonly T[]): T | null {

@@ -77,6 +77,9 @@ const ASSESSMENT_LIST_FIELDS = [
   'signatureAlgorithm',
   'recommendedAction',
   'confidence',
+  // ADR-0004: which record is current, and whether the Auditor disagrees.
+  'recordKind',
+  'auditorStance',
 ];
 
 const ASSESSMENT_IMPACT_FIELDS = [
@@ -94,6 +97,10 @@ const ASSESSMENT_IMPACT_FIELDS = [
   'canonicalHash',
   'signatureAlgorithm',
   'timestamp',
+  'recordKind',
+  'auditorStance',
+  'supersedes',
+  'reviewedAt',
 ];
 
 // rule_content is deliberately absent.

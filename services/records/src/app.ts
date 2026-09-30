@@ -5,6 +5,7 @@ import {
   parseExportRequest,
   parseKinds,
   parseRange,
+  RECORD_KIND_REVIEW,
   sha256Hex,
   sortRecords,
   spkiToPem,
@@ -99,6 +100,7 @@ export function createApp(
     const records = await collect(rcicId, req.value, kinds);
     const generated = now();
     const assessmentCount = records.filter((r) => r.kind === 'assessment').length;
+    const reviewCount = records.filter((r) => r.kind === 'assessment' && r.recordKind === RECORD_KIND_REVIEW).length;
     const briefCount = records.length - assessmentCount;
     const verify = buildVerifyDoc({
       from,
@@ -107,6 +109,7 @@ export function createApp(
       keyId: key.keyId,
       spkiSha256,
       assessmentCount,
+      reviewCount,
       briefCount,
     });
     const zip = buildZip(
@@ -125,8 +128,8 @@ export function createApp(
     const url = await blobs.presign(objectKey, config.urlTtlSeconds);
     const expiresAt = new Date(generated.getTime() + config.urlTtlSeconds * 1000).toISOString();
 
-    log('info', 'records-exported', { rcicId, exportId, from, to, kinds, assessmentCount, briefCount, bytes: zip.length });
-    return json(200, { url, expiresAt, fileName, from, to, counts: { assessments: assessmentCount, briefs: briefCount } });
+    log('info', 'records-exported', { rcicId, exportId, from, to, kinds, assessmentCount, reviewCount, briefCount, bytes: zip.length });
+    return json(200, { url, expiresAt, fileName, from, to, counts: { assessments: assessmentCount, consultantReviews: reviewCount, briefs: briefCount } });
   }
 
   return async function handle(event: APIGatewayProxyEventV2): Promise<Json> {

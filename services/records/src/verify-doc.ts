@@ -13,6 +13,8 @@ export type VerifyDocInput = {
   keyId: string;
   spkiSha256: string;
   assessmentCount: number;
+  /** How many of assessmentCount are consultant reviews (ADR-0004). */
+  reviewCount: number;
   briefCount: number;
 };
 
@@ -92,7 +94,7 @@ export function buildVerifyDoc(i: VerifyDocInput): string {
   const lines = [
     '# Verifying your Argus records',
     '',
-    `This archive holds ${i.assessmentCount} signed assessments and ${i.briefCount} sent briefs from ${i.from} to ${i.to} (UTC dates, both included). Argus built it at ${i.generatedAt}.`,
+    `This archive holds ${i.assessmentCount} signed assessments (${i.reviewCount} of them consultant reviews) and ${i.briefCount} sent briefs from ${i.from} to ${i.to} (UTC dates, both included). Argus built it at ${i.generatedAt}.`,
     '',
     `- \`${RECORDS_FILE}\`: one signed record per line.`,
     `- \`${KEY_FILE}\`: the public half of the key that signed them.`,
@@ -114,6 +116,13 @@ export function buildVerifyDoc(i: VerifyDocInput): string {
     '- `signatureBase64`: the DER-encoded ECDSA signature, in base64.',
     '- `signingKeyId`: the KMS key that signed it.',
     '- `signedPayload`, on assessments: the exact object Argus hashed. Sort its keys at every level, serialize it as JSON with no whitespace, and the SHA-256 of that string is `canonicalHash`. The script below does this for you.',
+    '',
+    'Assessments come in 2 kinds, named by `recordKind`:',
+    '',
+    "- `agent`: the pipeline's assessment. Argus signed the Analyst's `isAffected`. On newer records `signedPayload.auditorStance` holds the Auditor's view of that answer (`agree`, `disagree` or `uncertain`) and its reason, under the same signature.",
+    "- `consultant-review`: your own verdict, filed as a correction that changed `isAffected`. `supersedes` names the assessment it replaces and `supersedesCanonicalHash` pins that record's hash. The replaced assessment is never edited or deleted, so it's in this file too when it falls in the date range.",
+    '',
+    'Both kinds verify the same way.',
     '',
     "Briefs carry their hash and signature only (`signedPayload` is `null`). The sent text isn't in this export: you can edit a brief freely before sending it, so it could name a client. The recipient's address isn't here either, in any form. The signature still proves Argus signed that hash when the brief went out.",
     '',
