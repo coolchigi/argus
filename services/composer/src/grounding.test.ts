@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { PGP_042_ACTIONS, PGP_042_ASSESSMENT, PGP_042_BODY, PGP_RULE_CONTENT } from './fixtures.pgp-042.ts';
-import { checkBriefGrounding, normalize } from './grounding.ts';
+import { checkBriefGrounding, checkDateRoles, normalize } from './grounding.ts';
 import { checkBriefVoice } from './voice.ts';
 
 const liveSources = [
@@ -79,6 +79,74 @@ describe('checkBriefGrounding', () => {
   it('ignores digits inside links and list markers', () => {
     const body = '1. Read [the notice](https://www.canada.ca/2024/notice-99.html).\n2. Wait for intake.';
     assert.deepEqual(checkBriefGrounding(body, ['A notice about intake.']), []);
+  });
+});
+
+// Brief 9aa15dff (2026-09-30, client 2026-031, drafted from a consultant
+// review). The PAL/TAL rule's exemption date is January 1, 2026. January 11,
+// 2027 is the client's program start date, which the review gave as
+// 2027-01-11.
+const PAL_BRIEF =
+  "IRCC has updated its policy to exempt certain master's programs from the PAL/TAL requirement. This change applies to master's programs at public Designated Learning Institutions (DLIs) starting January 11, 2027.";
+const PAL_POLICY = [
+  "You don't need a PAL or TAL if you're applying to study at a degree-granting graduate program at the master's or doctoral level at a public DLI starting January 1, 2026. The PAL/TAL is valid until December 31, 2026.",
+  'https://www.canada.ca/en/immigration-refugees-citizenship/services/study-canada/study-permit/get-documents/provincial-attestation-letter.html',
+];
+const PAL_CLIENT = [
+  "the client qualifies for the master's exemption from the PAL/TAL requirement (public DLI, master's program starting 2027-01-11), but must include proof of the exemption with the study permit application.",
+];
+const POLICY_DATE_FROM_CLIENT = [{ kind: 'policy-date-from-client', value: 'january 11, 2027' }];
+
+describe('checkDateRoles', () => {
+  it("flags the live 9aa15dff brief, which gives the client's start date as the policy's", () => {
+    assert.deepEqual(checkDateRoles(PAL_BRIEF, PAL_POLICY, PAL_CLIENT), POLICY_DATE_FROM_CLIENT);
+  });
+
+  it("passes the client's start date stated as theirs", () => {
+    const body = "Your program starts January 11, 2027, so you don't need a PAL/TAL. Include proof of the exemption with your application.";
+    assert.deepEqual(checkDateRoles(body, PAL_POLICY, PAL_CLIENT), []);
+    assert.deepEqual(checkBriefGrounding(body, [...PAL_POLICY, ...PAL_CLIENT]), []);
+  });
+
+  it('flags a cut-off made from the client date, even in a sentence about the reader', () => {
+    for (const body of [
+      "If you're applying for a master's program starting on or after January 11, 2027, you don't need a PAL/TAL.",
+      "Check that your master's program starts on or after January 11, 2027.",
+      'Your exemption applies as of January 11, 2027.',
+    ]) {
+      assert.deepEqual(checkDateRoles(body, PAL_POLICY, PAL_CLIENT), POLICY_DATE_FROM_CLIENT, body);
+    }
+  });
+
+  it("passes the policy's own dates however the sentence frames them", () => {
+    // The client text repeats the rule's date too, so only the rule decides.
+    const client = [...PAL_CLIENT, 'The exemption covers programs starting 2026-01-01. The PAL/TAL is valid until December 31, 2026.'];
+    const body = 'This applies to programs starting January 1, 2026. Your PAL/TAL is valid until December 31, 2026.';
+    assert.deepEqual(checkDateRoles(body, PAL_POLICY, client), []);
+  });
+
+  it('leaves a date no source gives to checkBriefGrounding', () => {
+    const body = 'This applies to programs starting March 3, 2027.';
+    assert.deepEqual(checkDateRoles(body, PAL_POLICY, PAL_CLIENT), []);
+    assert.deepEqual(checkBriefGrounding(body, [...PAL_POLICY, ...PAL_CLIENT]), [{ kind: 'date', value: 'march 3, 2027' }]);
+  });
+
+  it('reads each line on its own, so a suggested action gets its own sentence', () => {
+    const body = 'Your program starts January 11, 2027\nConfirm the exemption applies from January 11, 2027 onward';
+    assert.deepEqual(checkDateRoles(body, PAL_POLICY, PAL_CLIENT), POLICY_DATE_FROM_CLIENT);
+  });
+});
+
+describe('date grounding', () => {
+  it('grounds a written-out date against the same date in ISO form, and the other way round', () => {
+    assert.deepEqual(checkBriefGrounding('Your program starts January 11, 2027.', ['starting 2027-01-11']), []);
+    assert.deepEqual(checkBriefGrounding('Your program starts 2027-01-11.', ['starting January 11, 2027']), []);
+  });
+
+  it('matches the day as a whole number', () => {
+    // "january 1" is a prefix of "january 11" in the source.
+    assert.deepEqual(checkBriefGrounding('It starts January 1, 2026.', ['starting January 11, 2026']), [{ kind: 'date', value: 'january 1, 2026' }]);
+    assert.deepEqual(checkBriefGrounding('It starts January 11, 2026.', ['starting January 1, 2026']), [{ kind: 'date', value: 'january 11, 2026' }]);
   });
 });
 

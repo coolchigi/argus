@@ -8,8 +8,12 @@
 // It's a plain text match, so it flags likely problems and can't prove a
 // claim true. A paraphrase that keeps the number ("5 years per entry" for
 // "5 years at a time") passes. A number the sources never mention doesn't.
+//
+// checkDateRoles covers the other way a grounded date goes wrong: the date is
+// in the sources, but as a fact about the client (their program start date),
+// and the brief states it as the policy's own date.
 
-export type GroundingFindingKind = 'money' | 'date' | 'duration' | 'number' | 'program';
+export type GroundingFindingKind = 'money' | 'date' | 'duration' | 'number' | 'program' | 'policy-date-from-client';
 export type GroundingFinding = { kind: GroundingFindingKind; value: string };
 
 const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december';
@@ -29,6 +33,52 @@ const PROGRAM_NOUN = /\b(program|visa|permit|pilot|stream|class|sponsorship)s?\b
 // The agency itself. The prompt tells the model to name it, and a notice
 // can refer to itself as "we" instead.
 const KNOWN_ACRONYMS = new Set(['IRCC']);
+
+// "january 11, 2027", "11 january 2027" and "2027-01-11". Run on normalized text.
+function dateRe(): RegExp {
+  return new RegExp(`\\b(${MONTHS}) (\\d{1,2})(?:, ?(\\d{4}))?\\b|\\b(\\d{1,2}) (${MONTHS})(?: (\\d{4}))?\\b|\\b(\\d{4})-(\\d{2})-(\\d{2})\\b`, 'g');
+}
+
+const MONTH_NUMBER = new Map(MONTHS.split('|').map((name, i) => [name, i + 1]));
+
+// Month and day as numbers, year if the text gives one.
+function dateParts(m: RegExpMatchArray): { month: number; day: number; year: string | undefined } {
+  if (m[7]) return { month: Number(m[8]), day: Number(m[9]), year: m[7] };
+  return { month: MONTH_NUMBER.get(m[1] ?? m[5]) ?? 0, day: Number(m[2] ?? m[4]), year: m[3] ?? m[6] };
+}
+
+// Every date a source gives, in both spellings' common form, so an Analyst's
+// "2027-01-11" grounds a brief's "January 11, 2027".
+function dateKeys(source: string): Set<string> {
+  const keys = new Set<string>();
+  for (const m of source.matchAll(dateRe())) {
+    const { month, day, year } = dateParts(m);
+    keys.add(`${month}-${day}`);
+    if (year) keys.add(`${year}-${month}-${day}`);
+  }
+  return keys;
+}
+
+function dateGrounded(m: RegExpMatchArray, source: string, keys: Set<string>): boolean {
+  const { month, day, year } = dateParts(m);
+  if (keys.has(year ? `${year}-${month}-${day}` : `${month}-${day}`)) return true;
+  if (m[7]) return source.includes(m[0]);
+  const name = m[1] ?? m[5];
+  // Whole day numbers only, so "january 1" doesn't ground "january 11".
+  const dayMonth = new RegExp(`\\b${name} ${day}(?!\\d)|(?<!\\d)${day} ${name}\\b`).test(source);
+  return dayMonth && (!year || hasNumber(source, year));
+}
+
+// The body as claims: links are the citation, which is a source already, so
+// their digits aren't claims, and neither are list markers.
+function claimText(body: string): string {
+  return normalize(
+    body
+      .replace(/\]\([^)]*\)/g, ']')
+      .replace(/https?:\/\/\S+/g, ' ')
+      .replace(/^\s*\d+[.)]\s/gm, ' '),
+  );
+}
 
 /** Lowercase, straight punctuation, "five years" as "5 years", "15,000" as "15000". */
 export function normalize(text: string): string {
@@ -93,28 +143,12 @@ export function checkBriefGrounding(body: string, sources: string[]): GroundingF
     findings.push({ kind, value });
   };
 
-  // Links are the citation, which is a source already. Their digits aren't claims.
-  let text = normalize(
-    body
-      .replace(/\]\([^)]*\)/g, ']')
-      .replace(/https?:\/\/\S+/g, ' ')
-      .replace(/^\s*\d+[.)]\s/gm, ' '),
-  );
+  let text = claimText(body);
 
   text = mask(text, /\$\s?(\d+(?:\.\d+)?)(?:\s?(?:million|billion))?/g, (m) => add('money', m[0], hasNumber(source, m[1])));
 
-  text = mask(
-    text,
-    new RegExp(`\\b(${MONTHS}) (\\d{1,2})(?:, ?(\\d{4}))?\\b|\\b(\\d{1,2}) (${MONTHS})(?: (\\d{4}))?\\b|\\b\\d{4}-\\d{2}-\\d{2}\\b`, 'g'),
-    (m) => {
-      if (!m[1] && !m[5]) return add('date', m[0], source.includes(m[0]));
-      const month = m[1] ?? m[5];
-      const day = m[2] ?? m[4];
-      const year = m[3] ?? m[6];
-      const dayMonth = source.includes(`${month} ${day}`) || source.includes(`${day} ${month}`);
-      add('date', m[0], dayMonth && (!year || hasNumber(source, year)));
-    },
-  );
+  const keys = dateKeys(source);
+  text = mask(text, dateRe(), (m) => add('date', m[0], dateGrounded(m, source, keys)));
 
   text = mask(text, new RegExp(`(?<![\\d.])(\\d+(?:\\.\\d+)?)(?: |-)${UNIT}\\b`, 'g'), (m) => {
     const stem = m[2];
@@ -135,6 +169,50 @@ export function checkBriefGrounding(body: string, sources: string[]): GroundingF
   for (const m of raw.matchAll(/\b[A-Z]{2,6}(?=s?\b)/g)) {
     if (KNOWN_ACRONYMS.has(m[0])) continue;
     add('program', m[0], new RegExp(`\\b${m[0]}`, 'i').test(sources.join('\n')));
+  }
+  return findings;
+}
+
+// The reader as the subject: "your program starts", "you start". A sentence
+// that talks about the reader before the date is saying the date is theirs.
+const READER = /\byou(?:r|'re|'ve|'ll)?\b/;
+// Words that turn the date right after them into a cut-off: "on or after
+// January 11, 2027" is when a policy applies, whoever the sentence is about.
+const CUT_OFF = /\b(?:on or after|on or before|after|before|as of|effective|until|by|since|no later than)\s*$/;
+
+/**
+ * Dates the brief states as policy facts that only the client-specific
+ * sources give. Live case (brief 9aa15dff, 2026-09-30): the consultant's
+ * review said the client's program starts 2027-01-11, and the brief said the
+ * exemption "applies to master's programs ... starting January 11, 2027". The
+ * rule's own date is January 1, 2026.
+ *
+ * Deterministic and narrow on purpose. A date is flagged only when the policy
+ * sources don't give it, the client sources do, and its sentence doesn't make
+ * it the reader's: no "you" or "your" before it, or a cut-off word ("on or
+ * after", "before", "as of") right in front of it. Dates no source gives are
+ * checkBriefGrounding's job.
+ */
+export function checkDateRoles(body: string, policySources: string[], clientSources: string[]): GroundingFinding[] {
+  const policy = normalize(policySources.join('\n'));
+  const client = normalize(clientSources.join('\n'));
+  const policyKeys = dateKeys(policy);
+  const clientKeys = dateKeys(client);
+  const findings: GroundingFinding[] = [];
+  const seen = new Set<string>();
+
+  // Split into lines before normalize folds the line breaks, so a suggested
+  // action without a full stop stays its own sentence.
+  const sentences = body.split('\n').flatMap((line) => claimText(line).split(/(?<=[.!?]) /));
+  for (const sentence of sentences) {
+    for (const m of sentence.matchAll(dateRe())) {
+      if (dateGrounded(m, policy, policyKeys) || !dateGrounded(m, client, clientKeys)) continue;
+      const before = sentence.slice(0, m.index);
+      if (READER.test(before) && !CUT_OFF.test(before)) continue;
+      if (seen.has(m[0])) continue;
+      seen.add(m[0]);
+      findings.push({ kind: 'policy-date-from-client', value: m[0] });
+    }
   }
   return findings;
 }
