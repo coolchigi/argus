@@ -1,5 +1,5 @@
 import { StatTile } from "@/components/argus/stat-tile";
-import type { DashboardStats } from "@/components/dashboard/derive";
+import { actionSub, type DashboardStats } from "@/components/dashboard/derive";
 
 function Placeholder() {
   return (
@@ -8,12 +8,6 @@ function Placeholder() {
       <span className="sr-only">Loading</span>
     </>
   );
-}
-
-/** "2 briefs to send · Auditor disagrees on 1". */
-function actionSub(s: DashboardStats): string {
-  const briefs = `${s.briefsToSend} ${s.briefsToSend === 1 ? "brief" : "briefs"} to send`;
-  return s.auditorDisagrees > 0 ? `${briefs} · Auditor disagrees on ${s.auditorDisagrees}` : `${briefs}, ${s.briefsDrafted} drafted`;
 }
 
 /**

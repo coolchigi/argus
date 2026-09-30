@@ -8,6 +8,7 @@ import { InlineError } from "@/components/argus/inline-error";
 import { NumberedSection } from "@/components/argus/numbered-section";
 import { PageHeader } from "@/components/argus/page-header";
 import { ProgressLine } from "@/components/argus/progress-line";
+import { AuditorFlagBadge } from "@/components/argus/auditor-flag-badge";
 import { Badge, StatusBadge } from "@/components/argus/status-badge";
 import { AssessmentList, BriefList } from "@/components/caseload/client-history";
 import { buttonSecondary } from "@/components/caseload/copy";
@@ -51,6 +52,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ clientI
   const closed = client?.status === "closed";
   const toSend = data?.assessments.filter((a) => a.needsBrief).length ?? 0;
   const disagrees = data?.assessments.filter((a) => a.actionReason === "auditor-disagrees").length ?? 0;
+  const unsure = data?.assessments.filter((a) => a.actionReason === "auditor-unsure").length ?? 0;
 
   async function setStatus(next: "active" | "closed") {
     try {
@@ -121,11 +123,8 @@ export default function ClientDetailPage({ params }: { params: Promise<{ clientI
                   {toSend} {toSend === 1 ? "brief" : "briefs"} to send
                 </Badge>
               )}
-              {disagrees > 0 && (
-                <Badge tone="danger">
-                  Auditor disagrees{disagrees > 1 ? ` · ${disagrees}` : ""}
-                </Badge>
-              )}
+              {disagrees > 0 && <AuditorFlagBadge reason="auditor-disagrees" count={disagrees} />}
+              {unsure > 0 && <AuditorFlagBadge reason="auditor-unsure" count={unsure} />}
             </div>
             <dl className="grid grid-cols-1 gap-px border border-hairline bg-hairline sm:grid-cols-2 lg:grid-cols-3">
               <Item label="Program" value={humanizePolicyDomain(client.program)} />

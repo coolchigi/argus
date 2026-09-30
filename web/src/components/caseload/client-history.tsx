@@ -7,7 +7,7 @@ import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { formatDelta } from "@/lib/format";
 import { humanizeImpactType, humanizeTopic } from "@/lib/humanize";
 import type { ClientAssessment, ClientBrief } from "@/lib/types/profiles";
-import { ACTION_REASON_LABEL } from "@/lib/assessments";
+import { AuditorFlagBadge } from "@/components/argus/auditor-flag-badge";
 
 function impactHref(assessmentKey: string) {
   return `/impacts/${encodeURIComponent(assessmentKey)}`;
@@ -58,7 +58,7 @@ export function AssessmentList({ assessments }: { assessments: ClientAssessment[
               {a.isAffected && a.recommendedAction && <p className="max-w-prose text-[13px] text-ink-2">{a.recommendedAction}</p>}
             </div>
             <div className="relative z-10 flex shrink-0 flex-col items-end gap-1.5">
-              {a.actionReason === "auditor-disagrees" && <Badge tone="danger">{ACTION_REASON_LABEL["auditor-disagrees"]}</Badge>}
+              <AuditorFlagBadge reason={a.actionReason} />
               {a.recordKind === "consultant-review" && <Badge>Reviewed by you</Badge>}
               <StatusBadge kind="assessment" status={assessmentStatus(a)} />
               {a.canonicalHash && <Fingerprint hash={a.canonicalHash} signed={a.signed} href={`/verify/${a.canonicalHash}`} />}

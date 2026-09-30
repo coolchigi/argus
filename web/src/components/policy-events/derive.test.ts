@@ -244,3 +244,15 @@ test("one invalid signature decides the seal, even mid-run", () => {
   assert.equal(s.state, "invalid");
   assert.deepEqual([s.total, s.verified, s.invalid, s.errored, s.pending], [4, 1, 1, 1, 1]);
 });
+
+test("the event note names a stance the Auditor contradicted", () => {
+  assert.equal(eventNote({ runs: 1, correctionsFiled: 0, auditorUnsure: 1 }), "Auditor unsure on 1 client");
+  assert.equal(eventNote({ runs: 1, correctionsFiled: 0, auditorDisagrees: 1, auditorUnsure: 2 }), "Auditor disagrees on 1 client · Auditor unsure on 2 clients");
+});
+
+test("an unaffected client the Auditor is unsure about stays visible and needs action", () => {
+  const unsure = { clientId: "C-1", isAffected: false, brief: null, actionReason: "auditor-unsure" } as unknown as PolicyEventImpact;
+  const settled = { clientId: "C-2", isAffected: false, brief: null, actionReason: null } as unknown as PolicyEventImpact;
+  assert.equal(clientNeedsAction(unsure), true);
+  assert.deepEqual(visibleClients([unsure, settled], false).map((c) => c.clientId), ["C-1"]);
+});

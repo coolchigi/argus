@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import type { Brief, Impact } from "./argus-types.ts";
-import { actionReasonOf, briefForAssessment, countActionRequired, deriveAssessmentRows, parseAssessmentTab } from "./assessments.ts";
+import { ACTION_REASON_LABEL, ACTION_REASON_TONE, actionReasonOf, briefForAssessment, countActionRequired, deriveAssessmentRows, isAuditorFlag, parseAssessmentTab } from "./assessments.ts";
 
 const imp = (over: Partial<Impact>): Impact =>
   ({ assessmentKey: "run2#C1", policyEventId: "run2", ruleHash: "r1", clientId: "C1", isAffected: true, timestamp: "2026-09-28T10:00:00Z", ...over }) as Impact;
@@ -123,5 +123,40 @@ describe("parseAssessmentTab", () => {
     assert.equal(parseAssessmentTab("all"), "all");
     assert.equal(parseAssessmentTab("nope"), "action");
     assert.equal(parseAssessmentTab(null), "action");
+  });
+});
+
+describe("a stance the Auditor contradicted", () => {
+  const unsure = { stance: "uncertain" as const, reason: "The Auditor answered \"agree\" with isAffected=false, but its reason argues the opposite: x", contradicted: true };
+
+  it("is action required as auditor-unsure, ahead of a missing brief", () => {
+    assert.equal(actionReasonOf(imp({ isAffected: false, auditorStance: unsure }), false), "auditor-unsure");
+    assert.equal(actionReasonOf(imp({ isAffected: true, auditorStance: unsure }), false), "auditor-unsure");
+    assert.equal(actionReasonOf(imp({ isAffected: true, auditorStance: unsure }), true), "auditor-unsure", "a sent brief doesn't settle the verdict");
+  });
+
+  it("does not count a plain uncertain stance", () => {
+    assert.equal(actionReasonOf(imp({ isAffected: false, auditorStance: { stance: "uncertain", reason: "x" } }), false), null);
+  });
+
+  it("is cleared by a consultant review", () => {
+    assert.equal(actionReasonOf(imp({ isAffected: false, recordKind: "consultant-review", auditorStance: unsure }), false), null);
+  });
+
+  it("counts once in the shared Action required number the tab, sidebar and dashboard read", () => {
+    const impacts = [imp({ isAffected: false, auditorStance: unsure }), imp({ clientId: "C2", assessmentKey: "run2#C2", isAffected: false })];
+    assert.equal(countActionRequired(impacts, []), 1);
+    const [row] = deriveAssessmentRows(impacts, [], []);
+    assert.equal(row.rail, "action");
+    assert.equal(row.actionReason, "auditor-unsure");
+  });
+
+  it("is labelled Auditor unsure, and is an Auditor flag", () => {
+    assert.equal(ACTION_REASON_LABEL["auditor-unsure"], "Auditor unsure");
+    assert.equal(ACTION_REASON_TONE["auditor-disagrees"], "danger");
+    assert.equal(isAuditorFlag("auditor-unsure"), true);
+    assert.equal(isAuditorFlag("auditor-disagrees"), true);
+    assert.equal(isAuditorFlag("brief-needed"), false);
+    assert.equal(isAuditorFlag(null), false);
   });
 });

@@ -3,6 +3,7 @@
 import type { ReactNode } from "react";
 import { ClientChip } from "@/components/argus/client-chip";
 import { DataTable, type Column } from "@/components/argus/data-table";
+import { AuditorFlagBadge } from "@/components/argus/auditor-flag-badge";
 import { Badge, StatusBadge } from "@/components/argus/status-badge";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { humanizePolicyDomain } from "@/lib/humanize";
@@ -18,6 +19,8 @@ function actionLabel(c: ClientSummary): string {
   if (c.unsentBriefs > 0) parts.push(`${c.unsentBriefs} ${c.unsentBriefs === 1 ? "brief" : "briefs"} to send`);
   const d = c.auditorDisagrees ?? 0;
   if (d > 0) parts.push(`the Auditor disagrees with ${d} ${d === 1 ? "verdict" : "verdicts"}`);
+  const u = c.auditorUnsure ?? 0;
+  if (u > 0) parts.push(`the Auditor contradicted itself on ${u} ${u === 1 ? "verdict" : "verdicts"}`);
   return parts.length > 0 ? `, ${parts.join(", ")}` : "";
 }
 
@@ -38,11 +41,8 @@ const COLUMNS: Column<ClientSummary>[] = [
     cell: (c) => (
       <div className="flex flex-col items-start gap-1">
         <ClientChip clientId={c.clientId} needsAction={clientNeedsAction(c)} />
-        {(c.auditorDisagrees ?? 0) > 0 && (
-          <Badge tone="danger">
-            Auditor disagrees{(c.auditorDisagrees ?? 0) > 1 ? ` · ${c.auditorDisagrees}` : ""}
-          </Badge>
-        )}
+        {(c.auditorDisagrees ?? 0) > 0 && <AuditorFlagBadge reason="auditor-disagrees" count={c.auditorDisagrees} />}
+        {(c.auditorUnsure ?? 0) > 0 && <AuditorFlagBadge reason="auditor-unsure" count={c.auditorUnsure} />}
       </div>
     ),
   },

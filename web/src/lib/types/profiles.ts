@@ -40,9 +40,11 @@ export type ClientSummary = {
   unsentBriefs: number;
   /** Rules whose current verdict is the agent's and the Auditor disagrees with it. Optional until #37 is deployed. */
   auditorDisagrees?: number;
+  /** Rules whose current agent verdict carries a stance the Auditor contradicted. Optional until #42 is deployed. */
+  auditorUnsure?: number;
   /**
-   * Rules that need the consultant: the Auditor disagrees or a brief is
-   * needed, each rule once. The list sorts on it and needsAction=true filters
+   * Rules that need the consultant: the Auditor disagrees or contradicted
+   * itself, or a brief is needed, each rule once. The list sorts on it and needsAction=true filters
    * on it. Optional until #37 is deployed.
    */
   actionRequired?: number;
