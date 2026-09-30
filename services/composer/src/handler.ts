@@ -10,7 +10,7 @@ import { describeGuardrailBlock, guarded } from './guardrail';
 import { ruleWindow } from './rule-window';
 import { checkBriefGrounding, checkDateRoles } from './grounding';
 import { elapsedMs, recordStep } from './telemetry';
-import { checkBriefVoice, withoutClientId } from './voice';
+import { checkDraftVoice, withoutClientId } from './voice';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -345,10 +345,12 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
     'Write to the client directly, in second person: "you", "your application". Write in the consultant\'s voice, first person: "I recommend".',
     'Never write "your client" and never describe the client in the third person. The assessment below calls the reader "the client". Turn that into "you".',
     'Never write a name, a client id or a placeholder like [CLIENT NAME]. No greeting and no sign-off: the RCIC adds both when they send it.',
-    'You get two inputs. RULE CONTENT is IRCC\'s own text. ABOUT THE READER is the signed assessment of this reader\'s file: facts about them (their school, program, start date, status) and what the change means for them.',
+    'Never write a bracketed or template placeholder of any kind: [start date], [program], {date}, {{name}}, <name>, XX, ____, TBD. The client reads the brief as written, and the RCIC may send it without filling a slot.',
+    'If a fact isn\'t in the rule content or ABOUT THE READER, leave it out or write around it. With no start date given, write "before your program starts", never "on [start date]".',
+    'You get two inputs. RULE CONTENT is IRCC\'s own text. ABOUT THE READER is the signed assessment of this reader\'s file: what the change means for them, and any facts about them it states (such as their school, program, start date or status). It often leaves some of those out.',
     'Every fact about IRCC programs, dates, numbers, durations, fees or eligibility must come from the rule content or the assessment below. If neither says it, leave it out, even if you believe it is true.',
     'Dates and numbers that describe the policy (effective dates, cut-offs, thresholds, validity periods, caps) come only from the rule content. If the rule content gives no date for the change, don\'t give one.',
-    'Dates, schools and programs in ABOUT THE READER belong to the reader. Say them as the reader\'s own ("your program starts on ..."). Never present them as when, where or to whom the policy applies.',
+    'Dates, schools and programs in ABOUT THE READER belong to the reader. Say them as the reader\'s own ("your program", "your school"). Never present them as when, where or to whom the policy applies.',
     'Name another program, visa or permit only if the rule content or the assessment names it.',
     'The reader has never seen the rule content or the assessment and doesn\'t know Argus exists. Never write "the rule", "the assessment" or any field name. Call the source what it is to the reader: IRCC\'s notice, the change, the update.',
     'When the assessment says something about the reader is unknown, ask the reader for it ("let me know whether..."). Never say a document doesn\'t confirm it.',
@@ -453,7 +455,7 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
 
   // A warning, never a failure: the consultant reads and edits every draft
   // before it goes out, and a draft in the wrong voice beats no draft.
-  const findings = checkBriefVoice(draft.bodyMarkdown, assessment.clientId);
+  const findings = checkDraftVoice(draft, assessment.clientId);
   if (findings.length > 0) {
     log('warn', 'composer-voice-check', {
       runId,
