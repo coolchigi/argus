@@ -40,7 +40,10 @@ coverage/
 
 research/*
 
-docs/
+# Internal design docs stay local. Only the public coding-agent-to-AWS
+# proof in docs/proof/ ships to the repo.
+docs/*
+!docs/proof/
 
 # Secrets (belt-and-suspenders)
 *.pem
@@ -52,3 +55,9 @@ secrets/
 TASKS.md
 plan.md
 hackathon/
+web/design/
+
+# Large binaries: keep proof screenshots (PNG) tracked, but never commit
+# the raw screen recordings that live alongside them.
+docs/proof/*.mov
+docs/proof/*.mp4
