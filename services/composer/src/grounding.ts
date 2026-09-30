@@ -12,8 +12,18 @@
 // checkDateRoles covers the other way a grounded date goes wrong: the date is
 // in the sources, but as a fact about the client (their program start date),
 // and the brief states it as the policy's own date.
+//
+// checkModality covers a claim with no number in it at all: the rule says a
+// thing may happen, and the brief says it must.
 
-export type GroundingFindingKind = 'money' | 'date' | 'duration' | 'number' | 'program' | 'policy-date-from-client';
+export type GroundingFindingKind =
+  | 'money'
+  | 'date'
+  | 'duration'
+  | 'number'
+  | 'program'
+  | 'policy-date-from-client'
+  | 'modality-strengthened';
 export type GroundingFinding = { kind: GroundingFindingKind; value: string };
 
 const MONTHS = 'january|february|march|april|may|june|july|august|september|october|november|december';
@@ -213,6 +223,121 @@ export function checkDateRoles(body: string, policySources: string[], clientSour
       seen.add(m[0]);
       findings.push({ kind: 'policy-date-from-client', value: m[0] });
     }
+  }
+  return findings;
+}
+
+// Words that make a sentence an obligation or a certainty.
+const STRONG = /\b(?:must|will need|will have to|have to|has to|required to|always)\b/;
+// Words that make it a possibility or a tendency. "may" before a day number
+// is the month. "can" is kept apart: "before you can reapply" sits next to
+// "must" in IRCC's text, so "can" only hedges a sentence with no strong word.
+const HEDGE = /\b(?:may(?! \d)|might|in some cases|in most cases|generally|usually)\b/;
+const CAN = /\bcan(?!'t)\b/;
+
+// Words with no content of their own when matching two sentences.
+const FILLER = new Set(
+  ("a an the and or but if so of to in on at by for from with as is are was be been being it its this that these " +
+    "those there then than you your you're you've i we our my me they them their not no any all some most cases case " +
+    "do does did has have had will would should could can can't cannot must may might need needs required always " +
+    'generally usually only also just one when what which who how about into before after get').split(' '),
+);
+
+function contentWords(sentence: string): Set<string> {
+  const words = new Set<string>();
+  for (const w of sentence.split(/[^a-z0-9/']+/)) {
+    if (w.length < 3 || FILLER.has(w)) continue;
+    // A crude singular, so "permits" matches "permit".
+    words.add(w.length > 4 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w);
+  }
+  return words;
+}
+
+function sentencesOf(text: string): string[] {
+  return text
+    .split('\n')
+    .flatMap((line) => claimText(line).split(/(?<=[.!?]) /))
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// Each rule sentence with the text that sets its case: the sentence before
+// it, or for a list item the line that leads into the list ("The PAL/TAL
+// is" above "- usually required to apply for a study permit").
+function ruleSentences(sources: string[]): { sentence: string; context: string }[] {
+  const out: { sentence: string; context: string }[] = [];
+  for (const source of sources) {
+    let previous = '';
+    let leadIn = '';
+    for (const line of source.split('\n')) {
+      const item = /^\s*[-*•]\s/.test(line);
+      for (const sentence of sentencesOf(line)) {
+        out.push({ sentence, context: item ? leadIn : previous });
+        previous = sentence;
+        if (!item) leadIn = sentence;
+      }
+    }
+  }
+  return out;
+}
+
+function sharedCount(a: Set<string>, b: Set<string>): number {
+  let n = 0;
+  for (const w of a) if (b.has(w)) n += 1;
+  return n;
+}
+
+/**
+ * Brief sentences that state as an obligation what the rule states as a
+ * possibility. Written after brief 6fc569f6 (2026-09-30): the rule says "In
+ * some cases, you may need to get a new, valid PAL/TAL before you can
+ * reapply for a study permit", and the brief said "you must get a new one
+ * before you can reapply for a study permit".
+ *
+ * Conservative on purpose. A brief sentence is flagged only when:
+ * - it has a strong word (must, will need, have to, required to, always) and
+ *   no hedge of its own
+ * - some hedged rule sentence shares at least 4 of its content words, and at
+ *   least half of them, most of those in the hedged sentence itself
+ * - no strong, unhedged rule sentence shares as many (a tie passes)
+ * Each rule sentence is matched together with the text that sets its case
+ * (see ruleSentences), since IRCC puts the case in a heading or a question
+ * ("My PAL/TAL has expired or is no longer valid.") and the must on the line
+ * under it. So a must the rule also says must, for the same case, passes.
+ */
+export function checkModality(body: string, policySources: string[]): GroundingFinding[] {
+  const units = ruleSentences(policySources).map(({ sentence, context }) => {
+    const strong = STRONG.test(sentence);
+    const hedge = sentence.match(HEDGE)?.[0] ?? (strong ? undefined : sentence.match(CAN)?.[0]);
+    return { own: contentWords(sentence), words: contentWords(`${context} ${sentence}`), hedge, strong: strong && !hedge };
+  });
+
+  const findings: GroundingFinding[] = [];
+  const seen = new Set<string>();
+  for (const sentence of sentencesOf(body)) {
+    const strongWord = sentence.match(STRONG)?.[0];
+    if (!strongWord || HEDGE.test(sentence)) continue;
+    const words = contentWords(sentence);
+    let bestHedged = 0;
+    let hedgeWord = '';
+    let bestStrong = 0;
+    for (const unit of units) {
+      const n = sharedCount(words, unit.words);
+      // The hedged sentence has to carry most of the match itself, so a
+      // "can" isn't pinned on content that came from the line above it.
+      if (unit.hedge && n > bestHedged && sharedCount(words, unit.own) * 2 >= n) {
+        bestHedged = n;
+        hedgeWord = unit.hedge;
+      }
+      if (unit.strong) bestStrong = Math.max(bestStrong, n);
+    }
+    if (bestHedged < 4 || bestHedged * 2 < words.size || bestStrong >= bestHedged) continue;
+    // Built from the fixed word lists above, so a finding never carries
+    // brief text.
+    const value = `${strongWord} / ${hedgeWord}`;
+    if (seen.has(value)) continue;
+    seen.add(value);
+    findings.push({ kind: 'modality-strengthened', value });
   }
   return findings;
 }

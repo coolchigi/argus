@@ -509,6 +509,28 @@ describe('Composer grounding', () => {
     assert.deepEqual(warn?.findings, [{ kind: 'duration', value: '9 months' }]);
     assert.doesNotMatch(JSON.stringify(warn?.findings), /2026|042/);
   });
+
+  it("tells the model to keep the rule's certainty and its conditions", () => {
+    const system = buildComposeRequest(assessmentFor(live), PGP_RULE_CONTENT).system.map((b) => b.text).join('\n');
+    assert.match(system, /Keep the rule content's certainty\. Where it says may, might, can, in some cases/);
+    assert.match(system, /Never turn it into must, will, always, have to or required/);
+    assert.match(system, /Keep conditions as conditions/);
+  });
+
+  // Brief 6fc569f6 (2026-09-30, client 2026-032). Against a rule that only
+  // says "in some cases, you may need", the brief's must is a strengthening.
+  it('warns modality-strengthened, still writes the brief, and logs no brief text', async () => {
+    ruleContent = 'In some cases, you may need to get a new, valid PAL/TAL before you can reapply for a study permit.';
+    const body = 'If your PAL/TAL has expired or is no longer valid, you must get a new one before you can reapply for a study permit.';
+    modelReply = JSON.stringify({ subject: 'Your PAL/TAL', bodyMarkdown: body, suggestedActions: [] });
+    const res = await compose([insert({ ...live, clientId: '2026-032', assessmentKey: 'pe1#2026-032', topic: 'pal-tal' })]);
+    assert.deepEqual(res.batchItemFailures, []);
+    assert.equal(briefs[0].bodyMarkdown, body);
+    const warn = logLines.find((l) => l.msg === 'composer-grounding-check');
+    assert.equal(warn?.level, 'warn');
+    assert.deepEqual(warn?.findings, [{ kind: 'modality-strengthened', value: 'must / in some cases' }]);
+    assert.doesNotMatch(JSON.stringify(warn), /expired|reapply|2026-032/);
+  });
 });
 
 describe('Composer stream retries', () => {
