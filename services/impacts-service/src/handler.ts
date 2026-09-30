@@ -109,15 +109,52 @@ async function getAuditSignature(rcicId: string, assessmentKey: string): Promise
 // tenant data, and are returned only alongside at least one of the
 // consultant's own rows, so an unrelated event id reads as empty.
 async function getAssessmentLineage(rcicId: string, assessmentKey: string): Promise<Lineage> {
-  const parsed = parseAssessmentKey(assessmentKey);
+  const agentKey = assessmentKey.startsWith(REVIEW_KEY_PREFIX) ? await supersededAgentKey(rcicId, assessmentKey) : assessmentKey;
+  const parsed = parseAssessmentKey(agentKey);
   if (!parsed) throw httpError(400, 'invalid-assessment-key');
   const own = await queryAll({
     TableName: auditTrailTable(),
     KeyConditionExpression: 'assessmentId = :a',
-    ExpressionAttributeValues: { ':a': `${rcicId}#${assessmentKey}` },
+    ExpressionAttributeValues: { ':a': `${rcicId}#${agentKey}` },
   });
   const rows = own.length > 0 ? [...(await eventRows(parsed.policyEventId)), ...own] : [];
-  return summarize(rows, { scope: 'assessment', policyEventId: parsed.policyEventId, assessmentKey });
+  return summarize(rows, {
+    scope: 'assessment',
+    policyEventId: parsed.policyEventId,
+    assessmentKey,
+    reviewOf: agentKey === assessmentKey ? null : agentKey,
+  });
+}
+
+// Review keys are `review-${ms}-${policyEventId}#${clientId}` (review.ts).
+// Agent keys start with a policyEventId, which never starts with this.
+const REVIEW_KEY_PREFIX = 'review-';
+const MAX_REVIEW_HOPS = 20;
+
+/**
+ * A consultant review has no pipeline run. Its lineage is the run behind
+ * the agent assessment it replaced, found by following `supersedes` through
+ * any reviews of reviews. Every read is a GetItem in the caller's own
+ * partition, so another tenant's row can't be reached.
+ */
+async function supersededAgentKey(rcicId: string, reviewKey: string): Promise<string> {
+  let key = reviewKey;
+  for (let hop = 0; hop < MAX_REVIEW_HOPS && key.startsWith(REVIEW_KEY_PREFIX); hop += 1) {
+    const res = await ddb.send(
+      new GetCommand({
+        TableName: IMPACT_ASSESSMENTS_TABLE,
+        Key: { rcicId, assessmentKey: key },
+        ProjectionExpression: 'recordKind, supersedes',
+      }),
+    );
+    if (!res.Item) throw httpError(404, 'assessment-not-found');
+    if (res.Item.recordKind !== RECORD_KIND_REVIEW || typeof res.Item.supersedes !== 'string' || !res.Item.supersedes) {
+      throw httpError(500, 'review-without-supersedes');
+    }
+    key = res.Item.supersedes;
+  }
+  if (key.startsWith(REVIEW_KEY_PREFIX)) throw httpError(500, 'review-chain-too-long');
+  return key;
 }
 
 async function getRunLineage(rcicId: string, policyEventId: string): Promise<Lineage> {

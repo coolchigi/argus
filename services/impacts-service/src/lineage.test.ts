@@ -3,7 +3,7 @@ import { mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { before, beforeEach, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { build } from 'esbuild';
 import { parseAssessmentKey, summarize, type StepRow } from './lineage.ts';
 
@@ -18,6 +18,9 @@ const outfile = path.join(outDir, 'impacts-lineage-handler.mjs');
 type Item = Record<string, unknown>;
 const trail: Item[] = [];
 const queries: Item[] = [];
+// ImpactAssessments rows, for resolving a consultant review to its original.
+const assessments: Item[] = [];
+const gets: Item[] = [];
 
 type Handler = (event: unknown) => Promise<{ statusCode: number; body: string }>;
 let handler: Handler;
@@ -50,6 +53,11 @@ before(async () => {
 
   (DynamoDBDocumentClient.prototype as { send: unknown }).send = async (cmd: { input: Item }) => {
     const input = cmd.input;
+    if (cmd instanceof GetCommand && input.TableName === 'assessments') {
+      gets.push(input);
+      const k = input.Key as Item;
+      return { Item: assessments.find((a) => a.rcicId === k.rcicId && a.assessmentKey === k.assessmentKey) };
+    }
     if (!(cmd instanceof QueryCommand) || input.TableName !== 'audit-trail') {
       throw new Error(`unexpected command ${cmd.constructor.name} on ${String(input.TableName)}`);
     }
@@ -70,6 +78,8 @@ before(async () => {
 beforeEach(() => {
   trail.length = 0;
   queries.length = 0;
+  assessments.length = 0;
+  gets.length = 0;
 });
 
 function step(
@@ -169,6 +179,57 @@ describe('GET /impacts/{id}/lineage', () => {
       console.log = origLog;
     }
     assert.equal(queries.length, 0);
+  });
+});
+
+describe('GET /impacts/{id}/lineage for a consultant review (ADR-0004)', () => {
+  const REVIEW = 'review-1727600000000-pe1#c1';
+  const REVIEW2 = 'review-1727700000000-pe1#c1';
+  const fullRun = () =>
+    trail.push(
+      step('event', 'pe1', '2026-09-29T12:00:00.000Z', 'sentinel'),
+      step(R1, 'pe1', '2026-09-29T12:00:02.000Z', 'analyst'),
+      step(R1, 'pe1', '2026-09-29T12:00:04.000Z', 'anchor', { modelId: null }),
+    );
+
+  it('returns the lineage of the agent assessment the review replaced, and says so', async () => {
+    assessments.push({ rcicId: 'R1', assessmentKey: REVIEW, recordKind: 'consultant-review', supersedes: 'pe1#c1' });
+    fullRun();
+    const { status, body } = await get('GET /impacts/{id}/lineage', REVIEW);
+    assert.equal(status, 200);
+    assert.equal(body.assessmentKey, REVIEW);
+    assert.equal(body.reviewOf, 'pe1#c1');
+    assert.equal(body.policyEventId, 'pe1');
+    assert.deepEqual((body.agents as Item[]).map((a) => a.agent), ['sentinel', 'analyst', 'anchor']);
+    assert.deepEqual(gets.map((g) => g.Key), [{ rcicId: 'R1', assessmentKey: REVIEW }]);
+    assert.ok(queries.some((q) => (q.ExpressionAttributeValues as Item)[':a'] === 'R1#pe1#c1'));
+  });
+
+  it('follows a review of a review back to the agent assessment', async () => {
+    assessments.push(
+      { rcicId: 'R1', assessmentKey: REVIEW, recordKind: 'consultant-review', supersedes: 'pe1#c1' },
+      { rcicId: 'R1', assessmentKey: REVIEW2, recordKind: 'consultant-review', supersedes: REVIEW },
+    );
+    fullRun();
+    const { body } = await get('GET /impacts/{id}/lineage', REVIEW2);
+    assert.equal(body.reviewOf, 'pe1#c1');
+    assert.equal((body.agents as Item[]).length, 3);
+  });
+
+  it("is a 404 for another consultant's review, read only in the caller's partition", async () => {
+    assessments.push({ rcicId: 'R2', assessmentKey: REVIEW, recordKind: 'consultant-review', supersedes: 'pe1#c1' });
+    fullRun();
+    const { status } = await get('GET /impacts/{id}/lineage', REVIEW, 'R1');
+    assert.equal(status, 404);
+    assert.deepEqual(gets.map((g) => (g.Key as Item).rcicId), ['R1']);
+    assert.equal(queries.length, 0);
+  });
+
+  it('sets reviewOf to null for an agent assessment and reads no assessment row', async () => {
+    fullRun();
+    const { body } = await get('GET /impacts/{id}/lineage', 'pe1#c1');
+    assert.equal(body.reviewOf, null);
+    assert.equal(gets.length, 0);
   });
 });
 

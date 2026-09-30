@@ -632,6 +632,16 @@ describe('current verdict with consultant reviews (ADR-0004)', () => {
     assert.deepEqual(c.priorAssessments.map((p) => [p.policyEventId, p.recordKind]), [[RUN_A2, 'agent'], [RUN_A1, 'agent']]);
   });
 
+  it("carries each current row's own policyEventId, so the web never parses a key", () => {
+    const r = review(agent, '2026-09-22T09:00:00.000Z', { isAffected: true });
+    const replay = row(RUN_A2, RULE_A, 'C-2', '2026-09-25T10:01:00.000Z');
+    const byClient = new Map(buildEventImpacts([agent, r, replay], [], [], new Map()).map((c) => [c.clientId, c]));
+    // The review key starts with `review-`, but its run is the one it reviewed.
+    assert.ok(byClient.get('C-1')?.assessmentKey.startsWith('review-'));
+    assert.equal(byClient.get('C-1')?.policyEventId, RUN_A1);
+    assert.equal(byClient.get('C-2')?.policyEventId, RUN_A2);
+  });
+
   it('the newest review wins when there are several', () => {
     const first = review(agent, '2026-09-22T09:00:00.000Z', { isAffected: true });
     const second = review(first, '2026-09-23T09:00:00.000Z', { isAffected: false, supersedes: first.assessmentKey });

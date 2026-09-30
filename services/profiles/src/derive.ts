@@ -69,6 +69,12 @@ export type ClientCounts = {
   unsentBriefs: number;
   /** Rules whose current verdict is the agent's and the Auditor disagrees with it. */
   auditorDisagrees: number;
+  /**
+   * Rules that need the consultant: the Auditor disagrees, or a brief is
+   * needed (same rule as policy-events actionReasonOf). The list sorts and
+   * the needsAction filter read this.
+   */
+  actionRequired: number;
   /** ISO. Newest current assessment. null when never assessed. */
   lastAssessedAt: string | null;
   /** Newest affected current assessment. null when nothing is affected. */
@@ -124,6 +130,7 @@ export const EMPTY_COUNTS: ClientCounts = {
   affectedCount: 0,
   unsentBriefs: 0,
   auditorDisagrees: 0,
+  actionRequired: 0,
   lastAssessedAt: null,
   latestAffected: null,
 };
@@ -206,6 +213,7 @@ export function countsByClient(assessments: AssessmentRow[], briefs: BriefRow[])
       affectedCount: affected.length,
       unsentBriefs: affected.filter((a) => !sent.has(`${ruleIdOf(a)}#${clientId}`)).length,
       auditorDisagrees: current.filter((a) => a.recordKind === 'agent' && a.auditorStance?.stance === 'disagree').length,
+      actionRequired: current.filter((a) => actionReasonOf(a, sent.has(`${ruleIdOf(a)}#${clientId}`)) !== null).length,
       lastAssessedAt: current[0]?.timestamp ?? null,
       latestAffected: latest ? { assessmentKey: latest.assessmentKey, policyEventId: latest.policyEventId, topic: latest.topic } : null,
     });
