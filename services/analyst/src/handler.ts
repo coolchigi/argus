@@ -10,6 +10,7 @@ import {
   ScanCommand,
 } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
+import { AFFECTED_DEFINITION } from './affected';
 import { describeGuardrailBlock, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
 import { eligibleClients, tenantFromItem, TENANT_ATTRIBUTES, type Tenant } from './eligibility';
 import { ruleWindow } from './rule-window';
@@ -311,6 +312,8 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
     'When the rule sets a condition for the client\'s own program (a list of eligible codes, a minimum, a required validity period) and the profile shows the client does not meet it, the client is affected. Being absent from such a list is a finding, not a reason to answer false. A list that only offers an optional extra route affects only the clients who are on it.',
     'Numeric deltas are only for CRS point changes; leave null for non-CRS changes.',
     'Base every statement on the rule content and the client profile only. Reuse the rule content\'s own wording. Do not add facts, programs or options the rule content does not mention.',
+    'Decide isAffected by the definition below.',
+    AFFECTED_DEFINITION,
   ].join('\n');
 
   const policyChange = [
