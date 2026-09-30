@@ -103,6 +103,9 @@ jobs:
       # Budget alarm amounts, thresholds and window, from the synthesized stack.
       - run: npm run test:budget
         working-directory: infra
+      # Failure-queue alarms and the Alerts retry wiring, from the synthesized API stack.
+      - run: npm run test:alarms
+        working-directory: infra
       # The app has no context lookups, so synth runs without an AWS account.
       # The emails are placeholders for the env vars the API and budget stacks read.
       - run: npx cdk synth --quiet --no-notices

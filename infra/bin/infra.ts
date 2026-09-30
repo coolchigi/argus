@@ -38,6 +38,7 @@ new ArgusApiStack(app, 'ArgusApiDev', {
   guardrail: stateful.guardrail,
   policyCorpusBucket: stateful.policyCorpusBucket,
   generatedArtifactsBucket: stateful.generatedArtifactsBucket,
+  operatorEmail: process.env.ARGUS_BUDGET_EMAIL ?? '',
 });
 
 // Account-level cost alarms, in their own stack: the budget has no links to
