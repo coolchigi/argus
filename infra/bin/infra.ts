@@ -15,12 +15,12 @@ const env: cdk.Environment = {
 
 const stateful = new ArgusStatefulStack(app, 'ArgusStatefulDev', {
   env,
-  description: 'Argus stateful resources (Cognito, KMS signing key, 7 DynamoDB tables, 2 S3 buckets)',
+  description: 'Argus stateful resources (Cognito with user provisioning Lambda, KMS signing key, Bedrock Guardrail, 11 DynamoDB tables, 2 S3 buckets)',
 });
 
 new ArgusApiStack(app, 'ArgusApiDev', {
   env,
-  description: 'Argus API surface, Step Functions orchestration, EventBridge schedules',
+  description: 'Argus API, agent and service Lambdas, EventBridge pipeline and schedules',
   userPool: stateful.userPool,
   userPoolClient: stateful.userPoolClient,
   signingKey: stateful.signingKey,
