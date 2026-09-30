@@ -282,8 +282,48 @@ describe('Composer brief voice', () => {
     const warn = logLines.find((l) => l.msg === 'composer-voice-check');
     assert.ok(warn, 'expected a composer-voice-check log line');
     assert.equal(warn.level, 'warn');
-    assert.deepEqual(warn.findings, ['your-client']);
+    assert.deepEqual(warn.findings, ['your-client', 'placeholder']);
     assert.equal(warn.clientId, '2026-042');
+  });
+
+  it('tells the model never to write a placeholder and to write around a missing fact', () => {
+    const system = buildComposeRequest(assessmentFor(pgp), 'rule text').system.map((b) => b.text).join('\n');
+    assert.match(system, /Never write a bracketed or template placeholder of any kind: \[start date\]/);
+    assert.match(system, /leave it out or write around it\. With no start date given, write "before your program starts", never "on \[start date\]"/);
+    assert.doesNotMatch(system, /starts on \.\.\./);
+  });
+
+  // Brief 58366b94 (2026-09-30): the assessment for client 2026-032 carried
+  // no start date and the draft said "Your program starts on [start date]".
+  it('logs a placeholder finding for the live 2026-032 draft and still writes it, without the brief text', async () => {
+    const pal = {
+      clientId: '2026-032',
+      assessmentKey: 'pe1#2026-032',
+      topic: 'pal-tal-requirements',
+      impactType: 'procedural',
+      numericDelta: null,
+      narrative: 'Client 2026-032 must obtain a PAL/TAL to apply for a study permit; the client attends a private college and does not qualify for any exemption.',
+      recommendedAction: 'Guide client 2026-032 to contact their designated learning institution to apply for and obtain a PAL/TAL before submitting the study permit application.',
+    };
+    const body =
+      'You need a PAL/TAL to apply for a study permit unless you qualify for an exemption. ' +
+      'Your program starts on [start date], and you attend a private college, which means you do not qualify for any exemption. ' +
+      '[Learn more about PAL/TAL requirements](https://www.canada.ca/x).';
+    modelReply = JSON.stringify({ subject: 'New requirement for a PAL/TAL', bodyMarkdown: body, suggestedActions: ['Contact your school.'] });
+    const res = await compose([insert(pal)]);
+    assert.deepEqual(res.batchItemFailures, []);
+    assert.equal(briefs[0].bodyMarkdown, body);
+    const warn = logLines.find((l) => l.msg === 'composer-voice-check');
+    assert.equal(warn?.level, 'warn');
+    assert.deepEqual(warn?.findings, ['placeholder']);
+    assert.doesNotMatch(JSON.stringify(warn), /start date|private college/);
+  });
+
+  it('logs a placeholder finding when only a suggested action has one', async () => {
+    modelReply = JSON.stringify({ subject: 'PGP intake paused', bodyMarkdown: 'You can wait.', suggestedActions: ['Wait until {reopen_date}.'] });
+    await compose([insert(pgp)]);
+    assert.equal(briefs.length, 1);
+    assert.deepEqual(logLines.find((l) => l.msg === 'composer-voice-check')?.findings, ['placeholder']);
   });
 
   for (const [label, reply] of [
