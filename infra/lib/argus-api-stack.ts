@@ -1177,6 +1177,37 @@ export class ArgusApiStack extends cdk.Stack {
       integration: new apigwv2int.HttpLambdaIntegration('Integration-public-stats', impactsHandler),
     });
 
+    // Read-only guest view. GET /guest/<route> serves one demo tenant
+    // without a login, so a visitor can look around the dashboard before
+    // signing up. GET only, so no guest request reaches a write, a Bedrock
+    // call or an email. Each service maps the route back to its signed-in
+    // read (services/shared/guest-view.ts) and the /me read swaps the
+    // consultant's identity for a stand-in name. Set ARGUS_GUEST_RCIC_ID to
+    // an empty string to turn it off.
+    const guestRcicId = process.env.ARGUS_GUEST_RCIC_ID ?? 'R670922';
+    if (guestRcicId) {
+      for (const fn of [meHandler, profilesHandler, policyEventsHandler, impactsHandler, recordsHandler, briefsServiceHandler]) {
+        fn.addEnvironment('GUEST_RCIC_ID', guestRcicId);
+      }
+      const guestReads = routes.filter((r) => r.path !== '/profiles/bulk' && r.path !== '/exports' && !r.path.startsWith('/demo/') && r.methods.includes(apigwv2.HttpMethod.GET));
+      const guestRouteSettings: Record<string, { ThrottlingRateLimit: number; ThrottlingBurstLimit: number }> = {};
+      const guestRoutes: apigwv2.HttpRoute[] = [];
+      for (const route of guestReads) {
+        const path = `/guest${route.path}`;
+        guestRoutes.push(...this.httpApi.addRoutes({
+          path,
+          methods: [apigwv2.HttpMethod.GET],
+          integration: new apigwv2int.HttpLambdaIntegration(`Integration-guest-${route.path.replace(/[^a-zA-Z0-9]/g, '-')}`, route.handler),
+        }));
+        // A public route has no login in front of it, so cap each one.
+        guestRouteSettings[`GET ${path}`] = { ThrottlingRateLimit: 10, ThrottlingBurstLimit: 20 };
+      }
+      const stage = this.httpApi.defaultStage?.node.defaultChild as apigwv2.CfnStage | undefined;
+      // Route settings name routes by key, so the stage waits for them.
+      stage?.addPropertyOverride('RouteSettings', guestRouteSettings);
+      for (const r of guestRoutes) stage?.node.addDependency(r);
+    }
+
     // -----------------------------------------------------------------
     // Step Functions Express Workflow, a placeholder Pass state. The agent
     // pipeline runs on the EventBridge rules and the ImpactAssessments

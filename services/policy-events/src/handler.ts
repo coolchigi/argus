@@ -36,6 +36,7 @@ import {
   type Row,
   type Rule,
 } from './derive.ts';
+import { asGuestView } from '../../shared/guest-view.ts';
 
 // Policy events service (Phase C1).
 //
@@ -124,7 +125,8 @@ const ALERT_FIELDS = ['timestamp', 'briefId', 'clientId', 'channel'];
 // Whitelist. notes, age and every other profile attribute stay in the table.
 const CLIENT_PROFILE_FIELDS = ['clientId', 'program', 'status', 'currentCrsScore'];
 
-export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> => {
+export const handler = async (incoming: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> => {
+  const event = asGuestView(incoming, process.env.GUEST_RCIC_ID);
   const method = event.requestContext.http.method;
   const routeKey = event.routeKey ?? `${method} ${event.rawPath}`;
   const rcicId = resolveRcicId(event);

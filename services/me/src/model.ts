@@ -291,6 +291,25 @@ export function toMeResponse(input: {
   };
 }
 
+/**
+ * The guest view shows the demo tenant's work under a stand-in name. The
+ * consultant's own name, email, license and firm stay out of it.
+ */
+export function asGuestConsultant(me: MeResponse): MeResponse {
+  return {
+    ...me,
+    consultant: {
+      ...me.consultant,
+      rcicLicense: null,
+      givenName: 'Demo',
+      familyName: 'Consultant',
+      displayName: 'Demo Consultant',
+      email: null,
+      firm: null,
+    },
+  };
+}
+
 export function isObject(v: unknown): v is Row {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
