@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { useAuth } from "@/components/auth-context";
@@ -47,6 +48,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           <Sidebar />
         </aside>
         <div className="flex min-w-0 flex-col">
+          {auth.guest ? <GuestBanner /> : null}
           <TopBar />
           <main id="main" className="min-w-0 flex-1">
             <div className="mx-auto max-w-[1240px] px-4 py-6 sm:px-6 lg:px-10 lg:py-10">{children}</div>
@@ -54,5 +56,17 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         </div>
       </div>
     </BreadcrumbProvider>
+  );
+}
+
+function GuestBanner() {
+  return (
+    <div data-print="hide" className="border-b border-hairline bg-sunk px-4 py-2 text-[13px] text-ink-2 sm:px-6 lg:px-10">
+      You&apos;re looking at a read-only demo caseload. Nothing you click here changes it.{" "}
+      <Link href="/signup" className="text-ink-1 underline underline-offset-4 decoration-border">
+        Create an account
+      </Link>{" "}
+      to watch your own.
+    </div>
   );
 }

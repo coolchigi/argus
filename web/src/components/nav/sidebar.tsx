@@ -112,8 +112,10 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
       </nav>
 
       <div className="border-t border-hairline px-5 py-4">
-        <div className="label mb-1.5">Signed in</div>
-        {authed ? (
+        <div className="label mb-1.5">{auth.guest ? "Read-only demo" : "Signed in"}</div>
+        {auth.guest ? (
+          <div className="truncate text-[13px] text-ink-1">Demo Consultant</div>
+        ) : authed ? (
           <>
             <div className="truncate text-[13px] text-ink-1">
               {[auth.claims.givenName, auth.claims.familyName].filter(Boolean).join(" ") || auth.claims.email}
@@ -134,13 +136,14 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
             type="button"
             onClick={() => {
               onNavigate?.();
+              const wasGuest = auth.guest;
               auth.signOut();
-              router.replace("/login");
+              router.replace(wasGuest ? "/" : "/login");
             }}
             className="inline-flex h-7 items-center gap-1.5 rounded-sm px-2 text-[12px] text-ink-2 transition-colors hover:bg-sunk hover:text-ink-1"
           >
             <LogOut aria-hidden className="h-3.5 w-3.5" strokeWidth={1.5} />
-            Sign out
+            {auth.guest ? "Exit demo" : "Sign out"}
           </button>
         </div>
       </div>
