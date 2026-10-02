@@ -23,13 +23,7 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as snsSubscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import { Construct } from 'constructs';
-
-const IRCC_SEED_URLS = [
-  'https://www.canada.ca/en/immigration-refugees-citizenship/news.html',
-  'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry/submit-profile/rounds-invitations.html',
-  'https://www.canada.ca/en/immigration-refugees-citizenship/corporate/mandate/policies-operational-instructions-agreements/ministerial-instructions.html',
-  'https://www.canada.ca/en/immigration-refugees-citizenship/services/immigrate-canada/express-entry/check-score.html',
-];
+import { IRCC_WATCH_LIST, assertValidWatchList } from './ircc-watch-list';
 
 export interface ArgusApiStackProps extends cdk.StackProps {
   readonly userPool: cognito.UserPool;
@@ -466,6 +460,7 @@ export class ArgusApiStack extends cdk.Stack {
       removalPolicy: cdk.RemovalPolicy.DESTROY,
     });
 
+    assertValidWatchList(IRCC_WATCH_LIST);
     const sentinelHandler = new nodejs.NodejsFunction(this, 'SentinelHandler', {
       functionName: 'argus-sentinel',
       runtime: lambda.Runtime.NODEJS_22_X,
@@ -474,7 +469,10 @@ export class ArgusApiStack extends cdk.Stack {
       depsLockFilePath: path.join(__dirname, '../../services/sentinel/package-lock.json'),
       entry: path.join(__dirname, '../../services/sentinel/src/handler.ts'),
       handler: 'handler',
-      timeout: cdk.Duration.minutes(3),
+      // Sentinel scans 5 pages at a time, each capped at a 15 s fetch plus a
+      // 30 s classifier call. With 30 pages that caps out near 6 minutes,
+      // so 10 leaves room. A normal run takes well under a minute.
+      timeout: cdk.Duration.minutes(10),
       memorySize: 512,
       environment: {
         POLICY_CORPUS_BUCKET: props.policyCorpusBucket.bucketName,
@@ -483,7 +481,6 @@ export class ArgusApiStack extends cdk.Stack {
         BEDROCK_CLASSIFIER_MODEL: 'us.amazon.nova-micro-v1:0',
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
         BEDROCK_GUARDRAIL_VERSION: 'DRAFT',
-        IRCC_SEED_URLS: JSON.stringify(IRCC_SEED_URLS),
         AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         NODE_OPTIONS: '--enable-source-maps',
       },
@@ -494,6 +491,9 @@ export class ArgusApiStack extends cdk.Stack {
         target: 'es2022',
         format: nodejs.OutputFormat.ESM,
         sourceMap: true,
+        // The watch list goes into the code, not the environment: 30 URLs
+        // overflow Lambda's 4 KB environment limit.
+        define: { IRCC_WATCH_LIST: JSON.stringify(IRCC_WATCH_LIST) },
       },
     });
 
