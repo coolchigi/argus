@@ -94,6 +94,24 @@ export class ArgusApiStack extends cdk.Stack {
       });
       alarm.addAlarmAction(new cwActions.SnsAction(operatorAlarms));
     };
+    // Failure queue for an agent Lambda that an EventBridge rule invokes. Lambda
+    // retries a thrown error 2 more times, then sends the event and its error
+    // here. The rule's target sends events EventBridge couldn't deliver to the
+    // same queue, so a failure at either step leaves the event to redrive.
+    const agentFailures = (id: string, queueName: string, fn: lambda.Function, what: string) => {
+      const queue = new sqs.Queue(this, id, {
+        queueName,
+        retentionPeriod: cdk.Duration.days(14),
+        encryption: sqs.QueueEncryption.SQS_MANAGED,
+        enforceSSL: true,
+      });
+      alarmOnFailures(`${id}Alarm`, queue, what);
+      fn.configureAsyncInvoke({
+        retryAttempts: 2,
+        onFailure: new lambdaDestinations.SqsDestination(queue),
+      });
+      return queue;
+    };
 
     // -----------------------------------------------------------------
     // Placeholder Lambda factory. Real code will be bundled from
@@ -574,6 +592,13 @@ export class ArgusApiStack extends cdk.Stack {
       }),
     );
 
+    const analystFailures = agentFailures(
+      'AnalystFailures',
+      'argus-analyst-failures',
+      analystHandler,
+      'Analyst gave up on a PolicyDelta, so the clients it affects have no impact assessment.',
+    );
+
     new events.Rule(this, 'PolicyDeltaToAnalyst', {
       ruleName: 'argus-policy-delta-to-analyst',
       description: 'Route Sentinel PolicyDelta events to the Analyst Lambda',
@@ -581,7 +606,7 @@ export class ArgusApiStack extends cdk.Stack {
         source: ['argus.sentinel'],
         detailType: ['PolicyDelta'],
       },
-      targets: [new targets.LambdaFunction(analystHandler)],
+      targets: [new targets.LambdaFunction(analystHandler, { deadLetterQueue: analystFailures })],
     });
 
     const auditorLogGroup = new logs.LogGroup(this, 'AuditorHandlerLogs', {
@@ -636,6 +661,13 @@ export class ArgusApiStack extends cdk.Stack {
       }),
     );
 
+    const auditorFailures = agentFailures(
+      'AuditorFailures',
+      'argus-auditor-failures',
+      auditorHandler,
+      'Auditor gave up on an ImpactHypothesis, so it was never audited, signed or briefed.',
+    );
+
     new events.Rule(this, 'ImpactHypothesisToAuditor', {
       ruleName: 'argus-hypothesis-to-auditor',
       description: 'Route Analyst ImpactHypothesis events to the Auditor Lambda',
@@ -643,7 +675,7 @@ export class ArgusApiStack extends cdk.Stack {
         source: ['argus.analyst'],
         detailType: ['ImpactHypothesis'],
       },
-      targets: [new targets.LambdaFunction(auditorHandler)],
+      targets: [new targets.LambdaFunction(auditorHandler, { deadLetterQueue: auditorFailures })],
     });
 
     const anchorLogGroup = new logs.LogGroup(this, 'AnchorHandlerLogs', {
@@ -684,6 +716,13 @@ export class ArgusApiStack extends cdk.Stack {
     });
     anchorHandler.addToRolePolicy(bumpPublicCounter);
 
+    const anchorFailures = agentFailures(
+      'AnchorFailures',
+      'argus-anchor-failures',
+      anchorHandler,
+      'Anchor gave up on an AuditVerdict, so its assessment was never signed or stored.',
+    );
+
     new events.Rule(this, 'AuditVerdictToAnchor', {
       ruleName: 'argus-verdict-to-anchor',
       description: 'Route Auditor AuditVerdict events to the Anchor Lambda',
@@ -691,7 +730,7 @@ export class ArgusApiStack extends cdk.Stack {
         source: ['argus.auditor'],
         detailType: ['AuditVerdict'],
       },
-      targets: [new targets.LambdaFunction(anchorHandler)],
+      targets: [new targets.LambdaFunction(anchorHandler, { deadLetterQueue: anchorFailures })],
     });
 
     // Composer: subscribes to ImpactAssessments DynamoDB stream. For every newly
