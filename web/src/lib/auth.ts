@@ -3,10 +3,9 @@ import {
   CognitoUser,
   CognitoUserAttribute,
   CognitoUserPool,
-  CognitoUserSession,
-  ISignUpResult,
 } from "amazon-cognito-identity-js";
-import { env } from "./env";
+import type { CognitoUserSession, ISignUpResult } from "amazon-cognito-identity-js";
+import { env } from "./env.ts";
 
 let poolCache: CognitoUserPool | null = null;
 
@@ -60,6 +59,28 @@ export function resendConfirmationCode(email: string): Promise<void> {
     user.resendConfirmationCode((err) => {
       if (err) return reject(err);
       resolve();
+    });
+  });
+}
+
+// Cognito emails the code itself. With PreventUserExistenceErrors on, this
+// resolves for an unknown email too.
+export function forgotPassword(email: string): Promise<void> {
+  const user = new CognitoUser({ Username: email, Pool: pool() });
+  return new Promise((resolve, reject) => {
+    user.forgotPassword({
+      onSuccess: () => resolve(),
+      onFailure: (err) => reject(err),
+    });
+  });
+}
+
+export function confirmForgotPassword(email: string, code: string, newPassword: string): Promise<void> {
+  const user = new CognitoUser({ Username: email, Pool: pool() });
+  return new Promise((resolve, reject) => {
+    user.confirmPassword(code, newPassword, {
+      onSuccess: () => resolve(),
+      onFailure: (err) => reject(err),
     });
   });
 }
