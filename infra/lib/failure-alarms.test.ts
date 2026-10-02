@@ -54,7 +54,13 @@ const alertsFnId = logicalIdOf('AWS::Lambda::Function', (p) => p.FunctionName ==
 const topicId = logicalIdOf('AWS::SNS::Topic', (p) => p.TopicName === 'argus-operator-alarms');
 
 describe('failure-queue alarms', () => {
-  for (const name of ['argus-composer-stream-failures', 'argus-alerts-failures']) {
+  for (const name of [
+    'argus-composer-stream-failures',
+    'argus-alerts-failures',
+    'argus-analyst-failures',
+    'argus-auditor-failures',
+    'argus-anchor-failures',
+  ]) {
     it(`emails the operator when ${name} holds any message`, () => {
       const q = queueId(name);
       const alarms = Object.values(all).filter(
@@ -121,4 +127,41 @@ describe('Alerts retry and dedupe wiring', () => {
     assert.match(ref, /BriefsTable[0-9A-F]+Arn/);
     assert.doesNotMatch(ref, /index|\*/);
   });
+});
+
+describe('agent failure queues', () => {
+  const agents = [
+    { fn: 'argus-analyst', rule: 'argus-policy-delta-to-analyst', event: 'PolicyDelta' },
+    { fn: 'argus-auditor', rule: 'argus-hypothesis-to-auditor', event: 'ImpactHypothesis' },
+    { fn: 'argus-anchor', rule: 'argus-verdict-to-anchor', event: 'AuditVerdict' },
+  ];
+  for (const { fn, rule, event } of agents) {
+    const fnId = logicalIdOf('AWS::Lambda::Function', (p) => p.FunctionName === fn);
+    const q = queueId(`${fn}-failures`);
+
+    it(`sends a ${event} that fails every ${fn} try to its failure queue`, () => {
+      template.hasResourceProperties('AWS::Lambda::EventInvokeConfig', {
+        FunctionName: { Ref: fnId },
+        MaximumRetryAttempts: 2,
+        DestinationConfig: { OnFailure: { Destination: { 'Fn::GetAtt': [q, 'Arn'] } } },
+      });
+    });
+
+    it(`sends a ${event} EventBridge could not deliver to ${fn} to the same queue`, () => {
+      template.hasResourceProperties('AWS::Events::Rule', {
+        Name: rule,
+        Targets: [{ Arn: { 'Fn::GetAtt': [fnId, 'Arn'] }, DeadLetterConfig: { Arn: { 'Fn::GetAtt': [q, 'Arn'] } } }],
+      });
+    });
+
+    it(`lets EventBridge write to ${fn}'s failure queue`, () => {
+      const policies = Object.values(all).filter(
+        (r) => r.Type === 'AWS::SQS::QueuePolicy' && r.Properties.Queues.some((x: unknown) => JSON.stringify(x) === JSON.stringify({ Ref: q })),
+      );
+      const statements = policies.flatMap((r) => r.Properties.PolicyDocument.Statement);
+      assert.ok(
+        statements.some((st) => st.Effect === 'Allow' && st.Principal?.Service === 'events.amazonaws.com' && [st.Action].flat().includes('sqs:SendMessage')),
+      );
+    });
+  }
 });
