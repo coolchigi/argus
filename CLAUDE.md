@@ -37,7 +37,7 @@ Match `~/.claude/voice-dna.md` and this repo's writing. Hard rules:
 - NEVER pick a Bedrock model from memory. Read `amazon-bedrock` skill's `model-selection-guide.md`, then query `aws bedrock list-foundation-models --region us-east-1`.
 - ALL Bedrock invocations use cross-region inference profiles (`us.` prefix on the model ID).
 - ALL Bedrock invocations set `maxTokens` explicitly. Unset defaults reserve full model max and cause silent ThrottlingException.
-- The six named agents (Sentinel, Analyst, Auditor, Anchor, Composer, Recall) are separate Bedrock invocations with separate models, prompts, and tool sets. This is a Strands Graph, not an orchestrator plus tools. Agent-as-Tool pattern is banned in this repo.
+- The six named agents (Sentinel, Analyst, Auditor, Anchor, Composer, Recall) each run in their own Lambda with their own IAM role. Five are separate Bedrock invocations with separate models and prompts. Anchor makes no model call: it signs each ImpactAssessment with KMS. EventBridge (plus the ImpactAssessments stream for Composer) carries the hand-offs. Agent-as-Tool pattern is banned in this repo.
 - Cross-family adversarial. Analyst and Auditor MUST come from different model families. If they cannot, escalate.
 - Every ImpactAssessment MUST be KMS-signed (ECDSA P-256, public JWKS endpoint). No signature, no publish.
 - NO CLIENT PII IN ARGUS AT ANY LAYER. Not the model, not the application, not the database, not the logs. Client identity is an opaque `client_id` supplied by the RCIC. See design doc Section 6a. Consultant PII (their own name, email, R-license) is the only PII we hold. If a schema field or code path would ingest client names, emails, phone numbers, addresses, or DOB, escalate.

@@ -1180,10 +1180,9 @@ export class ArgusApiStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------
-    // Step Functions Express Workflow for the multi-agent pipeline.
-    // Placeholder Pass state today. Real Analyst -> Auditor -> Anchor ->
-    // Composer graph lands in Phase 3 to 4 as Strands runs inside the
-    // orchestrator Lambda's handler.
+    // Step Functions Express Workflow, a placeholder Pass state. The agent
+    // pipeline runs on the EventBridge rules and the ImpactAssessments
+    // stream above, so nothing routes through this workflow.
     // -----------------------------------------------------------------
     const workflowLogs = new logs.LogGroup(this, 'OrchestrationLogs', {
       logGroupName: '/aws/vendedlogs/states/argus-orchestration',
@@ -1196,7 +1195,7 @@ export class ArgusApiStack extends cdk.Stack {
       stateMachineType: sfn.StateMachineType.EXPRESS,
       definitionBody: sfn.DefinitionBody.fromChainable(
         new sfn.Pass(this, 'PlaceholderPass', {
-          comment: 'Real 5-agent Strands pipeline lands in Phase 3',
+          comment: 'Placeholder. The agent pipeline runs on EventBridge',
           result: sfn.Result.fromObject({ phase: 1, status: 'placeholder' }),
         })
       ),

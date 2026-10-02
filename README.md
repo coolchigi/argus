@@ -8,7 +8,7 @@ Built for the AWS Zero to Shipped hackathon. Deadline Oct 2 2026.
 
 ## Architecture at a glance
 
-Six named agents on Amazon Bedrock, orchestrated through Strands Agents SDK in the Graph pattern. Each is a separate Bedrock invocation with its own model, prompt, and tool set.
+Six named agents, each in its own Lambda with its own IAM role. Five call Amazon Bedrock, each with its own model and prompt. Anchor makes no model call: it signs each assessment with KMS. EventBridge carries the hand-offs between them, and Composer picks up signed assessments from the ImpactAssessments stream.
 
 - **Sentinel** watches IRCC pages hourly and emits structured PolicyDeltas.
 - **Analyst** turns each PolicyDelta into per-client impact hypotheses.
