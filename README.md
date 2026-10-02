@@ -47,6 +47,7 @@ These were in the plan and aren't in the code:
 - A Knowledge Base or vector search.
 - Paragraph-level citations. Citations are page-level: the page URL, the archived S3 snapshot and the rule hash.
 - Reads of `RuleIndex`. Sentinel writes it and no agent reads it.
+- Express Entry draws and the IRCC newsroom. Those pages fill in their content in the browser, so Sentinel's HTML snapshot never changes. Draws come from a JSON file that needs its own handling.
 - The weekly digest. A brief that doesn't qualify for an email gets none.
 - HeyGen video briefs.
 

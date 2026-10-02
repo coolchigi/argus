@@ -10,27 +10,60 @@
 
 const IRCC = 'https://www.canada.ca/en/immigration-refugees-citizenship';
 
+// Not on the list: the newsroom (news.html), Ministerial Instructions, its
+// Express Entry rounds page and the rounds-of-invitations page. They fill in
+// their content in the browser, so the HTML Sentinel hashes never changes.
+// Express Entry draws live in a JSON file those pages load, which needs its
+// own handling before Sentinel can watch it.
 export const IRCC_WATCH_LIST: readonly string[] = [
-  // IRCC newsroom: announcements land here first.
-  `${IRCC}/news.html`,
-  // Express Entry rounds of invitations: draw sizes and CRS cut-offs.
-  `${IRCC}/services/immigrate-canada/express-entry/submit-profile/rounds-invitations.html`,
-  // Ministerial instructions: the legal basis for draws and program caps.
-  `${IRCC}/corporate/mandate/policies-operational-instructions-agreements/ministerial-instructions.html`,
-  // CRS score check: how points are counted.
-  `${IRCC}/services/immigrate-canada/express-entry/check-score.html`,
-  // Parents and grandparents program notice (PolicyRules topic pgp-program-pause).
-  `${IRCC}/news/notices/responsibly-manage-parent-grandparent-program.html`,
-  // Provincial attestation letter for study permits (pal-tal-requirements).
-  `${IRCC}/services/study-canada/study-permit/get-documents/provincial-attestation-letter.html`,
-  // Express Entry category-based selection (ee-category-based-selection).
+  // IRCC notices: program notices that aren't news releases.
+  `${IRCC}/news/notices.html`,
+  // Program delivery updates: changes to the instructions officers follow.
+  `${IRCC}/corporate/publications-manuals/operational-bulletins-manuals/updates.html`,
+  // Express Entry category-based selection (PolicyRules topic ee-category-based-selection).
   `${IRCC}/services/immigrate-canada/express-entry/rounds-invitations/category-based-selection.html`,
-  // Open work permit for spouses and dependent children (open-work-permit-eligibility).
-  `${IRCC}/services/work-canada/permit/temporary/open-work-permit-spouses-dependent-children/eligibility.html`,
-  // PGWP field-of-study requirement (field-of-study-requirement).
+  // Express Entry: check your score.
+  `${IRCC}/services/immigrate-canada/express-entry/check-score.html`,
+  // Express Entry: the CRS criteria and points.
+  `${IRCC}/services/immigrate-canada/express-entry/check-score/crs-criteria.html`,
+  // Express Entry: who can apply.
+  `${IRCC}/services/immigrate-canada/express-entry/who-can-apply.html`,
+  // Express Entry: job offers.
+  `${IRCC}/services/immigrate-canada/express-entry/documents/job-offer.html`,
+  // Notice on arranged employment offers for the Federal Skilled Worker Program.
+  `${IRCC}/news/notices/change-offers-arranged-employment-federal-skilled-worker-program.html`,
+  // Study permits: provincial or territorial attestation letter (pal-tal-requirements).
+  `${IRCC}/services/study-canada/study-permit/get-documents/provincial-attestation-letter.html`,
+  // Study permits: eligibility.
+  `${IRCC}/services/study-canada/study-permit/eligibility.html`,
+  // Study permits: documents to submit.
+  `${IRCC}/services/study-canada/study-permit/get-documents.html`,
+  // Study permits: proof of financial support.
+  `${IRCC}/services/study-canada/study-permit/get-documents/financial-support.html`,
+  // Study permits: working off campus.
+  `${IRCC}/services/study-canada/work/work-off-campus.html`,
+  // Study permits: conditions while you study.
+  `${IRCC}/services/study-canada/study-permit/while-you-study/study-permit-conditions.html`,
+  // Post-graduation work permit: overview.
+  `${IRCC}/services/study-canada/work/after-graduation.html`,
+  // Post-graduation work permit: eligibility.
+  `${IRCC}/services/study-canada/work/after-graduation/eligibility.html`,
+  // Post-graduation work permit: field of study (field-of-study-requirement).
   `${IRCC}/services/study-canada/work/after-graduation/eligibility/field-of-study.html`,
+  // Open work permits for spouses and dependent children.
+  `${IRCC}/services/work-canada/special-instructions/spouses-dependent-children.html`,
+  // Open work permits for spouses: eligibility (open-work-permit-eligibility, canonical URL).
+  `${IRCC}/services/work-canada/special-instructions/spouses-dependent-children/eligibility.html`,
+  // Provincial Nominee Program: overview.
+  `${IRCC}/services/immigrate-canada/provincial-nominees.html`,
   // Provincial nominees through Express Entry (pnp-express-entry).
   `${IRCC}/services/immigrate-canada/provincial-nominees/express-entry.html`,
+  // Sponsor parents and grandparents: overview.
+  `${IRCC}/services/immigrate-canada/family-sponsorship/sponsor-parents-grandparents.html`,
+  // Sponsor parents and grandparents: eligibility.
+  `${IRCC}/services/immigrate-canada/family-sponsorship/sponsor-parents-grandparents/eligibility.html`,
+  // Parents and grandparents program notice (pgp-program-pause).
+  `${IRCC}/news/notices/responsibly-manage-parent-grandparent-program.html`,
 ];
 
 /** Throws unless every entry is a unique https://www.canada.ca/ URL. */
