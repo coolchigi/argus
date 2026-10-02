@@ -16,6 +16,10 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
+  const typedEmail = email.trim();
+  const forgotHref = typedEmail
+    ? `/forgot-password?email=${encodeURIComponent(typedEmail)}`
+    : "/forgot-password";
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,7 +71,15 @@ export default function LoginPage() {
           />
         </div>
         <div className="space-y-1.5">
-          <SectionLabel as="label" htmlFor="password">Password</SectionLabel>
+          <div className="flex items-baseline justify-between">
+            <SectionLabel as="label" htmlFor="password">Password</SectionLabel>
+            <Link
+              href={forgotHref}
+              className="text-[12px] text-ink-secondary underline underline-offset-4 decoration-border hover:text-ink-primary"
+            >
+              Forgot password?
+            </Link>
+          </div>
           <Input
             id="password"
             type="password"
