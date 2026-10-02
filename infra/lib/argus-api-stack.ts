@@ -58,12 +58,10 @@ export interface ArgusApiStackProps extends cdk.StackProps {
 }
 
 /**
- * API surface plus async orchestration.
- *
- * Every Lambda is a Phase 1 placeholder returning 501. Real handlers land
- * during Phases 2 to 5. This stack exists so we can wire IAM grants, API
- * Gateway routes, EventBridge schedules, and Step Functions state machine
- * end to end in a shape the CDK skill agrees with.
+ * The HTTP API, the agent and service Lambdas, the EventBridge rules that
+ * chain the agents, and the Sentinel and Recall schedules. The orchestrator
+ * Lambda and the Step Functions state machine are unused placeholders from
+ * the first scaffold.
  */
 export class ArgusApiStack extends cdk.Stack {
   public readonly httpApi: apigwv2.HttpApi;
@@ -1070,7 +1068,7 @@ export class ArgusApiStack extends cdk.Stack {
 
     props.policyCorpusBucket.grantReadWrite(sentinelHandler);
 
-    // Orchestrator has the biggest surface (it fans out to all agents).
+    // Unused placeholder from the first scaffold. Its grants are still deployed.
     props.clientProfilesTable.grantReadData(orchestratorHandler);
     props.policyEventsTable.grantReadData(orchestratorHandler);
     props.impactAssessmentsTable.grantReadWriteData(orchestratorHandler);
@@ -1094,7 +1092,7 @@ export class ArgusApiStack extends cdk.Stack {
 
     this.httpApi = new apigwv2.HttpApi(this, 'ArgusHttpApi', {
       apiName: 'argus-api',
-      description: 'Argus REST surface. Consumers are the Next.js dashboard and (via AgentCore Gateway wrapping this API) consultant Claude Code MCP clients.',
+      description: 'Argus REST surface for the Next.js dashboard and the public receipt pages.',
       corsPreflight: {
         allowHeaders: ['Authorization', 'Content-Type'],
         allowMethods: [
@@ -1180,10 +1178,9 @@ export class ArgusApiStack extends cdk.Stack {
     });
 
     // -----------------------------------------------------------------
-    // Step Functions Express Workflow for the multi-agent pipeline.
-    // Placeholder Pass state today. Real Analyst -> Auditor -> Anchor ->
-    // Composer graph lands in Phase 3 to 4 as Strands runs inside the
-    // orchestrator Lambda's handler.
+    // Step Functions Express Workflow, a placeholder Pass state. The agent
+    // pipeline runs on the EventBridge rules and the ImpactAssessments
+    // stream above, so nothing routes through this workflow.
     // -----------------------------------------------------------------
     const workflowLogs = new logs.LogGroup(this, 'OrchestrationLogs', {
       logGroupName: '/aws/vendedlogs/states/argus-orchestration',
@@ -1196,7 +1193,7 @@ export class ArgusApiStack extends cdk.Stack {
       stateMachineType: sfn.StateMachineType.EXPRESS,
       definitionBody: sfn.DefinitionBody.fromChainable(
         new sfn.Pass(this, 'PlaceholderPass', {
-          comment: 'Real 5-agent Strands pipeline lands in Phase 3',
+          comment: 'Placeholder. The agent pipeline runs on EventBridge',
           result: sfn.Result.fromObject({ phase: 1, status: 'placeholder' }),
         })
       ),
@@ -1207,7 +1204,7 @@ export class ArgusApiStack extends cdk.Stack {
     // -----------------------------------------------------------------
     // EventBridge schedules.
     // - Sentinel fires hourly to diff IRCC pages.
-    // - Recall fires daily at 03:00 UTC to re-scan the last 30 days.
+    // - Recall fires daily at 03:00 UTC and re-runs stored rules from the last 30 days.
     // -----------------------------------------------------------------
     new events.Rule(this, 'SentinelHourly', {
       ruleName: 'argus-sentinel-hourly',
@@ -1218,7 +1215,7 @@ export class ArgusApiStack extends cdk.Stack {
 
     new events.Rule(this, 'RecallDaily', {
       ruleName: 'argus-recall-daily',
-      description: 'Trigger Recall Lambda daily at 03:00 UTC to re-scan the last 30 days of IRCC pages',
+      description: 'Trigger Recall Lambda daily at 03:00 UTC to re-run stored rules from the last 30 days',
       schedule: events.Schedule.cron({ minute: '0', hour: '3' }),
       targets: [new targets.LambdaFunction(recallHandler)],
     });

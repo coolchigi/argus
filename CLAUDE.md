@@ -33,15 +33,15 @@ Match `~/.claude/voice-dna.md` and this repo's writing. Hard rules:
 - ALWAYS use the AWS Agent Toolkit before making AWS decisions. Load `amazon-bedrock`, `aws-cdk`, `aws-serverless`, `aws-billing-and-cost-management`, `aws-auth`, `aws-storage`, or `aws-observability` as the task requires.
 - NEVER guess prices. Run `scripts/pricing_lookup.py` or `aws pricing get-products` and cite the result.
 - NEVER do arithmetic in prose. Write a script. Per the billing skill's deterministic-calculation rule.
-- NEVER use OpenSearch Serverless. Vector search runs on S3 Vectors backing Bedrock Knowledge Bases.
+- NEVER use OpenSearch Serverless. If Argus adds vector search, it runs on S3 Vectors backing Bedrock Knowledge Bases.
 - NEVER pick a Bedrock model from memory. Read `amazon-bedrock` skill's `model-selection-guide.md`, then query `aws bedrock list-foundation-models --region us-east-1`.
 - ALL Bedrock invocations use cross-region inference profiles (`us.` prefix on the model ID).
 - ALL Bedrock invocations set `maxTokens` explicitly. Unset defaults reserve full model max and cause silent ThrottlingException.
-- The six named agents (Sentinel, Analyst, Auditor, Anchor, Composer, Recall) are separate Bedrock invocations with separate models, prompts, and tool sets. This is a Strands Graph, not an orchestrator plus tools. Agent-as-Tool pattern is banned in this repo.
+- The six named agents (Sentinel, Analyst, Auditor, Anchor, Composer, Recall) each run in their own Lambda with their own IAM role. Five call Bedrock, each with its own prompt. Sentinel and Recall share Nova Micro. Anchor makes no model call: it signs each ImpactAssessment with KMS. EventBridge (plus the ImpactAssessments stream for Composer) carries the hand-offs. Agent-as-Tool pattern is banned in this repo.
 - Cross-family adversarial. Analyst and Auditor MUST come from different model families. If they cannot, escalate.
 - Every ImpactAssessment MUST be KMS-signed (ECDSA P-256, public JWKS endpoint). No signature, no publish.
 - NO CLIENT PII IN ARGUS AT ANY LAYER. Not the model, not the application, not the database, not the logs. Client identity is an opaque `client_id` supplied by the RCIC. See design doc Section 6a. Consultant PII (their own name, email, R-license) is the only PII we hold. If a schema field or code path would ingest client names, emails, phone numbers, addresses, or DOB, escalate.
-- NEVER HARDCODE IRCC SCORING THRESHOLDS OR INTERPRETATION GUIDANCE IN ANALYST PROMPTS OR CODE. Rules are first-class data, content-addressed via SHA256 in the `PolicyRules` DynamoDB table. Analyst resolves rules at assessment time via `RuleIndex`. Every `ImpactAssessment` records the rule-version hashes it used. See ADR-0001. Historical replay depends on this.
+- NEVER HARDCODE IRCC SCORING THRESHOLDS OR INTERPRETATION GUIDANCE IN ANALYST PROMPTS OR CODE. Rules are first-class data, content-addressed via SHA256 in the `PolicyRules` DynamoDB table. Analyst loads the rule version named in the PolicyDelta by its hash. Every `ImpactAssessment` records the rule-version hashes it used. See ADR-0001. Historical replay depends on this.
 - NEVER DELETE AN `ImpactAssessment`, `AuditTrail`, or `PolicyRules` ROW WITHOUT EXPLICIT PROJECT-LEAD ESCALATION. CICC Client File Management Regulation s. 7.2 requires 6 years post-file-closure retention, and Argus-generated audit records count as Client Records under s. 3.2(g). The RCIC's own retention obligation applies to our records. See ADR-0002. Default is indefinite retention with export on demand.
 - Tests stress functionality. If a test is calibrated to pass rather than to catch a real failure, delete it.
 - No hyperfocus on the 13-day countdown, and no scope creep. When in doubt, cut.
