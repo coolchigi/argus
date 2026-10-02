@@ -7,6 +7,7 @@ import { readGuardrailVerdict } from './guardrail';
 import { parseAssessmentKey, summarize, type Lineage, type StepRow } from './lineage';
 import { buildReviewPayload, canonicalHash as hashPayload, RECORD_KIND_REVIEW } from './review';
 import { COUNTER_KINDS, counterKey, jwkFromSpki, publicConsultant, sumStats, windowDays, type CounterRow, type Jwk, type PublicConsultant, type PublicStats } from './public';
+import { asGuestView } from '../../shared/guest-view';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
@@ -35,7 +36,8 @@ const SIGNATURE_SCHEME = 'kms-digest-v1';
 
 let cachedPublicKey: { pem: string; keyId: string; der: Uint8Array } | null = null;
 
-export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> => {
+export const handler = async (incoming: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> => {
+  const event = asGuestView(incoming, process.env.GUEST_RCIC_ID);
   const method = event.requestContext.http.method;
   const routeKey = event.routeKey ?? `${method} ${event.rawPath}`;
   const rcicId = resolveRcicId(event);

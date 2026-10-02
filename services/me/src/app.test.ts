@@ -369,3 +369,34 @@ describe('PATCH /me merging', () => {
     assert.equal(store.users.get(TENANT)!.firm, 'Northern Pathways');
   });
 });
+
+describe('guest view', () => {
+  async function guestCall(routeKey: string, guestRcicId: string | undefined): Promise<Res> {
+    const app = createApp(store, async () => signing, { log: () => {}, guestRcicId });
+    const res = await app(event(routeKey, { claims: null }));
+    const raw = String(res.body);
+    return { status: Number(res.statusCode), body: JSON.parse(raw), raw };
+  }
+
+  it("shows the guest tenant's setup under a stand-in name", async () => {
+    store.users.set(TENANT, { ...store.users.get(TENANT), email: 'priya@example.ca', rcicLicense: TENANT, firm: 'Sandhu Immigration' });
+    store.clients.set(TENANT, 13);
+    const res = await guestCall('GET /guest/me', TENANT);
+    assert.equal(res.status, 200);
+    assert.equal(res.body.consultant.rcicId, TENANT);
+    assert.equal(res.body.consultant.displayName, 'Demo Consultant');
+    assert.equal(res.body.setup.clientCount, 13);
+    for (const leaked of ['Priya', 'Sandhu', 'priya@example.ca']) assert.ok(!res.raw.includes(leaked), `guest /me leaked ${leaked}`);
+    assert.equal(res.body.consultant.rcicLicense, null);
+  });
+
+  it('answers 403 when no guest tenant is configured', async () => {
+    const res = await guestCall('GET /guest/me', undefined);
+    assert.equal(res.status, 403);
+  });
+
+  it('keeps the real name for the signed-in consultant', async () => {
+    const res = await call('GET /me');
+    assert.equal(res.body.consultant.givenName, 'Priya');
+  });
+});

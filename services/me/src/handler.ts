@@ -127,7 +127,7 @@ async function signing(): Promise<Signing | null> {
   }
 }
 
-export const handler = createApp(store, signing);
+export const handler = createApp(store, signing, { guestRcicId: process.env.GUEST_RCIC_ID });
 
 function requiredEnv(name: string): string {
   const v = process.env[name];
