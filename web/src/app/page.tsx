@@ -42,6 +42,9 @@ export default function LandingPage() {
       <SiteHeader
         nav={
           <>
+            <Link href="/explore" className="text-ink-2 hover:text-ink-1 transition-colors">
+              Explore the demo
+            </Link>
             <Link href="/login" className="text-ink-2 hover:text-ink-1 transition-colors">
               Sign in
             </Link>
@@ -88,6 +91,12 @@ function Hero() {
               className="inline-flex h-10 items-center rounded-sm border border-brand-ink bg-brand px-4 text-[13px] font-medium text-on-brand transition-colors hover:bg-brand-hover"
             >
               Start with your R-license
+            </Link>
+            <Link
+              href="/explore"
+              className="inline-flex h-10 items-center rounded-sm border border-control bg-surface px-4 text-[13px] font-medium text-ink-1 transition-colors hover:bg-sunk"
+            >
+              Explore the demo
             </Link>
             <Link
               href="/login"

@@ -1,5 +1,6 @@
 import { env } from "./env";
 import { getIdToken } from "./auth";
+import { guestRoute, isGuest } from "./guest";
 
 export class ApiError extends Error {
   status: number;
@@ -20,11 +21,18 @@ type ApiOptions = {
 
 export async function api<T>(path: string, opts: ApiOptions = {}): Promise<T> {
   const method = opts.method ?? "GET";
-  const url = `${env.apiUrl}${path.startsWith("/") ? "" : "/"}${path}`;
+  const guest = opts.requireAuth !== false && isGuest();
+  let target = path;
+  if (guest) {
+    const route = guestRoute(path, method);
+    if ("blocked" in route) throw new ApiError(403, route.blocked, null);
+    target = route.path;
+  }
+  const url = `${env.apiUrl}${target.startsWith("/") ? "" : "/"}${target}`;
   const headers: Record<string, string> = {
     "content-type": "application/json",
   };
-  if (opts.requireAuth !== false) {
+  if (opts.requireAuth !== false && !guest) {
     const token = await getIdToken();
     if (!token) throw new ApiError(401, "not-signed-in", null);
     headers["authorization"] = `Bearer ${token}`;

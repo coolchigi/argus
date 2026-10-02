@@ -104,6 +104,12 @@ export default function LoginPage() {
         <Link href="/signup" className="text-ink-primary underline underline-offset-4 decoration-border">
           Create an account
         </Link>
+        <div className="mt-2">
+          Just looking?{" "}
+          <Link href="/explore" className="text-ink-primary underline underline-offset-4 decoration-border">
+            Explore the demo without signing in
+          </Link>
+        </div>
       </div>
     </div>
   );
