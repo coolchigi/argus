@@ -4,6 +4,8 @@ import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3
 import { DynamoDBDocumentClient, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { createApp, type PublicKey, type Store } from './app.ts';
+import { asGuestView } from '../../shared/guest-view.ts';
+import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 import { ASSESSMENT_PROJECTION, BRIEF_PROJECTION, type Range, type Row } from './model.ts';
 
 // DynamoDB, KMS and S3 wiring for /records and /exports. Routes and rules
@@ -88,7 +90,7 @@ async function publicKey(): Promise<PublicKey> {
   return cachedKey;
 }
 
-export const handler = createApp(
+const app = createApp(
   store,
   {
     async put(key, body, opts) {
@@ -115,3 +117,5 @@ function requiredEnv(name: string): string {
   if (!v) throw new Error(`Missing required env: ${name}`);
   return v;
 }
+
+export const handler = (event: APIGatewayProxyEventV2) => app(asGuestView(event, process.env.GUEST_RCIC_ID));

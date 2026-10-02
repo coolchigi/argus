@@ -8,6 +8,7 @@ import { SendEmailCommand, SESv2Client } from '@aws-sdk/client-sesv2';
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
 import { createHash, randomUUID } from 'node:crypto';
 import { bumpPublicCounter } from './public-counter';
+import { asGuestView } from '../../shared/guest-view';
 
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const kms = new KMSClient({});
@@ -53,7 +54,8 @@ type CitationForEmail = {
 
 type SendResult = { briefId: string; ok: boolean; sesMessageId?: string; sentBodyHash?: string; error?: string };
 
-export const handler = async (event: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> => {
+export const handler = async (incoming: APIGatewayProxyEventV2): Promise<APIGatewayProxyStructuredResultV2> => {
+  const event = asGuestView(incoming, process.env.GUEST_RCIC_ID);
   const method = event.requestContext.http.method;
   const routeKey = event.routeKey ?? `${method} ${event.rawPath}`;
   const rcicId = resolveRcicId(event);

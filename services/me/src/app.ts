@@ -1,5 +1,6 @@
 import type { APIGatewayProxyEventV2, APIGatewayProxyStructuredResultV2 } from 'aws-lambda';
-import { planWrites, toMeResponse, validatePatch, type Claims, type Row, type Signing } from './model.ts';
+import { asGuestView, isGuestRoute } from '../../shared/guest-view.ts';
+import { asGuestConsultant, planWrites, toMeResponse, validatePatch, type Claims, type Row, type Signing } from './model.ts';
 
 // GET /me and PATCH /me (Phase E). Routes and rules, with storage behind the
 // Store interface so tests run against memory. handler.ts wires DynamoDB and
@@ -30,14 +31,15 @@ const MAX_WRITE_ATTEMPTS = 3;
 export function createApp(
   store: Store,
   signing: () => Promise<Signing | null>,
-  opts: { now?: () => Date; log?: Log } = {},
+  opts: { now?: () => Date; log?: Log; guestRcicId?: string } = {},
 ) {
   const now = opts.now ?? (() => new Date());
   const log: Log = opts.log ?? ((level, msg, fields) => console.log(JSON.stringify({ level, msg, timestamp: new Date().toISOString(), ...fields })));
 
-  async function respond(rcicId: string, claims: Claims, row: Row | null): Promise<Json> {
+  async function respond(rcicId: string, claims: Claims, row: Row | null, guest = false): Promise<Json> {
     const [clientCount, hasAssessments, key] = await Promise.all([store.countClients(rcicId), store.hasAssessments(rcicId), signing()]);
-    return json(200, toMeResponse({ rcicId, claims, row, signing: key, clientCount, hasAssessments }));
+    const me = toMeResponse({ rcicId, claims, row, signing: key, clientCount, hasAssessments });
+    return json(200, guest ? asGuestConsultant(me) : me);
   }
 
   async function patch(rcicId: string, claims: Claims, body: Row): Promise<Json> {
@@ -59,14 +61,16 @@ export function createApp(
     return json(409, { error: 'concurrent-update' });
   }
 
-  return async function handle(event: APIGatewayProxyEventV2): Promise<Json> {
+  return async function handle(incoming: APIGatewayProxyEventV2): Promise<Json> {
+    const guest = isGuestRoute(incoming);
+    const event = asGuestView(incoming, opts.guestRcicId);
     const routeKey = event.routeKey ?? `${event.requestContext.http.method} ${event.rawPath}`;
     const claims = readClaims(event);
     const rcicId = resolveRcicId(claims);
     log('info', 'me-request', { routeKey, rcicId });
     try {
       if (!rcicId) return json(403, { error: 'missing-tenant-claim' });
-      if (routeKey === 'GET /me') return await respond(rcicId, claims, await store.getUser(rcicId));
+      if (routeKey === 'GET /me') return await respond(rcicId, claims, await store.getUser(rcicId), guest);
       if (routeKey === 'PATCH /me') return await patch(rcicId, claims, parseBody(event));
       return json(404, { error: 'route-not-found', routeKey });
     } catch (err) {

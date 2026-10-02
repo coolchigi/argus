@@ -10,6 +10,8 @@ import {
 import { createApp, type Store } from './app.ts';
 import type { Row } from './derive.ts';
 import { pick } from './validate.ts';
+import { asGuestView } from '../../shared/guest-view.ts';
+import type { APIGatewayProxyEventV2 } from 'aws-lambda';
 
 // DynamoDB wiring for the profiles service. Routes and rules live in app.ts.
 
@@ -125,7 +127,9 @@ const store: Store = {
     }),
 };
 
-export const handler = createApp(store);
+const app = createApp(store);
+
+export const handler = (event: APIGatewayProxyEventV2) => app(asGuestView(event, process.env.GUEST_RCIC_ID));
 
 async function queryAll(input: QueryCommandInput): Promise<Row[]> {
   const items: Row[] = [];
