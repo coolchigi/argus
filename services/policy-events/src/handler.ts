@@ -1,3 +1,4 @@
+import { sourceIsGone } from './link-check.ts';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -61,7 +62,6 @@ const CLIENT_PROFILES_TABLE = requiredEnv('CLIENT_PROFILES_TABLE');
 const ALERTS_TABLE = requiredEnv('ALERTS_TABLE');
 const POLICY_CORPUS_BUCKET = requiredEnv('POLICY_CORPUS_BUCKET');
 const ARCHIVE_LINK_TTL_SECONDS = Number(process.env.ARCHIVE_LINK_TTL_SECONDS ?? String(7 * 24 * 60 * 60));
-const HEAD_CHECK_TIMEOUT_MS = 3_000;
 
 const ASSESSMENT_LIST_FIELDS = [
   'assessmentKey',
@@ -190,7 +190,7 @@ async function getEvent(
 
   const rule = rules.get(event.ruleHash) ?? null;
   const [sourceIsLive, archiveUrl] = await Promise.all([
-    checkUrlLive(rule?.sourceUrl ?? ''),
+    sourceIsGone(rule?.sourceUrl ?? '').then((gone) => !gone),
     presignArchive(rule?.sourceS3Key ?? '', rule?.sourceS3VersionId ?? null),
   ]);
   return {
@@ -396,35 +396,6 @@ function projection(fields: string[], extraNames: Record<string, string> = {}): 
 // Citation helpers, copied from services/briefs-service/src/handler.ts.
 // Services don't share code today.
 // ---------------------------------------------------------------------------
-
-async function checkUrlLive(url: string): Promise<boolean> {
-  if (!url) return false;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HEAD_CHECK_TIMEOUT_MS);
-  try {
-    // GET with a small Range instead of HEAD. canada.ca soft-serves HEAD with
-    // a 302 and reports 2xx even when the page 404s.
-    const res = await fetch(url, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Argus/0.1 (link-check)',
-        Range: 'bytes=0-127',
-      },
-    });
-    try {
-      await res.body?.cancel();
-    } catch {
-      // ignore cancel errors, we only care about the status
-    }
-    return res.status >= 200 && res.status < 400;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 async function presignArchive(s3Key: string, versionId: string | null): Promise<string | null> {
   if (!s3Key) return null;

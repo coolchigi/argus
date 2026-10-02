@@ -1,3 +1,4 @@
+import { sourceIsGone } from './link-check';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { GetPublicKeyCommand, KMSClient, SignCommand } from '@aws-sdk/client-kms';
 import { GetObjectCommand, S3Client } from '@aws-sdk/client-s3';
@@ -23,7 +24,6 @@ const PUBLIC_COUNTERS_TABLE = process.env.PUBLIC_COUNTERS_TABLE;
 const DEFAULT_FROM_EMAIL = requiredEnv('DEFAULT_FROM_EMAIL');
 const BATCH_SEND_MAX = Number(process.env.BATCH_SEND_MAX ?? '25');
 const ARCHIVE_LINK_TTL_SECONDS = Number(process.env.ARCHIVE_LINK_TTL_SECONDS ?? String(7 * 24 * 60 * 60));
-const HEAD_CHECK_TIMEOUT_MS = 3_000;
 // Where the "Verify this message" link in the email footer points. The web
 // app serves /verify/{hash} for assessment and brief receipts alike.
 const PUBLIC_BASE_URL = (process.env.ARGUS_PUBLIC_BASE_URL || 'https://main.d270cjhakw6y7j.amplifyapp.com').replace(/\/+$/, '');
@@ -439,38 +439,6 @@ async function loadCitation(ruleHash: string, briefFallback: Record<string, unkn
   return { sourceUrl: url, s3Key: '', s3VersionId: null };
 }
 
-async function checkUrlLive(url: string): Promise<boolean> {
-  if (!url) return false;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), HEAD_CHECK_TIMEOUT_MS);
-  try {
-    // GET with a small Range instead of HEAD. canada.ca and other JS-rendered
-    // sites soft-serve HEAD with a 302 that points nowhere real, and report
-    // 2xx even when the underlying page 404s. GET with an explicit redirect
-    // follow forces the real terminal status, and the Range header keeps us
-    // from downloading the whole page.
-    const res = await fetch(url, {
-      method: 'GET',
-      redirect: 'follow',
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Argus/0.1 (link-check)',
-        Range: 'bytes=0-127',
-      },
-    });
-    try {
-      await res.body?.cancel();
-    } catch {
-      // ignore cancel errors, we only care about the status
-    }
-    return res.status >= 200 && res.status < 400;
-  } catch {
-    return false;
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
 async function presignArchive(s3Key: string, versionId: string | null): Promise<string | null> {
   if (!s3Key) return null;
   const url = await getSignedUrl(
@@ -489,7 +457,7 @@ async function buildCitationForEmail(ruleHash: string, brief: Record<string, unk
   const citation = await loadCitation(ruleHash, brief);
   if (!citation) return { sourceUrl: '', sourceIsLive: false, archiveUrl: null };
   const [live, archive] = await Promise.all([
-    checkUrlLive(citation.sourceUrl),
+    sourceIsGone(citation.sourceUrl).then((gone) => !gone),
     presignArchive(citation.s3Key, citation.s3VersionId),
   ]);
   return { sourceUrl: citation.sourceUrl, sourceIsLive: live, archiveUrl: archive };
