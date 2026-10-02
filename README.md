@@ -12,7 +12,7 @@ Live: https://main.d270cjhakw6y7j.amplifyapp.com
 
 | Agent | Starts on | Model | Job |
 |---|---|---|---|
-| Sentinel | Hourly schedule | Amazon Nova Micro | Fetches 4 IRCC pages and compares a SHA-256 of each page's main text with the last snapshot in a versioned S3 bucket. On a change, it classifies it, stores the rule in `PolicyRules` keyed by its SHA-256, and emits a `PolicyDelta`. |
+| Sentinel | Hourly schedule | Amazon Nova Micro | Fetches the IRCC pages in `infra/lib/ircc-watch-list.ts`, 5 at a time, and compares a SHA-256 of each page's main text with the last snapshot in a versioned S3 bucket. A page seen for the first time is stored as a baseline and emits nothing. On a change, it classifies it, stores the rule in `PolicyRules` keyed by its SHA-256, and emits a `PolicyDelta`. |
 | Analyst | `PolicyDelta` | Amazon Nova Pro | For each open client the change reaches (by program and the consultant's settings), decides whether the client is affected, the impact type, a one-line narrative and a recommended action. |
 | Auditor | `ImpactHypothesis` | Claude Haiku 4.5 | Checks the Analyst's answer against the rule text and up to 5 of the consultant's past corrections. Records a stance (agree, disagree or uncertain) with a reason. It can't change the Analyst's affected answer. A disagreement goes to the consultant. |
 | Anchor | `AuditVerdict` | None | Builds the canonical record, hashes it with SHA-256, signs the hash with an AWS KMS ECDSA P-256 key, and writes it create-only. |
@@ -47,6 +47,7 @@ These were in the plan and aren't in the code:
 - A Knowledge Base or vector search.
 - Paragraph-level citations. Citations are page-level: the page URL, the archived S3 snapshot and the rule hash.
 - Reads of `RuleIndex`. Sentinel writes it and no agent reads it.
+- Express Entry draws and the IRCC newsroom. Those pages fill in their content in the browser, so Sentinel's HTML snapshot never changes. Draws come from a JSON file that needs its own handling.
 - The weekly digest. A brief that doesn't qualify for an email gets none.
 - HeyGen video briefs.
 

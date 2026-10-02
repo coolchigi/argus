@@ -7,7 +7,13 @@ import { createHash, randomUUID } from 'node:crypto';
 import { buildClassifierRequest, parseClassification, type Category, type Classification, type RuleKind, type Severity } from './classify';
 import { extractMainText } from './extract';
 import { describeGuardrailBlock } from './guardrail';
+import { mapWithConcurrency } from './pool';
 import { elapsedMs, recordStep } from './telemetry';
+
+// The watch list from infra/lib/ircc-watch-list.ts. CDK substitutes it at
+// bundle time (esbuild `define`) because it outgrows Lambda's 4 KB
+// environment limit.
+declare const IRCC_WATCH_LIST: readonly string[] | undefined;
 
 const s3 = new S3Client({});
 const eb = new EventBridgeClient({});
@@ -22,8 +28,15 @@ const CLASSIFIER_MODEL = requiredEnv('BEDROCK_CLASSIFIER_MODEL');
 const AUDIT_TRAIL_TABLE = process.env.AUDIT_TRAIL_TABLE;
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
-const SEED_URLS = JSON.parse(process.env.IRCC_SEED_URLS ?? '[]') as string[];
+const SEED_URLS: readonly string[] = typeof IRCC_WATCH_LIST === 'undefined' ? [] : IRCC_WATCH_LIST;
 const FETCH_TIMEOUT_MS = 15_000;
+// Caps the whole classifier call, retries included, so a stuck Bedrock call
+// can't hold a pool slot until the Lambda times out.
+const CLASSIFY_TIMEOUT_MS = 30_000;
+// Pages fetched at once. Keeps canada.ca and Nova Micro from seeing a burst
+// of the whole list. The Lambda timeout in infra/lib/argus-api-stack.ts is
+// sized from this, FETCH_TIMEOUT_MS and CLASSIFY_TIMEOUT_MS.
+const SCAN_CONCURRENCY = 5;
 
 function guardrailConfig() {
   if (!GUARDRAIL_ID) return undefined;
@@ -54,15 +67,18 @@ type PolicyDelta = {
 
 type ScanResult =
   | { url: string; changed: false; hash: string }
+  | { url: string; changed: false; baseline: true; hash: string }
   | { url: string; changed: true; delta: PolicyDelta }
   | { url: string; error: string };
 
 // Manual invocations may pass `{ urls?, targetRcicIds? }`. The hourly
 // EventBridge schedule sends a Scheduled Event with neither, so it scans
-// IRCC_SEED_URLS.
-type ScanRequest = { urls: string[]; targetRcicIds?: string[]; mode: 'seed' | 'requested' };
+// the watch list.
+type ScanRequest = { urls: readonly string[]; targetRcicIds?: string[]; mode: 'seed' | 'requested' };
 
-export const handler = async (event?: unknown): Promise<{ scanned: number; changed: number; errored: number }> => {
+type ScanSummary = { scanned: number; changed: number; baselined: number; errored: number };
+
+export const handler = async (event?: unknown): Promise<ScanSummary> => {
   const runId = randomUUID();
   const request = parseRequest(event);
   log('info', 'scan-start', {
@@ -72,12 +88,22 @@ export const handler = async (event?: unknown): Promise<{ scanned: number; chang
     targetRcicCount: request.targetRcicIds?.length ?? null,
   });
 
-  const results = await Promise.all(request.urls.map((url) => scanOne(url, runId, request.targetRcicIds)));
-  const changed = results.filter((r): r is Extract<ScanResult, { changed: true }> => 'changed' in r && r.changed === true).length;
-  const errored = results.filter((r): r is Extract<ScanResult, { error: string }> => 'error' in r).length;
+  if (request.urls.length === 0) {
+    throw new Error('watch list is empty: IRCC_WATCH_LIST was not bundled into Sentinel');
+  }
 
-  log('info', 'scan-complete', { runId, scanned: results.length, changed, errored });
-  return { scanned: results.length, changed, errored };
+  // scanOne catches its own errors. The pool isolates anything that slips
+  // past it, so one bad URL never ends the run.
+  const settled = await mapWithConcurrency(request.urls, SCAN_CONCURRENCY, (url) => scanOne(url, runId, request.targetRcicIds));
+  const results: ScanResult[] = settled.map((s, i) =>
+    s.status === 'fulfilled' ? s.value : { url: request.urls[i], error: s.reason instanceof Error ? s.reason.message : String(s.reason) },
+  );
+  const changed = results.filter((r) => 'changed' in r && r.changed).length;
+  const baselined = results.filter((r) => 'baseline' in r).length;
+  const errored = results.filter((r) => 'error' in r).length;
+
+  log('info', 'scan-complete', { runId, scanned: results.length, changed, baselined, errored });
+  return { scanned: results.length, changed, baselined, errored };
 };
 
 function parseRequest(event: unknown): ScanRequest {
@@ -128,8 +154,19 @@ async function scanOne(url: string, runId: string, targetRcicIds?: string[]): Pr
     const newHash = sha256(text);
     const s3Key = keyForUrl(url);
     const previous = await readLatest(s3Key);
-    const previousText = previous === null ? null : extractMainText(previous);
-    const previousHash = previousText === null ? null : sha256(previousText);
+
+    // First sight of a URL: there is nothing to compare against, so a
+    // difference can't be known. Store the page as the baseline and emit
+    // nothing. Without this, every URL added to the watch list would fire a
+    // PolicyDelta on its first run and fan out to every tenant's caseload.
+    if (previous === null) {
+      await writeSnapshot(s3Key, html);
+      log('info', 'baseline-stored', { runId, url, hash: newHash, s3Key });
+      return { url, changed: false, baseline: true, hash: newHash };
+    }
+
+    const previousText = extractMainText(previous);
+    const previousHash = sha256(previousText);
 
     if (previousHash === newHash) {
       log('debug', 'unchanged', { runId, url, hash: newHash });
@@ -161,7 +198,7 @@ async function scanOne(url: string, runId: string, targetRcicIds?: string[]): Pr
       previousHash,
       newHash,
       s3Key,
-      contentLengthDelta: text.length - (previousText?.length ?? 0),
+      contentLengthDelta: text.length - previousText.length,
       ...(targetRcicIds ? { targetRcicIds } : {}),
     };
     await emitDelta(delta);
@@ -217,6 +254,7 @@ async function fetchWithTimeout(url: string): Promise<string> {
 async function classifyWithBedrock(url: string, pageText: string, runId: string): Promise<Classification> {
   const res = await bedrock.send(
     new ConverseCommand(buildClassifierRequest({ modelId: CLASSIFIER_MODEL, url, pageText, guardrailConfig: guardrailConfig() })),
+    { abortSignal: AbortSignal.timeout(CLASSIFY_TIMEOUT_MS) },
   );
 
   if (res.stopReason === 'guardrail_intervened') {
