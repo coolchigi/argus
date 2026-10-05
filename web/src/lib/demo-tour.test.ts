@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { samePath, TOUR_STEPS, tourClient, tourPaths } from "./demo-tour.ts";
+import { isPlaced, samePath, TOUR_STEPS, tourClient, tourPaths } from "./demo-tour.ts";
 import type { PolicyEvent, PolicyEventImpact } from "./types/policy-events.ts";
 
 const event = (eventId: string, topic: string, affectedCount: number) => ({ eventId, topic, affectedCount }) as PolicyEvent;
@@ -35,4 +35,12 @@ test("an unsigned or unaffected client is never the one the tour follows", () =>
 test("paths match across encoding and a trailing slash", () => {
   assert.ok(samePath("/impacts/demo-2%232026-032", "/impacts/demo-2#2026-032/"));
   assert.ok(!samePath("/impacts/a", "/impacts/b"));
+});
+
+test("an element pushed below or above the screen isn't placed, so the tour scrolls back", () => {
+  // Step 3 on the live site at 1440x900: the clients table ended up at 982 after a scroll.
+  assert.equal(isPlaced(982, 900), false);
+  assert.equal(isPlaced(-120, 900), false);
+  assert.ok(isPlaced(295, 900));
+  assert.ok(isPlaced(66, 812));
 });
