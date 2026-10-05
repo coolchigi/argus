@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useAuth } from "@/components/auth-context";
 import { Sidebar } from "@/components/nav/sidebar";
 import { TopBar } from "@/components/nav/top-bar";
@@ -20,8 +20,16 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   // consultant is never locked out by the wizard's gate.
   const toOnboarding = me.data ? needsOnboarding(me.data) : false;
 
+  // Leaving the demo goes back to the landing page. Every other signed-out
+  // visit goes to sign-in. This effect runs after any sign-out button's own
+  // redirect, so it decides where the visitor lands.
+  const wasGuest = useRef(false);
   useEffect(() => {
-    if (auth.status === "anonymous") router.replace("/login");
+    if (auth.status === "authed") wasGuest.current = auth.guest;
+  }, [auth.status, auth.guest]);
+
+  useEffect(() => {
+    if (auth.status === "anonymous") router.replace(wasGuest.current ? "/" : "/login");
   }, [auth.status, router]);
 
   useEffect(() => {
