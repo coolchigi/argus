@@ -10,6 +10,7 @@ import { BreadcrumbProvider } from "@/components/nav/breadcrumb-context";
 import { ProgressLine } from "@/components/argus/progress-line";
 import { needsOnboarding } from "@/lib/onboarding";
 import { useMe } from "@/lib/queries";
+import { startTour } from "@/lib/demo-tour-store";
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -66,7 +67,10 @@ function GuestBanner() {
       <Link href="/signup" className="text-ink-1 underline underline-offset-4 decoration-border">
         Create an account
       </Link>{" "}
-      to watch your own.
+      to watch your own.{" "}
+      <button type="button" onClick={startTour} className="text-ink-1 underline underline-offset-4 decoration-border">
+        Take the tour
+      </button>
     </div>
   );
 }

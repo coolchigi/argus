@@ -150,11 +150,12 @@ export function usePolicyEvent(eventId: string, options: { enabled?: boolean } =
   });
 }
 
-export function usePolicyEventImpacts(eventId: string) {
+export function usePolicyEventImpacts(eventId: string, options: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.policyEventImpacts(eventId),
     queryFn: () => api<PolicyEventImpactsResponse>(`/policy-events/${encodeURIComponent(eventId)}/impacts`),
     retry: retryUnlessNotFound,
+    enabled: options.enabled ?? true,
   });
 }
 

@@ -174,10 +174,10 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
             />
           </>
         ) : (
-          <>
+          <div data-tour="impact-lineage" className="space-y-8">
             <AgentLineage policyEventId={impact.policyEventId} lineage={lineage.data} live={live} />
             <LearnedFromYou correctionKeys={lineage.data?.fewShotCorrectionKeys ?? []} />
-          </>
+          </div>
         )}
 
         {shownStance && <AuditorView stance={shownStance} isAffected={impact.isAffected} reviewed={replacedBy !== null} onReview={openReview} />}
@@ -241,7 +241,9 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
       </div>
 
       <aside className="min-w-0 space-y-5">
-        <SignatureReceipt assessmentKey={assessmentKey} fingerprintPreview={impact.canonicalHash} signedAt={impact.timestamp} review={review} />
+        <div data-tour="impact-signature">
+          <SignatureReceipt assessmentKey={assessmentKey} fingerprintPreview={impact.canonicalHash} signedAt={impact.timestamp} review={review} />
+        </div>
       </aside>
     </div>
   );
