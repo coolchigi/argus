@@ -101,3 +101,12 @@ export function samePath(a: string, b: string): boolean {
   };
   return norm(a) === norm(b);
 }
+
+// The tour puts an element centered or near the top, so a placed element's
+// top lands in the upper part of the screen, clear of the card.
+const PLACED_SHARE = 0.6;
+
+/** The element's top is where the tour scrolled it: on screen, in the upper part. */
+export function isPlaced(top: number, viewportHeight: number): boolean {
+  return top >= 0 && top <= viewportHeight * PLACED_SHARE;
+}
