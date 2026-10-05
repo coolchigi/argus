@@ -4,7 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useState, useSyncExternalStore } from "react";
 import { X } from "lucide-react";
 import { useAuth } from "@/components/auth-context";
-import { samePath, TOUR_STEPS, tourEvent, tourPaths } from "@/lib/demo-tour";
+import { isPlaced, samePath, TOUR_STEPS, tourEvent, tourPaths } from "@/lib/demo-tour";
 import { getServerTourState, getTourState, setTourState, subscribeTour } from "@/lib/demo-tour-store";
 import { prefersReducedMotion } from "@/lib/motion";
 import { POLICY_EVENTS_MAX_LIMIT, usePolicyEventImpacts, usePolicyEvents } from "@/lib/queries";
@@ -15,6 +15,12 @@ const FIND_TIMEOUT_MS = 8000;
 const MEASURE_EVERY_MS = 200;
 // Scrolls to the element once it stops moving, or after this long regardless.
 const SETTLE_TIMEOUT_MS = 3000;
+// After a scroll, checks this often that the element stayed in view (a late
+// layout shift or the router can move the page), and scrolls back at most
+// MAX_RESCROLLS times.
+const RECHECK_AFTER_MS = 1000;
+const MAX_RESCROLLS = 2;
+
 // Below Tailwind's sm breakpoint the card spans the bottom of the screen.
 const PHONE_MAX_WIDTH = 640;
 // An element taller than this share of the screen is aligned to the top.
@@ -146,7 +152,8 @@ function Tour() {
 
 /**
  * The on-screen box of the step's [data-tour] element. Waits for the page to
- * render it, scrolls it into view once per step, then follows it through
+ * render it, scrolls it into view once per step (and back, if the page moves
+ * it before the visitor scrolls), then follows it through
  * scrolling, resizing and late layout shifts.
  */
 function useTarget(target: string | null, stepIndex: number): Box | null {
@@ -157,6 +164,13 @@ function useTarget(target: string | null, stepIndex: number): Box | null {
     if (!target) return;
     const started = Date.now();
     let scrolled = false;
+    let scrolledAt = 0;
+    let rescrolls = 0;
+    // Once the visitor scrolls on their own, the tour stops moving the page.
+    let visitorScrolled = false;
+    const onVisitorScroll = () => {
+      if (scrolled) visitorScrolled = true;
+    };
     // Where the element sat on the page at the last measure. The page is
     // still loading data above it until this holds still.
     let lastSpot: string | null = null;
@@ -173,17 +187,18 @@ function useTarget(target: string | null, stepIndex: number): Box | null {
       lastSpot = here;
       if (!scrolled && settled) {
         scrolled = true;
-        // A smooth scroll needs painted frames, so a page that isn't on
-        // screen (a background tab, an automated browser) jumps instead.
-        const behavior = prefersReducedMotion() || document.visibilityState !== "visible" ? "auto" : "smooth";
-        const rect = spot;
-        // On a phone the card covers the bottom of the screen, and a tall
-        // element centered loses its top, so both go near the top instead.
-        if (window.innerWidth < PHONE_MAX_WIDTH || rect.height > window.innerHeight * TALL_SHARE) {
-          window.scrollTo({ top: window.scrollY + rect.top - TOP_OFFSET, behavior });
-        } else {
-          el.scrollIntoView({ block: "center", behavior });
-        }
+        scrolledAt = Date.now();
+        scrollToElement(el, false);
+      } else if (
+        scrolled &&
+        !visitorScrolled &&
+        rescrolls < MAX_RESCROLLS &&
+        Date.now() - scrolledAt > RECHECK_AFTER_MS &&
+        !isPlaced(el.getBoundingClientRect().top, window.innerHeight)
+      ) {
+        rescrolls += 1;
+        scrolledAt = Date.now();
+        scrollToElement(el, true);
       }
       const r = el.getBoundingClientRect();
       setBox((prev) =>
@@ -200,13 +215,34 @@ function useTarget(target: string | null, stepIndex: number): Box | null {
     const onMove = () => void measure();
     window.addEventListener("scroll", onMove, { passive: true, capture: true });
     window.addEventListener("resize", onMove);
+    const visitorInputs = ["wheel", "touchmove", "keydown"] as const;
+    for (const type of visitorInputs) window.addEventListener(type, onVisitorScroll, { passive: true });
     measure();
     return () => {
       window.clearInterval(timer);
       window.removeEventListener("scroll", onMove, { capture: true });
       window.removeEventListener("resize", onMove);
+      for (const type of visitorInputs) window.removeEventListener(type, onVisitorScroll);
     };
   }, [target, stepIndex]);
 
   return box;
+}
+
+/**
+ * Brings the element into view: centered, or near the top on a phone (the
+ * card covers the bottom) and for a tall element (centering loses its top).
+ * A re-scroll jumps, so it can't race the page again.
+ */
+function scrollToElement(el: HTMLElement, jump: boolean): void {
+  // A smooth scroll needs painted frames, so a page that isn't on screen (a
+  // background tab, an automated browser) jumps instead.
+  const smooth = !jump && !prefersReducedMotion() && document.visibilityState === "visible";
+  const behavior = smooth ? "smooth" : "auto";
+  const rect = el.getBoundingClientRect();
+  if (window.innerWidth < PHONE_MAX_WIDTH || rect.height > window.innerHeight * TALL_SHARE) {
+    window.scrollTo({ top: window.scrollY + rect.top - TOP_OFFSET, behavior });
+  } else {
+    el.scrollIntoView({ block: "center", behavior });
+  }
 }
