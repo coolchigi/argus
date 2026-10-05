@@ -139,7 +139,7 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
         )}
 
         {data && stage !== "loading" && stage !== "notfound" && (
-          <div className="space-y-8">
+          <div className="space-y-8" data-tour="verify-result">
             <div className="text-center">
               <h1 className="label">{stage === "settled" ? `${copy.title}, verified` : copy.title}</h1>
               <div className="mt-2 fingerprint-lg text-ink-primary">

@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { QueryProvider } from "@/components/query-provider";
 import { AuthProvider } from "@/components/auth-context";
+import { DemoTour } from "@/components/demo-tour";
 import { ThemeProvider, themeInitScript } from "@/components/theme-provider";
 
 // One superfamily for UI, display and IDs. latin-ext covers French accents.
@@ -54,7 +55,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </a>
         <ThemeProvider>
           <QueryProvider>
-            <AuthProvider>{children}</AuthProvider>
+            <AuthProvider>
+              {children}
+              <DemoTour />
+            </AuthProvider>
           </QueryProvider>
         </ThemeProvider>
         <Toaster position="top-right" />

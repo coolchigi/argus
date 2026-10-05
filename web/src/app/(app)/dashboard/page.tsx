@@ -100,20 +100,23 @@ export default function DashboardPage() {
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
         <div className="min-w-0 lg:col-span-2">
-          <RecentEventsTable
-            events={events.data?.events ?? []}
-            loading={events.isPending}
-            error={
-              events.error ? (
-                <InlineError
-                  message="Couldn't load recent policy events."
-                  detail={errorDetail(events.error)}
-                  retrying={events.isFetching}
-                  onRetry={() => void events.refetch()}
-                />
-              ) : undefined
-            }
-          />
+          {/* The column stretches to the activity feed, so the tour marks the table itself. */}
+          <div data-tour="dashboard-events">
+            <RecentEventsTable
+              events={events.data?.events ?? []}
+              loading={events.isPending}
+              error={
+                events.error ? (
+                  <InlineError
+                    message="Couldn't load recent policy events."
+                    detail={errorDetail(events.error)}
+                    retrying={events.isFetching}
+                    onRetry={() => void events.refetch()}
+                  />
+                ) : undefined
+              }
+            />
+          </div>
         </div>
         <div className="min-w-0">
           <ActivityFeed

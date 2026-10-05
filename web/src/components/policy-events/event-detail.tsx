@@ -212,7 +212,7 @@ export function EventDetail({
         </section>
       )}
 
-      <NumberedSection number={1} title="Change summary">
+      <NumberedSection number={1} title="Change summary" tour="event-summary">
         {e ? (
           <div className="space-y-4 border border-hairline bg-card p-5">
             <p className="max-w-[72ch] text-[14px] leading-relaxed text-ink-1">
@@ -246,6 +246,7 @@ export function EventDetail({
       </NumberedSection>
 
       <NumberedSection
+        tour="event-clients"
         number={3}
         title="Affected clients"
         actions={
