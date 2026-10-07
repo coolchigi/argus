@@ -263,16 +263,18 @@ function BriefBody({ brief, severity, archive }: { brief: Brief; severity: Brief
           </div>
         </section>
 
-        <section aria-label="Preview" data-tour="brief-preview" className="overflow-hidden border border-hairline bg-card">
+        <section aria-label="Preview" className="overflow-hidden border border-hairline bg-card">
           <div className="border-b border-hairline px-4 py-2">
             <div className="label">Preview</div>
           </div>
           <div className="space-y-4 p-4 sm:p-6">
-            <div className="border-b border-hairline pb-4">
-              <div className="label">Subject</div>
-              <div className="mt-1 text-[14px] font-medium text-ink-1">{subject || "Untitled"}</div>
+            <div data-tour="brief-draft" className="space-y-4">
+              <div className="border-b border-hairline pb-4">
+                <div className="label">Subject</div>
+                <div className="mt-1 text-[14px] font-medium text-ink-1">{subject || "Untitled"}</div>
+              </div>
+              <article className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink-1">{body || "The body appears here."}</article>
             </div>
-            <article className="whitespace-pre-wrap text-[13px] leading-relaxed text-ink-1">{body || "The body appears here."}</article>
             {actions.length > 0 && (
               <div className="border-t border-hairline pt-4">
                 <div className="label mb-2">Suggested actions</div>

@@ -25,6 +25,8 @@ type Props<T> = {
   rowHref?: (row: T) => string;
   /** Text for the row link, read by screen readers. Defaults to the first cell's content. */
   rowLinkLabel?: (row: T) => string;
+  /** Marks a row for the demo tour ([data-tour]). */
+  rowTour?: (row: T) => string | undefined;
   loading?: boolean;
   placeholderRows?: number;
   empty?: ReactNode;
@@ -40,6 +42,7 @@ export function DataTable<T>({
   caption,
   rowHref,
   rowLinkLabel,
+  rowTour,
   loading = false,
   placeholderRows = 4,
   empty,
@@ -90,6 +93,7 @@ export function DataTable<T>({
               return (
                 <tr
                   key={getRowKey(row)}
+                  data-tour={rowTour?.(row)}
                   className={cn(
                     "border-b border-hairline last:border-0 even:bg-sunk",
                     href && "relative transition-colors hover:bg-brand-subtle/40 focus-within:bg-brand-subtle/40",

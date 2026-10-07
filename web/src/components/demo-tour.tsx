@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useId, useState, useSyncExternalStore } from "react";
 import { X } from "lucide-react";
 import { useAuth } from "@/components/auth-context";
+import { cn } from "@/lib/utils";
 import { isPlaced, samePath, TOUR_STEPS, tourEvent, tourPaths } from "@/lib/demo-tour";
 import { getServerTourState, getTourState, setTourState, subscribeTour } from "@/lib/demo-tour-store";
 import { prefersReducedMotion } from "@/lib/motion";
@@ -13,6 +14,11 @@ import { POLICY_EVENTS_MAX_LIMIT, usePolicyEventImpacts, usePolicyEvents } from 
 // without a highlight.
 const FIND_TIMEOUT_MS = 8000;
 const MEASURE_EVERY_MS = 200;
+const SPOTLIGHT_SHADOW = "0 0 0 9999px rgb(0 0 0 / 0.55)";
+// The card's corner on a wide screen: its width plus margins, and room for
+// its tallest step. A highlight reaching into that corner moves the card left.
+const CARD_CORNER_WIDTH = 392;
+const CARD_CORNER_HEIGHT = 280;
 // Scrolls to the element once it stops moving, or after this long regardless.
 const SETTLE_TIMEOUT_MS = 3000;
 // After a scroll, checks this often that the element stayed in view (a late
@@ -51,9 +57,9 @@ function Tour() {
 
   const index = Math.min(tour.step, TOUR_STEPS.length - 1);
   const step = TOUR_STEPS[index];
-  const path = paths[step.target];
+  const path = paths[step.page];
   const onPage = samePath(pathname, path);
-  const box = useTarget(tour.open && onPage ? step.target : null, index);
+  const box = useTarget(tour.open && onPage ? step.targets : null, index);
 
   const close = useCallback(() => setTourState({ open: false, step: index }), [index]);
 
@@ -68,10 +74,12 @@ function Tour() {
 
   if (!tour.open) return null;
 
+  const cardOnLeft = box !== null && coversCardCorner(box);
+
   const last = index === TOUR_STEPS.length - 1;
   const goTo = (next: number) => {
     setTourState({ open: true, step: next });
-    const nextPath = paths[TOUR_STEPS[next].target];
+    const nextPath = paths[TOUR_STEPS[next].page];
     if (!samePath(pathname, nextPath)) router.push(nextPath);
   };
 
@@ -84,14 +92,20 @@ function Tour() {
           aria-hidden
           data-print="hide"
           className="pointer-events-none fixed z-40 rounded-md border-2 border-brand"
-          style={{ top: box.top - 6, left: box.left - 6, width: box.width + 12, height: box.height + 12 }}
+          // The spotlight: a shadow wide enough to cover the screen dims
+          // everything outside the box. Clicks pass through, so the page
+          // still works during the tour.
+          style={{ top: box.top - 6, left: box.left - 6, width: box.width + 12, height: box.height + 12, boxShadow: SPOTLIGHT_SHADOW }}
         />
       )}
       <div
         role="dialog"
         aria-labelledby={titleId}
         data-print="hide"
-        className="fixed bottom-4 left-4 right-4 z-50 border border-hairline bg-card px-5 py-4 shadow-lg sm:left-auto sm:w-[360px]"
+        className={cn(
+          "fixed bottom-4 left-4 right-4 z-50 border border-hairline bg-card px-5 py-4 shadow-lg sm:w-[360px]",
+          cardOnLeft ? "sm:right-auto" : "sm:left-auto",
+        )}
       >
         <div className="flex items-start justify-between gap-3">
           <div className="label">
@@ -156,12 +170,12 @@ function Tour() {
  * it before the visitor scrolls), then follows it through
  * scrolling, resizing and late layout shifts.
  */
-function useTarget(target: string | null, stepIndex: number): Box | null {
+function useTarget(targets: readonly string[] | null, stepIndex: number): Box | null {
   const [box, setBox] = useState<Box | null>(null);
 
   useEffect(() => {
     setBox(null);
-    if (!target) return;
+    if (!targets) return;
     const started = Date.now();
     let scrolled = false;
     let scrolledAt = 0;
@@ -176,13 +190,15 @@ function useTarget(target: string | null, stepIndex: number): Box | null {
     let lastSpot: string | null = null;
 
     const measure = () => {
-      const el = document.querySelector<HTMLElement>(`[data-tour="${target}"]`);
+      // The most focused target that has rendered. Data loading can swap a
+      // fallback for the focused one, and the settle check below waits that out.
+      const el = targets.map((t) => document.querySelector<HTMLElement>(`[data-tour="${t}"]`)).find((e) => e !== null) ?? null;
       if (!el) {
         setBox(null);
         return Date.now() - started < FIND_TIMEOUT_MS;
       }
       const spot = el.getBoundingClientRect();
-      const here = `${Math.round(spot.top + window.scrollY)}:${Math.round(spot.height)}`;
+      const here = `${el.dataset.tour}:${Math.round(spot.top + window.scrollY)}:${Math.round(spot.height)}`;
       const settled = here === lastSpot || Date.now() - started > SETTLE_TIMEOUT_MS;
       lastSpot = here;
       if (!scrolled && settled) {
@@ -224,7 +240,8 @@ function useTarget(target: string | null, stepIndex: number): Box | null {
       window.removeEventListener("resize", onMove);
       for (const type of visitorInputs) window.removeEventListener(type, onVisitorScroll);
     };
-  }, [target, stepIndex]);
+    // targets comes from TOUR_STEPS, so it keeps its identity for a step.
+  }, [targets, stepIndex]);
 
   return box;
 }
@@ -245,4 +262,10 @@ function scrollToElement(el: HTMLElement, jump: boolean): void {
   } else {
     el.scrollIntoView({ block: "center", behavior });
   }
+}
+
+/** On a wide screen, the highlighted box reaches into the bottom-right corner where the card sits. */
+function coversCardCorner(box: Box): boolean {
+  if (window.innerWidth < PHONE_MAX_WIDTH) return false;
+  return box.left + box.width > window.innerWidth - CARD_CORNER_WIDTH && box.top + box.height > window.innerHeight - CARD_CORNER_HEIGHT;
 }

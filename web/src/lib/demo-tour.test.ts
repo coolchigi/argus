@@ -14,16 +14,16 @@ test("the tour follows the PAL/TAL event, an agent verdict and its brief", () =>
     client({ clientId: "2026-032", assessmentKey: "demo-2#2026-032", canonicalHash: "f300", brief: { briefId: "b2" } as PolicyEventImpact["brief"] }),
   ];
   const paths = tourPaths(events, clients);
-  assert.equal(paths["event-summary"], "/policy-events/e2");
-  assert.equal(paths["impact-lineage"], "/impacts/demo-2%232026-032");
-  assert.equal(paths["brief-preview"], "/briefs/b2");
-  assert.equal(paths["verify-result"], "/verify/f300");
+  assert.equal(paths.event, "/policy-events/e2");
+  assert.equal(paths.impact, "/impacts/demo-2%232026-032");
+  assert.equal(paths.brief, "/briefs/b2");
+  assert.equal(paths.verify, "/verify/f300");
 });
 
 test("missing demo data sends each step to its list page", () => {
   const paths = tourPaths([], []);
   assert.deepEqual(
-    TOUR_STEPS.map((s) => paths[s.target]),
+    TOUR_STEPS.map((s) => paths[s.page]),
     ["/dashboard", "/policy-events", "/policy-events", "/impacts", "/impacts", "/briefs", "/verify"],
   );
 });
@@ -43,4 +43,9 @@ test("an element pushed below or above the screen isn't placed, so the tour scro
   assert.equal(isPlaced(-120, 900), false);
   assert.ok(isPlaced(295, 900));
   assert.ok(isPlaced(66, 812));
+});
+
+test("every step names at least one target, most focused first", () => {
+  for (const step of TOUR_STEPS) assert.ok(step.targets.length > 0, step.title);
+  assert.deepEqual(TOUR_STEPS[0].targets, ["dashboard-event", "dashboard-events"]);
 });
