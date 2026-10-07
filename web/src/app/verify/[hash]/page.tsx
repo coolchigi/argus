@@ -139,7 +139,7 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
         )}
 
         {data && stage !== "loading" && stage !== "notfound" && (
-          <div className="space-y-8" data-tour="verify-result">
+          <div className="space-y-8">
             <div className="text-center">
               <h1 className="label">{stage === "settled" ? `${copy.title}, verified` : copy.title}</h1>
               <div className="mt-2 fingerprint-lg text-ink-primary">
@@ -176,6 +176,7 @@ export default function PublicVerifyPage({ params }: { params: Promise<{ hash: s
 
             {/* A printout keeps the result once there is one, and drops a bare button. */}
             <div
+              data-tour="verify-check"
               className="rounded-lg border border-border bg-surface px-5 py-6 sm:px-8"
               data-print={stage === "settled" || stage === "invalid" ? undefined : "hide"}
             >
