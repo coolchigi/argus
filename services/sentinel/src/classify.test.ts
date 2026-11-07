@@ -12,7 +12,7 @@ const SPOUSAL_URL =
   'https://www.canada.ca/en/immigration-refugees-citizenship/services/work-canada/permit/temporary/open-work-permit-spouses-dependent-children/eligibility.html';
 
 function textBlocks(pageText = 'page text') {
-  const req = buildClassifierRequest({ modelId: 'us.test-model', url: SPOUSAL_URL, pageText });
+  const req = buildClassifierRequest({ modelId: 'us.test-model', url: SPOUSAL_URL, changeText: pageText });
   const content = req.messages?.[0]?.content ?? [];
   return { req, content };
 }
@@ -71,13 +71,13 @@ describe('classifier prompt', () => {
   });
 
   it('sets maxTokens and passes the guardrail through only when configured', () => {
-    const plain = buildClassifierRequest({ modelId: 'us.m', url: SPOUSAL_URL, pageText: 'p' });
+    const plain = buildClassifierRequest({ modelId: 'us.m', url: SPOUSAL_URL, changeText: 'p' });
     assert.equal(plain.inferenceConfig?.maxTokens, 512);
     assert.equal(plain.guardrailConfig, undefined);
     const withGuard = buildClassifierRequest({
       modelId: 'us.m',
       url: SPOUSAL_URL,
-      pageText: 'p',
+      changeText: 'p',
       guardrailConfig: { guardrailIdentifier: 'g1', guardrailVersion: '3', trace: 'enabled' },
     });
     assert.deepEqual(withGuard.guardrailConfig, { guardrailIdentifier: 'g1', guardrailVersion: '3', trace: 'enabled' });
