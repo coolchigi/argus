@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { checkBriefVoice, checkDraftVoice, withoutClientId } from './voice.ts';
+import { checkAgencyVoice, checkBriefVoice, checkDraftVoice, inThirdPerson, withCitation, withoutClientId } from './voice.ts';
 
 // The live draft Composer wrote for client 2026-042 on the PGP pause.
 const LIVE_BAD =
@@ -122,5 +122,45 @@ describe('withoutClientId', () => {
 
   it('returns the text unchanged for a blank id', () => {
     assert.equal(withoutClientId('c1 loses 6 points', ''), 'c1 loses 6 points');
+  });
+});
+
+describe('IRCC in the first person', () => {
+  const RULE = "During this time we'll pause invitation rounds and will start again when it's complete. Our online system will not yet reflect that change.";
+
+  it("flags the sentence from the Oct 16 C-103 brief, where IRCC's we reads as the consultant", () => {
+    assert.deepEqual(checkAgencyVoice("During this time we'll pause invitation rounds and will start again when it's complete.", RULE), ['agency-first-person']);
+  });
+
+  it('flags IRCC wording with the contraction expanded, as another Oct 16 brief wrote it', () => {
+    assert.deepEqual(checkAgencyVoice('During this time, we will pause invitation rounds.', RULE), ['agency-first-person']);
+  });
+
+  it("leaves the consultant's own we alone", () => {
+    assert.deepEqual(checkAgencyVoice('I recommend we hold your file as it is.', RULE), []);
+  });
+
+  it('names IRCC wherever the page speaks in the first person', () => {
+    assert.equal(inThirdPerson("We're changing how we assess offers, and we'll pause rounds. Our system waits."), "IRCC is changing how IRCC assess offers, and IRCC will pause rounds. IRCC's system waits.");
+  });
+
+  it('leaves words that only contain we, our or us alone', () => {
+    const text = 'Your hours in the US were well answered, and we';
+    assert.equal(inThirdPerson(text), 'Your hours in the US were well answered, and IRCC');
+  });
+});
+
+describe('withCitation', () => {
+  it('adds the link when the body has none', () => {
+    assert.equal(withCitation('You no longer need an LMIA.', 'https://www.canada.ca/x'), "You no longer need an LMIA.\n\n[IRCC's notice](https://www.canada.ca/x)");
+  });
+
+  it('leaves a body that already links the citation', () => {
+    const body = '[Learn more](https://www.canada.ca/x) about the change.';
+    assert.equal(withCitation(body, 'https://www.canada.ca/x'), body);
+  });
+
+  it('leaves the body when there is no citation to add', () => {
+    assert.equal(withCitation('Body', undefined), 'Body');
   });
 });

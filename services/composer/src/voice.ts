@@ -11,8 +11,10 @@
 // A fourth came from brief 58366b94 (client 2026-032, 2026-09-30): "Your
 // program starts on [start date]". The start date wasn't in Composer's inputs,
 // so the model wrote a template slot, and the client would read it as is.
+// A fifth came from brief 88d1df46 (client C-103, 2026-10-16): IRCC's "we'll pause
+// invitation rounds", copied into an email the consultant signs.
 
-export type VoiceFinding = 'your-client' | 'client-id' | 'internal-term' | 'placeholder';
+export type VoiceFinding = 'your-client' | 'client-id' | 'internal-term' | 'placeholder' | 'agency-first-person';
 
 const YOUR_CLIENT = /\byour\s+client(?:'s|s)?\b/i;
 // "the rule" and "the assessment" as things the reader is meant to know
@@ -74,6 +76,57 @@ export function checkDraftVoice(
     findings.push('placeholder');
   }
   return findings;
+}
+
+function firstPersonForm(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[‘’]/g, "'")
+    .replace(/\bwe'll\b/g, 'we will')
+    .replace(/\bwe're\b/g, 'we are')
+    .replace(/\bwe've\b/g, 'we have')
+    .replace(/\s+/g, ' ');
+}
+
+/**
+ * IRCC's first person copied into a draft. Only wording found in the rule text
+ * counts, since "I recommend we hold your file" is the consultant speaking.
+ */
+export function checkAgencyVoice(text: string, ruleText: string): VoiceFinding[] {
+  const rule = firstPersonForm(ruleText);
+  for (const m of firstPersonForm(text).matchAll(/\b(?:we|our)\b(?: [\w'-]+){1,3}/g)) {
+    if (rule.includes(m[0])) return ['agency-first-person'];
+  }
+  return [];
+}
+
+/**
+ * IRCC's text with IRCC named in place of its first person. Only ever used for
+ * what Composer reads. The stored rule keeps IRCC's own words.
+ */
+export function inThirdPerson(text: string): string {
+  return text
+    .replace(/\bwe['’]ll\b/gi, 'IRCC will')
+    .replace(/\bwe will\b/gi, 'IRCC will')
+    .replace(/\bwe['’]re\b/gi, 'IRCC is')
+    .replace(/\bwe are\b/gi, 'IRCC is')
+    .replace(/\bwe['’]ve\b/gi, 'IRCC has')
+    .replace(/\bwe have\b/gi, 'IRCC has')
+    .replace(/\bwe don['’]t\b/gi, "IRCC doesn't")
+    .replace(/\bwe do not\b/gi, 'IRCC does not')
+    .replace(/\bwe\b/gi, 'IRCC')
+    .replace(/\bour\b/gi, "IRCC's")
+    .replace(/\bus\b/g, 'IRCC');
+}
+
+/**
+ * The body with its citation. The prompt asks for the link, but the model often
+ * leaves it out, as the Oct 16 C-103 brief did, and a client should always be able
+ * to check the source.
+ */
+export function withCitation(body: string, url: string | undefined): string {
+  if (!url || body.includes(url)) return body;
+  return `${body.trimEnd()}\n\n[IRCC's notice](${url})`;
 }
 
 /**

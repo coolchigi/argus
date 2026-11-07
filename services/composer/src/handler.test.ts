@@ -46,6 +46,11 @@ type Request = {
 let handler: Handler;
 let buildComposeRequest: (assessment: unknown, ruleContent: string) => Request;
 let logLines: Record<string, unknown>[] = [];
+let ruleChangesText: string | null = null;
+// The code appends this when the model leaves the citation out, and nothing else.
+const cited = (body: string, url: unknown) => `${body}\n\n[IRCC's notice](${url})`;
+const insertedUrl = (a: object) => (a as { citationSourceUrl?: unknown }).citationSourceUrl ?? 'https://www.canada.ca/x';
+let lastComposeRequest: Request | undefined;
 
 before(async () => {
   mkdirSync(outDir, { recursive: true });
@@ -71,7 +76,7 @@ before(async () => {
     const input = cmd.input as { TableName: string; Item: Item; Key: Item; ConditionExpression?: string; ConsistentRead?: boolean };
     const findBrief = (key: Item) => briefs.find((b) => b.rcicId === key.rcicId && b.briefId === key.briefId);
     if (cmd instanceof GetCommand && input.TableName === 'rules') {
-      return ruleMissing ? {} : { Item: { rule_hash: 'h1', rule_content: ruleContent, severity: 'high' } };
+      return ruleMissing ? {} : { Item: { rule_hash: 'h1', rule_content: ruleContent, severity: 'high', ...(ruleChangesText ? { rule_changes: { text: ruleChangesText } } : {}) } };
     }
     if (cmd instanceof GetCommand && input.TableName === 'briefs') {
       assert.equal(input.ConsistentRead, true, 'the brief read must be strongly consistent');
@@ -114,7 +119,8 @@ before(async () => {
     }
     throw new Error(`unexpected command ${cmd.constructor.name}`);
   };
-  (BedrockRuntimeClient.prototype as { send: unknown }).send = async () => {
+  (BedrockRuntimeClient.prototype as { send: unknown }).send = async (cmd: { input: Request }) => {
+    lastComposeRequest = cmd.input;
     bedrockCalls += 1;
     if (bedrockError) {
       const err = bedrockError;
@@ -278,7 +284,7 @@ describe('Composer brief voice', () => {
     const res = await compose([insert(pgp)]);
     assert.deepEqual(res.batchItemFailures, []);
     assert.equal(briefs.length, 1);
-    assert.equal(briefs[0].bodyMarkdown, body);
+    assert.equal(briefs[0].bodyMarkdown, cited(body, insertedUrl(pgp)));
     const warn = logLines.find((l) => l.msg === 'composer-voice-check');
     assert.ok(warn, 'expected a composer-voice-check log line');
     assert.equal(warn.level, 'warn');
@@ -351,7 +357,7 @@ describe('Composer brief voice', () => {
       await compose([insert(pgp)]);
       assert.equal(briefs.length, 1);
       const body = String(briefs[0].bodyMarkdown);
-      assert.equal(body, 'the client cannot submit a new interest to sponsor form while PGP intake is paused.');
+      assert.equal(body, cited('the client cannot submit a new interest to sponsor form while PGP intake is paused.', insertedUrl(pgp)));
       assert.doesNotMatch(body, /2026-042/);
       const actions = briefs[0].suggestedActions as string[];
       if (!('suggestedActions' in reply) || reply.suggestedActions === null) {
@@ -482,7 +488,7 @@ describe('Composer grounding', () => {
     modelReply = JSON.stringify({ subject: 'PAL/TAL exemption', bodyMarkdown: palBrief, suggestedActions: ['Include proof of the exemption.'] });
     const res = await compose([insert(review)]);
     assert.deepEqual(res.batchItemFailures, []);
-    assert.equal(briefs[0].bodyMarkdown, palBrief);
+    assert.equal(briefs[0].bodyMarkdown, cited(palBrief, insertedUrl(review)));
     const warn = logLines.find((l) => l.msg === 'composer-grounding-check');
     assert.equal(warn?.level, 'warn');
     assert.deepEqual(warn?.findings, [
@@ -525,7 +531,7 @@ describe('Composer grounding', () => {
     modelReply = JSON.stringify({ subject: 'Your PAL/TAL', bodyMarkdown: body, suggestedActions: [] });
     const res = await compose([insert({ ...live, clientId: '2026-032', assessmentKey: 'pe1#2026-032', topic: 'pal-tal' })]);
     assert.deepEqual(res.batchItemFailures, []);
-    assert.equal(briefs[0].bodyMarkdown, body);
+    assert.equal(briefs[0].bodyMarkdown, cited(body, insertedUrl(live)));
     const warn = logLines.find((l) => l.msg === 'composer-grounding-check');
     assert.equal(warn?.level, 'warn');
     assert.deepEqual(warn?.findings, [{ kind: 'modality-strengthened', value: 'must / in some cases' }]);
@@ -654,5 +660,127 @@ describe('Composer stream retries', () => {
     const res = await compose([insert({}, '431')]);
     assert.deepEqual(failuresOf(res), []);
     assert.equal(permanentLog()?.reason, 'model-output-unusable');
+  });
+});
+
+// Real wording from IRCC's job offer page as captured Oct 16 2026 (rule
+// d3fd0668). The academic bullet is older text the change left in place, and it
+// reached a client email as advice to confirm an exemption (brief 88d1df46).
+const PAGE_WITH_OLDER_TEXT = [
+  '## Job offer basics',
+  '### Changes to how we assess jobs offers',
+  "As of November 3, 2026, we're changing how we assess job offers under Express Entry:",
+  "- you don't need a Labour Market Impact Assessment (LMIA) for a job offer to qualify",
+  "- During this time we'll pause invitation rounds and will start again when it's complete.",
+  '## Who needs an LMIA',
+  '- academics (researchers, lecturers, and professors) under a recognized federal program',
+].join('\n');
+const CHANGED_LINES = [
+  'CHANGES TO THIS IRCC PAGE',
+  'Page: https://www.canada.ca/x',
+  'Detected: 2026-10-16',
+  '',
+  'LINES ADDED TO THE PAGE',
+  'Section: Job offer basics > Changes to how we assess jobs offers',
+  "As of November 3, 2026, we're changing how we assess job offers under Express Entry:",
+  "- you don't need a Labour Market Impact Assessment (LMIA) for a job offer to qualify",
+  "- During this time we'll pause invitation rounds and will start again when it's complete.",
+  '',
+  'LINES REMOVED FROM THE PAGE',
+  'Section: Job offer basics',
+  'We no longer give points for job offers',
+].join('\n');
+
+describe('Composer reads what changed on the page', () => {
+  const draftWith = (body: string) => JSON.stringify({ subject: 'Job offers', bodyMarkdown: body, suggestedActions: ['Check your profile'] });
+
+  it('drafts from the changed lines only, so older text left on the page cannot reach the email', async () => {
+    ruleContent = PAGE_WITH_OLDER_TEXT;
+    ruleChangesText = CHANGED_LINES;
+    modelReply = draftWith('IRCC is changing how it assesses job offers.');
+    try {
+      await compose([insert({ assessmentKey: 'changes#c1' })]);
+    } finally {
+      ruleChangesText = null;
+    }
+    assert.ok(lastComposeRequest, 'the handler called Bedrock');
+    const sent = promptText(lastComposeRequest);
+    assert.doesNotMatch(sent, /recognized federal program/);
+    assert.match(sent, /you don't need a Labour Market Impact Assessment/);
+    assert.match(sent, /Paragraph 1 describes what changed/);
+  });
+
+  it("rewrites IRCC's first person before the model reads it, so the consultant never says IRCC's \"we\"", () => {
+    const sent = promptText(buildComposeRequest(assessmentFor(), PAGE_WITH_OLDER_TEXT));
+    assert.match(sent, /IRCC will pause invitation rounds/);
+    assert.doesNotMatch(sent, /we'll pause invitation rounds/);
+  });
+
+  it('adds the citation link when the model leaves it out, as the Oct 16 C-103 brief did', async () => {
+    modelReply = draftWith('You no longer need an LMIA.');
+    await compose([insert({ assessmentKey: 'cite-missing#c1' })]);
+    const body = String(briefs.find((b) => b.assessmentKey === 'cite-missing#c1')?.bodyMarkdown);
+    assert.equal(body.split('https://www.canada.ca/x').length - 1, 1);
+    assert.match(body, /\]\(https:\/\/www\.canada\.ca\/x\)/);
+  });
+
+  describe('a change that only removed text', () => {
+    const REMOVAL_ONLY = ['CHANGES TO THIS IRCC PAGE', 'Page: https://www.canada.ca/x', 'Detected: 2026-11-07', '', 'LINES ADDED TO THE PAGE', '(none)', '', 'LINES REMOVED FROM THE PAGE', 'Section: Job offer', '(unchanged lead-in) As of November 3, we changed how we assess job offers:', "- You don't need a Labour Market Impact Assessment (LMIA) for a job offer to qualify."].join('\n');
+
+    async function draftFor(text: string, key: string) {
+      ruleContent = PAGE_WITH_OLDER_TEXT;
+      ruleChangesText = text;
+      lastComposeRequest = undefined;
+      modelReply = draftWith('You no longer need an LMIA.');
+      try {
+        await compose([insert({ assessmentKey: key })]);
+      } finally {
+        ruleChangesText = null;
+      }
+      return briefs.find((b) => b.assessmentKey === key) as { bodyMarkdown: string; subject: string; suggestedActions: string[] };
+    }
+
+    it('quotes what went and asks no model, because the model read it backwards', async () => {
+      const brief = await draftFor(REMOVAL_ONLY, 'removal#c1');
+      assert.equal(lastComposeRequest, undefined);
+      assert.equal(brief.bodyMarkdown, [
+        "IRCC's page no longer includes this wording:",
+        '',
+        "- You don't need a Labour Market Impact Assessment (LMIA) for a job offer to qualify.",
+        '',
+        "I'm checking what this means for your file and will follow up with you.",
+        '',
+        "[IRCC's notice](https://www.canada.ca/x)",
+      ].join('\n'));
+      assert.doesNotMatch(brief.bodyMarkdown, /unchanged lead-in|Section:/);
+    });
+
+    it('names IRCC where its removed wording says "we", and caps a long removal', async () => {
+      const lines = Array.from({ length: 12 }, (_, i) => `- we pause rounds ${i}`);
+      const brief = await draftFor(['CHANGES TO THIS IRCC PAGE', '', 'LINES ADDED TO THE PAGE', '(none)', '', 'LINES REMOVED FROM THE PAGE', 'Section: A', ...lines].join('\n'), 'removal#c2');
+      assert.match(brief.bodyMarkdown, /- IRCC pause rounds 0/);
+      assert.doesNotMatch(brief.bodyMarkdown, /rounds 10/);
+      assert.match(brief.bodyMarkdown, /- and 2 more lines/);
+    });
+
+    it('quotes a line that starts with a bracket, and a removed heading with nothing under it', async () => {
+      const head = ['CHANGES TO THIS IRCC PAGE', '', 'LINES ADDED TO THE PAGE', '(none)', '', 'LINES REMOVED FROM THE PAGE'];
+      const bracket = await draftFor([...head, 'Section: A', '(Effective 2026) You must file by mail.'].join('\n'), 'removal#c4');
+      assert.match(bracket.bodyMarkdown, /- \(Effective 2026\) You must file by mail\./);
+      const heading = await draftFor([...head, 'Section: Page > Fee waivers'].join('\n'), 'removal#c5');
+      assert.match(heading.bodyMarkdown, /- Page > Fee waivers/);
+    });
+
+    it('still asks the model when anything was added', async () => {
+      await draftFor(CHANGED_LINES, 'removal#c3');
+      assert.ok(lastComposeRequest, 'the handler called Bedrock');
+    });
+  });
+
+  it('leaves the body alone when the model already linked the citation', async () => {
+    const linked = "You no longer need an LMIA. [IRCC's notice](https://www.canada.ca/x)";
+    modelReply = draftWith(linked);
+    await compose([insert({ assessmentKey: 'cite-present#c1' })]);
+    assert.equal(briefs.find((b) => b.assessmentKey === 'cite-present#c1')?.bodyMarkdown, linked);
   });
 });

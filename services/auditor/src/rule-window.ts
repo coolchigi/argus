@@ -77,7 +77,7 @@ export function ruleWindow(ruleContent: string, profile?: Record<string, unknown
   return parts.join('\n').slice(0, maxChars);
 }
 
-function profileNeedles(profile?: Record<string, unknown>): string[] {
+export function profileNeedles(profile?: Record<string, unknown>): string[] {
   if (!profile) return [];
   const out: string[] = [];
   for (const [k, v] of Object.entries(profile)) {
