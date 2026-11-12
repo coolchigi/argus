@@ -75,6 +75,7 @@ type ClientProfile = {
   teerLevel?: number;
   hasJobOffer?: boolean;
   jobOfferTeer?: number;
+  jobOfferHasLmia?: boolean;
   currentCrsScore?: number;
   principalPermitTeer?: number;
   principalPermitRemainingMonths?: number;

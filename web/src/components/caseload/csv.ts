@@ -22,6 +22,7 @@ export const OPTIONAL_COLUMNS = [
   "teer_level",
   "has_job_offer",
   "job_offer_teer",
+  "job_offer_has_lmia",
   "current_crs_score",
   "principal_permit_teer",
   "principal_permit_remaining_months",
