@@ -135,6 +135,17 @@ describe('rows', () => {
     assert.ok(res.ok);
     assert.deepEqual(res.profile.attributes, { age: 29, currentCrsScore: 489, hasJobOffer: false, teerLevel: 1, canadianWorkYears: 0.5 });
   });
+
+  it('takes whether the job offer has an LMIA, and refuses an LMIA number in its place', () => {
+    const yes = validateRow({ ...good, has_job_offer: 'yes', job_offer_has_lmia: 'no' });
+    assert.ok(yes.ok);
+    assert.deepEqual(yes.profile.attributes, { hasJobOffer: true, jobOfferHasLmia: false });
+    for (const lmiaNumber of ['00000', '1234567', 'A1234567']) {
+      const res = validateRow({ ...good, job_offer_has_lmia: lmiaNumber });
+      assert.ok(!res.ok);
+      assert.deepEqual(res.errors, ['job_offer_has_lmia-must-be-true-or-false']);
+    }
+  });
 });
 
 describe('patch', () => {
