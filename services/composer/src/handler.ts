@@ -6,7 +6,7 @@ import { unmarshall } from '@aws-sdk/util-dynamodb';
 import type { DynamoDBBatchItemFailure, DynamoDBBatchResponse, DynamoDBStreamEvent, DynamoDBRecord } from 'aws-lambda';
 import { randomUUID } from 'node:crypto';
 import { briefIdFor, classifyFailure, PermanentError } from './delivery';
-import { describeGuardrailBlock, guarded } from './guardrail';
+import { describeGuardrailBlock, describeGuardrailDetections, guarded } from './guardrail';
 import { removalDraft } from './removal-draft';
 import { isChangesText, isRemovalOnly, READING_CHANGES, ruleTextFor } from './rule-input';
 import { ruleWindow } from './rule-window';
@@ -448,6 +448,8 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
     });
     throw new PermanentError('guardrail-blocked', `guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
   }
+  const detected = describeGuardrailDetections(res);
+  if (detected.length > 0) log('warn', 'guardrail-detected', { runId, agent: 'composer', assessmentKey: assessment.assessmentKey, clientId: assessment.clientId, ruleHash: assessment.ruleHash, policies: detected });
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);

@@ -85,6 +85,7 @@ export const PROFILE_FIELDS: readonly ProfileField[] = [
   { attr: "foreignWorkYears", column: "foreign_work_years", label: "Foreign work, years", input: YEARS, programs: EE },
   { attr: "hasJobOffer", column: "has_job_offer", label: "Job offer", input: { kind: "bool" }, programs: EE },
   { attr: "jobOfferTeer", column: "job_offer_teer", label: "Job offer TEER", input: TEER, programs: EE },
+  { attr: "jobOfferHasLmia", column: "job_offer_has_lmia", label: "Job offer has LMIA", input: { kind: "bool" }, programs: EE },
   { attr: "principalPermitTeer", column: "principal_permit_teer", label: "Principal permit TEER", input: TEER, programs: ["sowp"] },
   {
     attr: "principalPermitRemainingMonths",

@@ -78,6 +78,8 @@ export type ClientProfile = {
   teerLevel?: number;
   hasJobOffer?: boolean;
   jobOfferTeer?: number;
+  /** Whether the job offer is supported by a positive LMIA. Blank means not known. */
+  jobOfferHasLmia?: boolean;
   currentCrsScore?: number;
   principalPermitTeer?: number;
   principalPermitRemainingMonths?: number;
