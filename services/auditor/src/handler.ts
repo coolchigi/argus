@@ -10,6 +10,7 @@ import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-d
 import { randomUUID } from 'node:crypto';
 import { AFFECTED_DEFINITION } from './affected';
 import { describeGuardrailBlock, guarded, type GroundingCheck } from './guardrail';
+import { isChangesText, isRemovalOnly, READING_CHANGES, ruleTextFor } from './rule-input';
 import { ruleWindow } from './rule-window';
 import { stanceContradictsReason } from './stance-check';
 import { elapsedMs, recordStep } from './telemetry';
@@ -142,7 +143,7 @@ async function runAudit(
   });
 
   const [ruleContent, fewShots] = await Promise.all([
-    loadRuleContent(hyp.ruleHash),
+    loadRuleContent(hyp.ruleHash, hyp.clientProfile),
     loadRecentCorrections(hyp.rcicId, hyp.policyDomain, hyp.topic),
   ]);
   onFewShots(fewShots.flatMap((c) => (typeof c.correctionKey === 'string' && c.correctionKey ? [c.correctionKey] : [])));
@@ -183,10 +184,9 @@ async function runAudit(
   return { passed: verdict.passed };
 }
 
-async function loadRuleContent(ruleHash: string): Promise<string> {
+async function loadRuleContent(ruleHash: string, profile?: Record<string, unknown>): Promise<string> {
   const res = await ddb.send(new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash } }));
-  const content = res.Item?.rule_content;
-  return typeof content === 'string' ? content : '';
+  return ruleTextFor(res.Item, profile);
 }
 
 // One TrainingCorrections row, as impacts-service writes it. The original
@@ -277,6 +277,7 @@ export function buildAuditRequest(hyp: ImpactHypothesis, ruleContent: string, fe
     '',
     'The Analyst decided isAffected by this definition. Judge it by the same one.',
     AFFECTED_DEFINITION,
+    ...(isChangesText(snippet) ? ['', READING_CHANGES, '- Judge only against these lines and the client profile. Do not flag a claim because the rest of the page is not shown.'] : []),
   ];
 
   if (fewShots.length > 0) {
@@ -439,6 +440,38 @@ export function groundingEvidence(check: GroundingCheck | undefined): string {
   return lines.join('\n');
 }
 
+// Anchor drops a failed verdict, so a change that only removed text would reach
+// nobody. The Auditor failed 9 of 10 such runs on the real job offer page because the
+// rule as it stands now isn't among the changed lines, and a prompt line telling it
+// not to changed nothing (9 of 10 again, measured 2026-11-07). So when the Analyst
+// flagged the client, fixed wording goes forward at low confidence, with the Auditor's
+// objections and stance signed beside it, and a consultant decides. Fixed, since a
+// rejected reading of a removal can be backwards.
+export function auditOutcome(
+  parsed: Partial<AuditVerdict>,
+  hyp: ImpactHypothesis,
+  ruleContent: string,
+): Pick<AuditVerdict, 'passed' | 'correctedNumericDelta' | 'correctedImpactType' | 'correctedNarrative' | 'correctedRecommendedAction' | 'correctedConfidence'> {
+  if (!parsed.passed && hyp.isAffected && isRemovalOnly(ruleContent)) {
+    return {
+      passed: true,
+      correctedNumericDelta: hyp.numericDelta,
+      correctedImpactType: hyp.impactType,
+      correctedNarrative: `IRCC's page no longer includes wording that may apply to ${hyp.clientId}, and the rule as it stands now wasn't checked.`,
+      correctedRecommendedAction: "Read the IRCC page and check this client's file against it.",
+      correctedConfidence: 'low',
+    };
+  }
+  return {
+    passed: parsed.passed ?? false,
+    correctedNumericDelta: parsed.correctedNumericDelta ?? hyp.numericDelta,
+    correctedImpactType: (parsed.correctedImpactType ?? hyp.impactType) as ImpactType,
+    correctedNarrative: parsed.correctedNarrative ?? hyp.narrative,
+    correctedRecommendedAction: parsed.correctedRecommendedAction ?? hyp.recommendedAction,
+    correctedConfidence: (parsed.correctedConfidence ?? hyp.confidence) as Confidence,
+  };
+}
+
 async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[], runId: string): Promise<AuditVerdict> {
   const res = await bedrock.send(new ConverseCommand(buildAuditRequest(hyp, ruleContent, fewShots)));
 
@@ -470,6 +503,8 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
   }
   const parsed = JSON.parse(match[0]) as Partial<AuditVerdict>;
   const stance = checkStance(readStance(parsed), hyp, runId);
+  const outcome = auditOutcome(parsed, hyp, ruleContent);
+  if (outcome.passed && !parsed.passed) log('info', 'audit-removal-kept-for-consultant', { runId, hypothesisId: hyp.hypothesisId, clientId: hyp.clientId, ruleHash: hyp.ruleHash });
 
   return {
     verdictId: randomUUID(),
@@ -479,13 +514,8 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     clientId: hyp.clientId,
     policyEventId: hyp.policyEventId,
     ruleHash: hyp.ruleHash,
-    passed: parsed.passed ?? false,
     issues: (parsed.issues ?? []) as AuditIssue[],
-    correctedNumericDelta: parsed.correctedNumericDelta ?? hyp.numericDelta,
-    correctedImpactType: (parsed.correctedImpactType ?? hyp.impactType) as ImpactType,
-    correctedNarrative: parsed.correctedNarrative ?? hyp.narrative,
-    correctedRecommendedAction: parsed.correctedRecommendedAction ?? hyp.recommendedAction,
-    correctedConfidence: (parsed.correctedConfidence ?? hyp.confidence) as Confidence,
+    ...outcome,
     auditorReasoning: parsed.auditorReasoning ?? '(no reasoning)',
     ...stance,
     originalHypothesis: hyp,

@@ -1,9 +1,10 @@
 import { BedrockRuntimeClient, ConverseCommand } from '@aws-sdk/client-bedrock-runtime';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge';
-import { DynamoDBDocumentClient, PutCommand } from '@aws-sdk/lib-dynamodb';
+import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { createHash, randomUUID } from 'node:crypto';
+import { hasChanges, ruleChanges, type RuleChanges } from './changes';
 import { buildClassifierRequest, parseClassification, type Category, type Classification, type RuleKind, type Severity } from './classify';
 import { extractMainText } from './extract';
 import { describeGuardrailBlock } from './guardrail';
@@ -173,7 +174,26 @@ async function scanOne(url: string, runId: string, targetRcicIds?: string[]): Pr
       return { url, changed: false, hash: newHash };
     }
 
-    const classification = await classifyWithBedrock(url, text, runId);
+    // What the agents and the classifier read. Both sides go through the same
+    // extractor here, so a change to the extractor can't read as a change to the
+    // page.
+    const changes = ruleChanges({
+      previousText: extractMainText(previous, { keepListDepth: true }),
+      text: extractMainText(html, { keepListDepth: true }),
+      previousHash,
+      sourceUrl: url,
+      detectedAt: new Date().toISOString(),
+    });
+
+    // Quote style, spacing or list order only. Keep the snapshot so the archive
+    // stays complete, but no client needs telling.
+    if (!hasChanges(changes)) {
+      await writeSnapshot(s3Key, html);
+      log('info', 'no-real-change', { runId, url, hash: newHash, previousHash });
+      return { url, changed: false, hash: newHash };
+    }
+
+    const classification = await classifyWithBedrock(url, changes.text, runId);
     const ruleHash = newHash;
 
     // Snapshot only after classification succeeds. If Bedrock fails or the
@@ -181,7 +201,7 @@ async function scanOne(url: string, runId: string, targetRcicIds?: string[]): Pr
     // sees the change again.
     const versionId = await writeSnapshot(s3Key, html);
 
-    await writePolicyRule(ruleHash, classification, url, s3Key, versionId, text);
+    await writePolicyRule(ruleHash, classification, url, s3Key, versionId, text, changes);
     await writeRuleIndex(classification.topic, ruleHash);
 
     const delta: PolicyDelta = {
@@ -224,6 +244,11 @@ async function scanOne(url: string, runId: string, targetRcicIds?: string[]): Pr
       previousHash,
       newHash,
       contentLengthDelta: delta.contentLengthDelta,
+      addedLines: changes.added_lines,
+      removedLines: changes.removed_lines,
+      movedLines: changes.moved_lines,
+      reorderedLines: changes.reordered_lines,
+      changesTruncated: changes.truncated,
       targetRcicCount: targetRcicIds?.length ?? null,
     });
     return { url, changed: true, delta };
@@ -251,9 +276,9 @@ async function fetchWithTimeout(url: string): Promise<string> {
   }
 }
 
-async function classifyWithBedrock(url: string, pageText: string, runId: string): Promise<Classification> {
+async function classifyWithBedrock(url: string, changeText: string, runId: string): Promise<Classification> {
   const res = await bedrock.send(
-    new ConverseCommand(buildClassifierRequest({ modelId: CLASSIFIER_MODEL, url, pageText, guardrailConfig: guardrailConfig() })),
+    new ConverseCommand(buildClassifierRequest({ modelId: CLASSIFIER_MODEL, url, changeText, guardrailConfig: guardrailConfig() })),
     { abortSignal: AbortSignal.timeout(CLASSIFY_TIMEOUT_MS) },
   );
 
@@ -294,6 +319,7 @@ async function writePolicyRule(
   sourceS3Key: string,
   sourceS3VersionId: string | null,
   ruleContent: string,
+  changes: RuleChanges,
 ): Promise<void> {
   try {
     await ddb.send(
@@ -308,6 +334,7 @@ async function writePolicyRule(
           severity: cls.severity,
           summary: cls.summary,
           rule_content: ruleContent,
+          rule_changes: changes,
           source_url: sourceUrl,
           source_s3_key: sourceS3Key,
           source_s3_version_id: sourceS3VersionId,
@@ -318,6 +345,17 @@ async function writePolicyRule(
     );
   } catch (err) {
     if ((err as { name?: string }).name === 'ConditionalCheckFailedException') {
+      // The page went back to text already stored. The row keeps its content,
+      // and rule_changes now describes this arrival, the one the agents are
+      // about to read.
+      await ddb.send(
+        new UpdateCommand({
+          TableName: POLICY_RULES_TABLE,
+          Key: { rule_hash: ruleHash },
+          UpdateExpression: 'SET rule_changes = :changes',
+          ExpressionAttributeValues: { ':changes': changes },
+        }),
+      );
       return;
     }
     throw err;

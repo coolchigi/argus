@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { before, beforeEach, describe, it, mock } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -21,6 +21,7 @@ type Item = Record<string, unknown>;
 const puts: Array<{ TableName: string; Item: Item; ConditionExpression?: string }> = [];
 const signed: Buffer[] = [];
 let auditTrailFails = false;
+let ruleRowExtra: Item = {};
 
 type Handler = (event: unknown) => Promise<{ anchored: boolean }>;
 let handler: Handler;
@@ -47,7 +48,7 @@ before(async () => {
 
   (DynamoDBDocumentClient.prototype as { send: unknown }).send = async (cmd: { input: Item }) => {
     if (cmd instanceof GetCommand) {
-      return { Item: { rule_hash: 'h1', source_url: 'https://www.canada.ca/x', source_s3_key: 'snapshots/x.html' } };
+      return { Item: { rule_hash: 'h1', source_url: 'https://www.canada.ca/x', source_s3_key: 'snapshots/x.html', ...ruleRowExtra } };
     }
     if (cmd instanceof PutCommand) {
       const input = cmd.input as { TableName: string; Item: Item; ConditionExpression?: string };
@@ -66,6 +67,7 @@ before(async () => {
 });
 
 beforeEach(() => {
+  ruleRowExtra = {};
   puts.length = 0;
   signed.length = 0;
   auditTrailFails = false;
@@ -257,5 +259,50 @@ describe('Anchor step telemetry', () => {
     assert.equal(signed.length, 0);
     assert.equal(assessmentPut(), undefined);
     assert.equal(trailPut()?.Item.outcome, 'dropped');
+  });
+});
+
+describe('Anchor signs what the agents read', () => {
+  const CHANGES = 'CHANGES TO THIS IRCC PAGE\nPage: https://www.canada.ca/x';
+
+  async function signedRow(): Promise<Item> {
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      await handler(verdict);
+    } finally {
+      console.log = origLog;
+    }
+    const row = puts.find((p) => p.TableName === 'assessments')?.Item;
+    assert.ok(row, 'an assessment was written');
+    return row;
+  }
+
+  it('adds the hash of the changed lines to the signed rule list', async () => {
+    ruleRowExtra = { rule_changes: { text: CHANGES } };
+    const row = await signedRow();
+    assert.deepEqual(row.rulesUsed, ['h1', createHash('sha256').update(CHANGES).digest('hex')]);
+    assert.ok(signed[0].length > 0);
+    const body = { ...row } as Item;
+    for (const k of ['assessmentKey', 'canonicalHash', 'signatureBase64', 'signingKeyId', 'signatureAlgorithm']) delete body[k];
+    const keys = (v: unknown): string => (Array.isArray(v) ? `[${v.map(keys).join(',')}]` : v && typeof v === 'object' ? `{${Object.keys(v as Item).sort().map((k) => `${JSON.stringify(k)}:${keys((v as Item)[k])}`).join(',')}}` : JSON.stringify(v));
+    assert.equal(row.canonicalHash, createHash('sha256').update(keys(body)).digest('hex'), 'the second entry is under the signature');
+  });
+
+  it('lists the page version alone when the agents read the whole page', async () => {
+    assert.deepEqual((await signedRow()).rulesUsed, ['h1']);
+  });
+
+  it('ignores stored text the agents would not have read as changes', async () => {
+    ruleRowExtra = { rule_changes: { text: 'something else' } };
+    assert.deepEqual((await signedRow()).rulesUsed, ['h1']);
+  });
+
+  it('checks for the header Sentinel writes', () => {
+    const sentinel = readFileSync(path.join(here, '..', '..', 'sentinel', 'src', 'changes.ts'), 'utf8');
+    const mine = readFileSync(path.join(here, 'handler.ts'), 'utf8');
+    const value = /const CHANGES_HEADER = '([^']+)'/.exec(mine)?.[1];
+    assert.ok(value);
+    assert.ok(sentinel.includes(`export const CHANGES_HEADER = '${value}'`));
   });
 });
