@@ -7,7 +7,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { hasChanges, ruleChanges, type RuleChanges } from './changes';
 import { buildClassifierRequest, parseClassification, type Category, type Classification, type RuleKind, type Severity } from './classify';
 import { extractMainText } from './extract';
-import { describeGuardrailBlock } from './guardrail';
+import { describeGuardrailBlock, describeGuardrailDetections } from './guardrail';
 import { mapWithConcurrency } from './pool';
 import { elapsedMs, recordStep } from './telemetry';
 
@@ -294,6 +294,8 @@ async function classifyWithBedrock(url: string, changeText: string, runId: strin
     });
     throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
   }
+  const detected = describeGuardrailDetections(res);
+  if (detected.length > 0) log('warn', 'guardrail-detected', { runId, agent: 'sentinel', url, policies: detected });
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const { classification, coerced } = parseClassification(raw);
   if (coerced.length > 0) {
@@ -430,7 +432,7 @@ async function emitDelta(delta: PolicyDelta): Promise<void> {
   );
 }
 
-function log(level: 'debug' | 'info' | 'error', msg: string, fields: Record<string, unknown>): void {
+function log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ level, msg, timestamp: new Date().toISOString(), ...fields }));
 }
 
