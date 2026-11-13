@@ -11,7 +11,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 import { AFFECTED_DEFINITION } from './affected';
-import { describeGuardrailBlock, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
+import { describeGuardrailBlock, describeGuardrailDetections, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
 import { eligibleClients, tenantFromItem, TENANT_ATTRIBUTES, type Tenant } from './eligibility';
 import { groundingTextFor, isChangesText, isPartialView, READING_CHANGES, ruleTextFor } from './rule-input';
 import { ruleWindow } from './rule-window';
@@ -436,6 +436,8 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     });
     throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
   }
+  const detected = describeGuardrailDetections(res);
+  if (detected.length > 0) log('warn', 'guardrail-detected', { runId, agent: 'analyst', rcicId: client.rcicId, clientId: client.clientId, ruleHash: delta.ruleHash, policies: detected });
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);
@@ -498,7 +500,7 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return out;
 }
 
-function log(level: 'debug' | 'info' | 'error', msg: string, fields: Record<string, unknown>): void {
+function log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ level, msg, timestamp: new Date().toISOString(), ...fields }));
 }
 

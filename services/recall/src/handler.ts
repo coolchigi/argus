@@ -4,7 +4,7 @@ import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge
 import { DynamoDBDocumentClient, QueryCommand, ScanCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 import { eligibleClients, tenantFromItem, TENANT_ATTRIBUTES, type Tenant } from './eligibility';
-import { describeGuardrailBlock, guarded } from './guardrail';
+import { describeGuardrailBlock, describeGuardrailDetections, guarded } from './guardrail';
 import { elapsedMs, recordStep } from './telemetry';
 
 const bedrock = new BedrockRuntimeClient({});
@@ -321,6 +321,8 @@ async function triage(rule: PolicyRule, client: ClientSummary, runId: string): P
     });
     return { deserves_analysis: false, rationale: 'guardrail-blocked' };
   }
+  const detected = describeGuardrailDetections(res);
+  if (detected.length > 0) log('warn', 'guardrail-detected', { runId, agent: 'recall', rcicId: client.rcicId, clientId: client.clientId, ruleHash: rule.rule_hash, policies: detected });
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);
@@ -379,7 +381,7 @@ function stripUndefined<T extends Record<string, unknown>>(obj: T): Partial<T> {
   return out;
 }
 
-function log(level: 'debug' | 'info' | 'error', msg: string, fields: Record<string, unknown>): void {
+function log(level: 'debug' | 'info' | 'warn' | 'error', msg: string, fields: Record<string, unknown>): void {
   console.log(JSON.stringify({ level, msg, timestamp: new Date().toISOString(), ...fields }));
 }
 

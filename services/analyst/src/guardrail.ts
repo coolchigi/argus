@@ -27,6 +27,23 @@ export function describeGuardrailBlock(res: ConverseCommandOutput): GuardrailBlo
   return { stage: 'unknown', policies: [] };
 }
 
+// Content filters set to detect (action NONE) that fired on this call, as
+// "input:content:MISCONDUCT:MEDIUM". Callers log them as guardrail-detected.
+// Reads only the filter type, confidence and side, never the matched text.
+export function describeGuardrailDetections(res: ConverseCommandOutput): string[] {
+  const trace = res.trace?.guardrail;
+  const detected = (stage: string, list: GuardrailAssessment[]) =>
+    list.flatMap((a) =>
+      (a.contentPolicy?.filters ?? [])
+        .filter((f) => f.detected === true && f.action === 'NONE')
+        .map((f) => `${stage}:content:${f.type}:${f.confidence}`),
+    );
+  return [
+    ...detected('input', Object.values(trace?.inputAssessment ?? {})),
+    ...detected('output', Object.values(trace?.outputAssessments ?? {}).flat()),
+  ];
+}
+
 export type GroundingCheck = {
   grounding: number | null;
   groundingThreshold: number | null;
