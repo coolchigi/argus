@@ -174,10 +174,12 @@ function ImpactBody({ impact, assessmentKey }: { impact: Impact; assessmentKey: 
             />
           </>
         ) : (
-          <div data-tour="impact-lineage" className="space-y-8">
-            <AgentLineage policyEventId={impact.policyEventId} lineage={lineage.data} live={live} />
+          <>
+            <div data-tour="impact-lineage">
+              <AgentLineage policyEventId={impact.policyEventId} lineage={lineage.data} live={live} />
+            </div>
             <LearnedFromYou correctionKeys={lineage.data?.fewShotCorrectionKeys ?? []} />
-          </div>
+          </>
         )}
 
         {shownStance && <AuditorView stance={shownStance} isAffected={impact.isAffected} reviewed={replacedBy !== null} onReview={openReview} />}

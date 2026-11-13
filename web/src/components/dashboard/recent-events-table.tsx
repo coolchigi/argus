@@ -6,6 +6,7 @@ import { StatusBadge } from "@/components/argus/status-badge";
 import { formatDayMonthYear } from "@/components/dashboard/derive";
 import { humanizeTopic } from "@/lib/humanize";
 import type { PolicyEvent } from "@/lib/types/policy-events";
+import { TOUR_TOPIC } from "@/lib/demo-tour";
 
 const COLUMNS: Column<PolicyEvent>[] = [
   {
@@ -81,6 +82,7 @@ export function RecentEventsTable({
           getRowKey={(e) => e.eventId}
           rowHref={(e) => `/policy-events/${encodeURIComponent(e.eventId)}`}
           rowLinkLabel={(e) => `${e.ref}, ${humanizeTopic(e.topic)}`}
+          rowTour={(e) => (e.topic === TOUR_TOPIC ? "dashboard-event" : undefined)}
           loading={loading}
           placeholderRows={RECENT_EVENT_ROWS}
           stickyHeader={false}
