@@ -66,15 +66,19 @@ export type GuardrailConfig = { guardrailIdentifier: string; guardrailVersion: s
 export function buildClassifierRequest(opts: {
   modelId: string;
   url: string;
-  pageText: string;
+  // The lines that changed, from changes.ts. The whole page would let older text
+  // IRCC left in place into the summary, and the Analyst reads the summary. Both
+  // sides go in, since "out of 1,200" becoming "out of 1,270" only reads as a scoring
+  // change with both, and severity decides who gets a real-time alert.
+  changeText: string;
   guardrailConfig?: GuardrailConfig;
 }): ConverseCommandInput {
-  const snippet = opts.pageText.slice(0, CLASSIFIER_MAX_INPUT_CHARS);
+  const snippet = opts.changeText.slice(0, CLASSIFIER_MAX_INPUT_CHARS);
   const intro = [
     'Classify this IRCC page change. Return valid JSON only, no prose.',
     '',
     `URL: ${opts.url}`,
-    'Content (may be truncated):',
+    "The lines that changed, under the page's headings (may be truncated):",
   ].join('\n');
   const instructions = [
     'Return this exact JSON shape:',
@@ -82,19 +86,21 @@ export function buildClassifierRequest(opts: {
     `  "category": ${enumLine(CATEGORIES)},`,
     `  "policyDomain": ${enumLine(POLICY_DOMAINS)},`,
     `  "severity": ${enumLine(SEVERITIES)},`,
-    '  "summary": "one sentence describing what changed or what this page is",',
+    '  "summary": "one sentence on what the page says now that it did not say before",',
     '  "topic": "short kebab-case topic id, e.g. crs-scorecard or ee-category-list",',
     `  "ruleKind": ${enumLine(RULE_KINDS)}`,
     '}',
     '',
-    'policyDomain definitions. Pick the program whose applicants the page\'s rules are about. A program the page only mentions in passing does not decide the domain.',
+    'policyDomain definitions. Pick the program whose applicants the page\'s rules are about, using the URL and the headings as well as the changed lines. A program the page only mentions in passing does not decide the domain.',
     ...POLICY_DOMAINS.map((d) => `- ${d}: ${POLICY_DOMAIN_DEFINITIONS[d]}`),
     '',
     'Severity rules:',
     '- high: eligibility flip, program or intake open, pause or close, a change to how points are awarded (a points factor added, removed or re-weighted).',
     '- medium: category-based-draw change, procedural rule change.',
     '- low: news release, statistics, minor form-version bump.',
-    'Judge severity from what the page says. Do not use point values, dates or program rules from memory.',
+    'Judge severity from what changed. Do not use point values, dates or program rules from memory.',
+    '',
+    'Lines under LINES REMOVED FROM THE PAGE are older wording the page no longer has. Do not describe them as what IRCC is doing now. Mention one in the summary only to say what it replaced, or if nothing was added.',
   ].join('\n');
 
   // The IRCC page text is the only outside content, so it's the only

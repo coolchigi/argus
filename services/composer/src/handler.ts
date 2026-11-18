@@ -7,10 +7,12 @@ import type { DynamoDBBatchItemFailure, DynamoDBBatchResponse, DynamoDBStreamEve
 import { randomUUID } from 'node:crypto';
 import { briefIdFor, classifyFailure, PermanentError } from './delivery';
 import { describeGuardrailBlock, guarded } from './guardrail';
+import { removalDraft } from './removal-draft';
+import { isChangesText, isRemovalOnly, READING_CHANGES, ruleTextFor } from './rule-input';
 import { ruleWindow } from './rule-window';
 import { checkBriefGrounding, checkDateRoles, checkModality } from './grounding';
 import { elapsedMs, recordStep } from './telemetry';
-import { checkDraftVoice, withoutClientId } from './voice';
+import { checkAgencyVoice, checkDraftVoice, inThirdPerson, withCitation, withoutClientId } from './voice';
 
 const bedrock = new BedrockRuntimeClient({});
 const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
@@ -185,7 +187,7 @@ async function composeOne(assessment: Assessment, runId: string): Promise<Outcom
   }
 
   const rule = await loadRule(assessment.ruleHash);
-  const draft = await compose(assessment, rule.content, runId);
+  const draft = await compose(assessment, rule.agentText, runId);
 
   const now = new Date().toISOString();
   try {
@@ -269,12 +271,12 @@ async function composeOne(assessment: Assessment, runId: string): Promise<Outcom
 // A brief with no rule text would state IRCC facts from model memory, so a
 // missing rule stops the draft. Rules are never deleted (ADR-0002), so a
 // retry would find the same nothing.
-async function loadRule(ruleHash: string): Promise<{ content: string; severity: string | null }> {
+async function loadRule(ruleHash: string): Promise<{ content: string; agentText: string; severity: string | null }> {
   const res = await ddb.send(new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash } }));
   const content = res.Item?.rule_content;
   const severity = res.Item?.severity;
   if (typeof content !== 'string' || !content.trim()) throw new PermanentError('rule-not-found', `no rule_content for rule ${ruleHash}`);
-  return { content, severity: typeof severity === 'string' ? severity : null };
+  return { content, agentText: ruleTextFor(res.Item), severity: typeof severity === 'string' ? severity : null };
 }
 
 // Strongly consistent, so a record redelivered right after a write sees it.
@@ -339,7 +341,13 @@ function consultantReasoning(assessment: Assessment): string | undefined {
 }
 
 export function buildComposeRequest(assessment: Assessment, ruleContent: string): ConverseCommandInput {
-  const snippet = ruleWindow(ruleContent);
+  const window = ruleWindow(ruleContent);
+  // IRCC's text says "we". In this email "I" is the consultant, so the rule text
+  // reaches the model with IRCC named instead. A prompt line alone wasn't enough:
+  // the model still copied "we'll pause" in 3 of 9 drafts (measured 2026-11-06).
+  // The assessment text isn't rewritten. It hasn't carried IRCC's "we" in the runs
+  // measured so far (0 of 10), and the voice check below would flag it.
+  const snippet = inThirdPerson(window);
 
   const system = [
     'You are the Composer agent in Argus, an IRCC policy-impact platform for Regulated Canadian Immigration Consultants (RCICs).',
@@ -360,6 +368,7 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
     'When the assessment says something about the reader is unknown, ask the reader for it ("let me know whether..."). Never say a document doesn\'t confirm it.',
     'You match the professional tone RCICs use with their clients: plain language, honest about uncertainty, one clear next step.',
     'Return valid JSON only. No preamble.',
+    ...(isChangesText(window) ? ['', READING_CHANGES, '- Paragraph 1 describes what changed: the added and moved lines, and any removed line the reader relied on.'] : []),
   ].join('\n');
 
   // The client id stays out of the prompt entirely. The model has no use for
@@ -421,6 +430,8 @@ export function buildComposeRequest(assessment: Assessment, ruleContent: string)
 }
 
 async function compose(assessment: Assessment, ruleContent: string, runId: string): Promise<BriefDraft> {
+  if (isRemovalOnly(ruleContent)) return removalDraft(ruleContent, assessment.citationSourceUrl);
+
   const res = await bedrock.send(new ConverseCommand(buildComposeRequest(assessment, ruleContent)));
 
   if (res.stopReason === 'guardrail_intervened') {
@@ -445,14 +456,12 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
     throw new PermanentError('model-output-unusable', `composer returned non-JSON: ${raw.slice(0, 200)}`);
   }
   const parsed = JSON.parse(match[0]) as Partial<BriefDraft>;
+  const body = typeof parsed.bodyMarkdown === 'string' && parsed.bodyMarkdown.trim() ? parsed.bodyMarkdown : withoutClientId(assessment.narrative, assessment.clientId);
   const draft = {
     subject: typeof parsed.subject === 'string' && parsed.subject.trim() ? parsed.subject : FALLBACK_SUBJECT,
     // The fallbacks are Analyst text, which names the client by id. The
     // client reads these, so the id becomes "the client".
-    bodyMarkdown:
-      typeof parsed.bodyMarkdown === 'string' && parsed.bodyMarkdown.trim()
-        ? parsed.bodyMarkdown
-        : withoutClientId(assessment.narrative, assessment.clientId),
+    bodyMarkdown: withCitation(body, assessment.citationSourceUrl),
     suggestedActions: Array.isArray(parsed.suggestedActions)
       ? parsed.suggestedActions.slice(0, 3)
       : [withoutClientId(assessment.recommendedAction, assessment.clientId)],
@@ -460,7 +469,10 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
 
   // A warning, never a failure: the consultant reads and edits every draft
   // before it goes out, and a draft in the wrong voice beats no draft.
-  const findings = checkDraftVoice(draft, assessment.clientId);
+  const findings = [
+    ...checkDraftVoice(draft, assessment.clientId),
+    ...checkAgencyVoice([draft.bodyMarkdown, ...draft.suggestedActions].join('\n'), ruleContent),
+  ];
   if (findings.length > 0) {
     log('warn', 'composer-voice-check', {
       runId,

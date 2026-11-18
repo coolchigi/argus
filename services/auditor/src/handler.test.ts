@@ -21,6 +21,8 @@ type Item = Record<string, unknown>;
 const corrections: Item[] = [];
 const queries: Item[] = [];
 let lastRequest: ConverseCommandInput | undefined;
+const DEFAULT_RULE: Item = { rule_hash: 'h1', rule_content: 'rule text' };
+let ruleRow: Item = DEFAULT_RULE;
 const trailRows: Item[] = [];
 const verdicts: Item[] = [];
 let trailFails = false;
@@ -51,7 +53,7 @@ before(async () => {
 
   (DynamoDBDocumentClient.prototype as { send: unknown }).send = async (cmd: { input: Item }) => {
     const input = cmd.input;
-    if (cmd instanceof GetCommand) return { Item: { rule_hash: 'h1', rule_content: 'rule text' } };
+    if (cmd instanceof GetCommand) return { Item: ruleRow };
     if (cmd instanceof PutCommand && input.TableName === 'audit-trail') {
       if (trailFails) throw new Error('ProvisionedThroughputExceededException');
       trailRows.push(input.Item as Item);
@@ -85,6 +87,7 @@ beforeEach(() => {
   corrections.length = 0;
   queries.length = 0;
   lastRequest = undefined;
+  ruleRow = DEFAULT_RULE;
   trailRows.length = 0;
   verdicts.length = 0;
   trailFails = false;
@@ -454,5 +457,90 @@ describe('Auditor stance follows the shared definition of affected', () => {
       assert.equal(verdicts[0].affectedStance, affectedStance);
       assert.equal('affectedStanceContradicted' in verdicts[0], false, affectedStance);
     }
+  });
+});
+
+// Real wording from IRCC's job offer page as captured Oct 16 2026 (rule
+// d3fd0668). The academic bullet is older text the change left in place, and it
+// reached a client email as advice to confirm an exemption (brief 88d1df46).
+const PAGE_WITH_OLDER_TEXT = [
+  '## Job offer basics',
+  '### Changes to how we assess jobs offers',
+  "As of November 3, 2026, we're changing how we assess job offers under Express Entry:",
+  "- you don't need a Labour Market Impact Assessment (LMIA) for a job offer to qualify",
+  "- During this time we'll pause invitation rounds and will start again when it's complete.",
+  '## Who needs an LMIA',
+  '- academics (researchers, lecturers, and professors) under a recognized federal program',
+].join('\n');
+const CHANGED_LINES = [
+  'CHANGES TO THIS IRCC PAGE',
+  'Page: https://www.canada.ca/x',
+  'Detected: 2026-10-16',
+  '',
+  'LINES ADDED TO THE PAGE',
+  'Section: Job offer basics > Changes to how we assess jobs offers',
+  "As of November 3, 2026, we're changing how we assess job offers under Express Entry:",
+  "- you don't need a Labour Market Impact Assessment (LMIA) for a job offer to qualify",
+  "- During this time we'll pause invitation rounds and will start again when it's complete.",
+  '',
+  'LINES REMOVED FROM THE PAGE',
+  'Section: Job offer basics',
+  'We no longer give points for job offers',
+].join('\n');
+
+describe('Auditor reads what changed on the page', () => {
+  it('judges the changed lines only, so it cannot correct the Analyst toward older text left on the page', async () => {
+    ruleRow = { rule_hash: 'h1', rule_content: PAGE_WITH_OLDER_TEXT, rule_changes: { text: CHANGED_LINES } };
+    const sent = JSON.stringify(await audit());
+    assert.doesNotMatch(sent, /recognized federal program/);
+    assert.match(sent, /you don't need a Labour Market Impact Assessment/);
+    assert.match(sent, /Do not flag a claim because the rest of the page is not shown/);
+  });
+
+  describe('a change that only removed text', () => {
+    const REMOVAL_ONLY = ['CHANGES TO THIS IRCC PAGE', 'Page: https://www.canada.ca/x', 'Detected: 2026-11-07', '', 'LINES ADDED TO THE PAGE', '(none)', '', 'LINES REMOVED FROM THE PAGE', 'Section: A', '- You do not need form X.'].join('\n');
+    const rejection = JSON.stringify({ passed: false, issues: [{ type: 'citation', detail: 'the current rule is not shown' }], correctedNarrative: 'cannot be assessed', correctedRecommendedAction: 'none', correctedConfidence: 'high', affectedStance: 'uncertain', affectedStanceReason: 'the current rule is not shown' });
+
+    it('keeps the assessment for a consultant when the Auditor rejects it, at low confidence, with the objection on record', async () => {
+      ruleRow = { rule_hash: 'h1', rule_content: 'Page text.', rule_changes: { text: REMOVAL_ONLY } };
+      modelReply = rejection;
+      await audit({ isAffected: true, narrative: 'The page no longer says form X is not needed.', recommendedAction: 'Check what applies now.' });
+      const v = verdicts[0] as { passed: boolean; correctedNarrative: string; correctedRecommendedAction: string; correctedConfidence: string; issues: unknown[]; affectedStance: string };
+      assert.equal(v.passed, true);
+      assert.match(v.correctedNarrative, /no longer includes wording that may apply to /);
+      assert.equal(v.correctedRecommendedAction, "Read the IRCC page and check this client's file against it.");
+      assert.equal(v.correctedConfidence, 'low');
+      assert.equal(v.issues.length, 1);
+      assert.equal(v.affectedStance, 'uncertain');
+    });
+
+    it('still rejects when the Analyst did not flag the client', async () => {
+      ruleRow = { rule_hash: 'h1', rule_content: 'Page text.', rule_changes: { text: REMOVAL_ONLY } };
+      modelReply = rejection;
+      await audit({ isAffected: false });
+      assert.equal(verdicts[0].passed, false);
+    });
+
+    it('still rejects an ordinary change the Auditor fails', async () => {
+      ruleRow = { rule_hash: 'h1', rule_content: PAGE_WITH_OLDER_TEXT, rule_changes: { text: CHANGED_LINES } };
+      modelReply = rejection;
+      await audit({ isAffected: true });
+      assert.equal(verdicts[0].passed, false);
+      assert.equal(verdicts[0].correctedNarrative, 'cannot be assessed');
+    });
+  });
+
+  it('shows the Auditor the same unchanged lines the Analyst saw for the client code', async () => {
+    ruleRow = { rule_hash: 'h1', rule_content: 'NOC | Title\n41220 | Teachers', rule_changes: { text: CHANGED_LINES } };
+    const sent = JSON.stringify(await audit({ clientProfile: { rcicId: 'R1', clientId: 'c1', nocCode: '41220' } }));
+    assert.match(sent, /OTHER PAGE TEXT THAT MENTIONS THIS CLIENT/);
+    assert.match(sent, /41220 \| Teachers/);
+  });
+
+  it('falls back to the whole page, with no reading rule, on a row captured before changes were stored', async () => {
+    ruleRow = { rule_hash: 'h1', rule_content: PAGE_WITH_OLDER_TEXT };
+    const sent = JSON.stringify(await audit());
+    assert.match(sent, /recognized federal program/);
+    assert.doesNotMatch(sent, /Do not flag a claim because the rest of the page is not shown/);
   });
 });

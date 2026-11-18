@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { AFFECTED_DEFINITION } from './affected';
 import { describeGuardrailBlock, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
 import { eligibleClients, tenantFromItem, TENANT_ATTRIBUTES, type Tenant } from './eligibility';
+import { groundingTextFor, isChangesText, isPartialView, READING_CHANGES, ruleTextFor } from './rule-input';
 import { ruleWindow } from './rule-window';
 import { elapsedMs, recordStep } from './telemetry';
 
@@ -100,6 +101,8 @@ type PolicyRule = {
   topic: string;
   summary: string;
   rule_content: string;
+  // Stored by Sentinel. See rule-input.ts.
+  rule_changes?: { text?: unknown };
 };
 
 type ImpactHypothesis = {
@@ -297,9 +300,13 @@ async function queryCaseload(rcicId: string): Promise<ClientProfile[]> {
   return (res.Items ?? []) as ClientProfile[];
 }
 
+function ruleSnippetFor(rule: PolicyRule, profile: Record<string, unknown>): string {
+  return ruleWindow(ruleTextFor(rule, profile), profile);
+}
+
 export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client: ClientProfile): ConverseCommandInput {
   const profile = stripUndefined(client);
-  const ruleSnippet = ruleWindow(rule.rule_content ?? '', profile);
+  const ruleSnippet = ruleSnippetFor(rule, profile);
   const clientJson = JSON.stringify(profile, null, 2);
 
   const system = [
@@ -314,6 +321,7 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
     'Base every statement on the rule content and the client profile only. Reuse the rule content\'s own wording. Do not add facts, programs or options the rule content does not mention.',
     'Decide isAffected by the definition below.',
     AFFECTED_DEFINITION,
+    ...(isChangesText(ruleSnippet) ? ['', READING_CHANGES] : []),
   ].join('\n');
 
   const policyChange = [
@@ -372,7 +380,7 @@ export function buildReasonRequest(delta: PolicyDelta, rule: PolicyRule, client:
         {
           guardContent: {
             text: {
-              text: `RULE CONTENT (source of truth):\n${ruleSnippet}`,
+              text: `RULE CONTENT (source of truth):\n${groundingTextFor(ruleSnippet)}`,
               qualifiers: ['grounding_source'],
             },
           },
@@ -435,6 +443,12 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
   }
   const parsed = JSON.parse(match[0]) as Partial<ImpactHypothesis>;
 
+  // The model saw only part of a very long change, so its "not affected" can't be
+  // trusted. A consultant reads the page instead of this client going unflagged.
+  const partial = isPartialView(ruleSnippetFor(rule, stripUndefined(client)));
+  if (partial) log('error', 'rule-text-partial', { runId, ruleHash: delta.ruleHash, rcicId: client.rcicId, clientId: client.clientId, modelSaidAffected: parsed.isAffected ?? false });
+  const needsManualCheck = partial && !parsed.isAffected;
+
   return {
     hypothesisId: randomUUID(),
     timestamp: new Date().toISOString(),
@@ -443,12 +457,12 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     policyEventId: delta.eventId,
     ruleHash: delta.ruleHash,
     topic: delta.topic,
-    isAffected: parsed.isAffected ?? false,
-    impactType: (parsed.impactType ?? 'none') as ImpactHypothesis['impactType'],
+    isAffected: needsManualCheck ? true : (parsed.isAffected ?? false),
+    impactType: needsManualCheck ? 'procedural' : ((parsed.impactType ?? 'none') as ImpactHypothesis['impactType']),
     numericDelta: parsed.numericDelta ?? null,
-    narrative: parsed.narrative ?? '(no narrative)',
-    recommendedAction: parsed.recommendedAction ?? '(no action)',
-    confidence: (parsed.confidence ?? 'low') as ImpactHypothesis['confidence'],
+    narrative: needsManualCheck ? `IRCC changed more of this page than Argus can read at once, so ${client.clientId}'s file needs a manual check.` : (parsed.narrative ?? '(no narrative)'),
+    recommendedAction: needsManualCheck ? "Read the IRCC page and check this client's file against it." : (parsed.recommendedAction ?? '(no action)'),
+    confidence: partial ? 'low' : ((parsed.confidence ?? 'low') as ImpactHypothesis['confidence']),
     reasoning: parsed.reasoning ?? '(no reasoning)',
     groundingCheck: readGroundingCheck(res),
   };

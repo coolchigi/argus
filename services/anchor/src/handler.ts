@@ -126,7 +126,11 @@ async function anchor(verdict: AuditVerdict): Promise<{ anchored: boolean; outco
     narrative: verdict.correctedNarrative,
     recommendedAction: verdict.correctedRecommendedAction,
     confidence: verdict.correctedConfidence,
-    rulesUsed: [verdict.ruleHash],
+    // The page version, then the stored changed lines the agents' text is built from,
+    // when the row has them. A row's rule_hash covers rule_content only, so without the
+    // second entry nothing would tie this signature to what the models read. No second
+    // entry means they read the whole page (ADR-0001).
+    rulesUsed: [verdict.ruleHash, ...(citation.changesHash ? [citation.changesHash] : [])],
     citationSourceUrl: citation.source_url,
     citationSourceS3Key: citation.source_s3_key,
     auditorReasoning: verdict.auditorReasoning,
@@ -176,13 +180,19 @@ async function anchor(verdict: AuditVerdict): Promise<{ anchored: boolean; outco
   return { anchored: true, outcome: alreadySigned ? 'already-signed' : 'signed' };
 }
 
-async function loadCitation(ruleHash: string): Promise<{ source_url: string; source_s3_key: string } | null> {
+// Same check as ruleTextFor in the agents: only text that starts with this header
+// is what they read. A test fails if it stops matching what Sentinel writes.
+const CHANGES_HEADER = 'CHANGES TO THIS IRCC PAGE';
+
+async function loadCitation(ruleHash: string): Promise<{ source_url: string; source_s3_key: string; changesHash: string | null } | null> {
   const res = await ddb.send(new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash } }));
   const item = res.Item;
   if (!item || typeof item.source_url !== 'string' || typeof item.source_s3_key !== 'string') {
     return null;
   }
-  return { source_url: item.source_url, source_s3_key: item.source_s3_key };
+  const changes = item.rule_changes?.text;
+  const changesHash = typeof changes === 'string' && changes.startsWith(CHANGES_HEADER) ? createHash('sha256').update(changes).digest('hex') : null;
+  return { source_url: item.source_url, source_s3_key: item.source_s3_key, changesHash };
 }
 
 function sha256Canonical(payload: Record<string, unknown>): string {

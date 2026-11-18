@@ -29,7 +29,17 @@ const NAMED_ENTITIES: Record<string, string> = {
   shy: '', zwnj: '', zwj: '',
 };
 
-export function extractMainText(html: string): string {
+// Marks how deep a list item sits until the line cleanup is done. A private-use
+// character, so the cleanup can't strip it and page text can't contain it.
+const DEPTH_MARK = '';
+
+/**
+ * `keepListDepth` indents nested list items, so the comparison in changes.ts can
+ * tell which bullet a line hangs from. rule_content and rule_hash stay flat: their
+ * bytes are what every stored version was hashed from.
+ */
+export function extractMainText(html: string, opts: { keepListDepth?: boolean } = {}): string {
+  let listDepth = 0;
   let s = html.replace(/<!--[\s\S]*?-->/g, '');
   s = sliceElement(s, 'main') ?? sliceElement(s, 'body') ?? s;
 
@@ -53,7 +63,11 @@ export function extractMainText(html: string): string {
     const closing = tagText.startsWith('</');
     if (HEADING_PREFIX[name]) return closing ? '\n\n' : `\n\n${HEADING_PREFIX[name]}`;
     if (name === 'p') return '\n\n';
-    if (name === 'li') return closing ? '' : '\n- ';
+    if (name === 'ul' || name === 'ol') listDepth = Math.max(0, listDepth + (closing ? -1 : 1));
+    if (name === 'li') {
+      if (closing) return '';
+      return opts.keepListDepth ? `\n${DEPTH_MARK.repeat(Math.max(0, listDepth - 1))}- ` : '\n- ';
+    }
     if (BLOCK_TAGS.has(name)) return '\n';
     return '';
   });
@@ -63,18 +77,19 @@ export function extractMainText(html: string): string {
   const lines = s.split('\n').map((line) => line.replace(/[ \t\f\v ]+/g, ' ').trim().replace(/\s*\|$/, ''));
   const out: string[] = [];
   for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
+    const depth = /^*/.exec(lines[i])?.[0].length ?? 0;
+    let line = lines[i].slice(depth);
     // A list item that wraps a <p> leaves a bare "-" line. Pull the item's
     // text up onto it.
     if (line === '-') {
       let j = i + 1;
       while (j < lines.length && lines[j] === '') j++;
-      if (j >= lines.length || lines[j].startsWith('- ') || lines[j].startsWith('#')) continue;
+      if (j >= lines.length || lines[j].replace(/^+/, '').startsWith('- ') || lines[j].startsWith('#')) continue;
       line = `- ${lines[j]}`;
       i = j;
     }
     if (/^#+$/.test(line)) continue;
-    out.push(line);
+    out.push('  '.repeat(depth) + line);
   }
   return out.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
