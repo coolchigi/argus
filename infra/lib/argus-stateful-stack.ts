@@ -320,7 +320,11 @@ export class ArgusStatefulStack extends cdk.Stack {
       contentPolicyConfig: {
         filtersConfig: [
           { type: 'PROMPT_ATTACK', inputStrength: 'HIGH', outputStrength: 'NONE' },
-          { type: 'MISCONDUCT', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
+          // Detect mode (ADR-0005). IRCC pages that describe a workaround,
+          // like the Oct 16 2026 placeholder LMIA, read as fraud to this
+          // filter, and a block dropped the client. The agents log a
+          // detection as guardrail-detected and the consultant reviews the brief.
+          { type: 'MISCONDUCT', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM', inputAction: 'NONE', outputAction: 'NONE' },
           { type: 'INSULTS', inputStrength: 'MEDIUM', outputStrength: 'MEDIUM' },
           { type: 'HATE', inputStrength: 'HIGH', outputStrength: 'HIGH' },
           { type: 'SEXUAL', inputStrength: 'HIGH', outputStrength: 'HIGH' },

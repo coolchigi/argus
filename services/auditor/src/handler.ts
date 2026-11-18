@@ -9,7 +9,7 @@ import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 import { AFFECTED_DEFINITION } from './affected';
-import { describeGuardrailBlock, guarded, type GroundingCheck } from './guardrail';
+import { describeGuardrailBlock, describeGuardrailDetections, guarded, type GroundingCheck } from './guardrail';
 import { isChangesText, isRemovalOnly, READING_CHANGES, ruleTextFor } from './rule-input';
 import { ruleWindow } from './rule-window';
 import { stanceContradictsReason } from './stance-check';
@@ -494,6 +494,8 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     });
     throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
   }
+  const detected = describeGuardrailDetections(res);
+  if (detected.length > 0) log('warn', 'guardrail-detected', { runId, agent: 'auditor', hypothesisId: hyp.hypothesisId, clientId: hyp.clientId, ruleHash: hyp.ruleHash, policies: detected });
 
   const raw = res.output?.message?.content?.[0]?.text ?? '';
   const match = raw.match(/\{[\s\S]*\}/);

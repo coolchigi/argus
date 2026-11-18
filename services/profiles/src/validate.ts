@@ -88,6 +88,8 @@ export const OPTIONAL_FIELDS: Record<string, { attr: string; spec: FieldKind; wr
   teer_level: { attr: 'teerLevel', spec: { kind: 'int', min: 0, max: 5 } },
   has_job_offer: { attr: 'hasJobOffer', spec: { kind: 'bool' } },
   job_offer_teer: { attr: 'jobOfferTeer', spec: { kind: 'int', min: 0, max: 5 } },
+  // Whether the job offer is supported by a positive LMIA. A status only: never the LMIA number.
+  job_offer_has_lmia: { attr: 'jobOfferHasLmia', spec: { kind: 'bool' } },
   current_crs_score: { attr: 'currentCrsScore', spec: { kind: 'int', min: 0, max: 9999 } },
   principal_permit_teer: { attr: 'principalPermitTeer', spec: { kind: 'int', min: 0, max: 5 } },
   principal_permit_remaining_months: { attr: 'principalPermitRemainingMonths', spec: { kind: 'int', min: 0, max: 600 } },
