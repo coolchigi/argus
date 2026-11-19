@@ -1,7 +1,7 @@
 /**
  * Pulls a 64-character hex fingerprint out of whatever was pasted into
  * /verify: the bare hash, or a verify link such as
- * https://tryargus.ca/verify/<hash>, with or without a query or a trailing
+ * https://argusrcic.com/verify/<hash>, with or without a query or a trailing
  * slash. Returns it lowercased, or null when there's no single clear hash.
  */
 export function extractFingerprint(input: string): string | null {
