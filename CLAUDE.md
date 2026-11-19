@@ -47,6 +47,20 @@ Match `~/.claude/voice-dna.md` and this repo's writing. Hard rules:
 - No hyperfocus on the 13-day countdown, and no scope creep. When in doubt, cut.
 - Any architectural decision that touches Sections 6, 9, or 17 of `docs/argus-design.md` needs an ADR in `docs/adr/`.
 
+## Deploying
+
+- The web app deploys itself: Amplify rebuilds it from `main` after every merge. The backend only deploys by hand with `cdk deploy`, and only with Chigo's yes.
+- Several stack settings come from environment variables (sender address, public URL, operator and demo emails). Missing ones fall back to defaults that can blank live values. Load them before every `cdk diff` or `cdk deploy`. They live in the main checkout, gitignored, so worktrees don't have a copy:
+
+```bash
+set -a; source /Users/ceke/Documents/Projects/coding/argus/infra/.env; set +a
+export CDK_DEFAULT_ACCOUNT=337305803512 CDK_DEFAULT_REGION=us-east-1
+cd infra && npx cdk diff '*' && npx cdk deploy --require-approval never ArgusStatefulDev ArgusApiDev
+```
+
+- Read the diff before deploying. Stop and ask on any replacement, deletion or changed environment value you didn't expect.
+- If a setting changes on purpose, update `infra/.env` too, or the next deploy undoes it.
+
 ## Escalate to the project lead before
 
 - Adding a 7th named agent or removing any of the 6.
