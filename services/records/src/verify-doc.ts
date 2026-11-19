@@ -134,7 +134,7 @@ export function buildVerifyDoc(i: VerifyDocInput): string {
     i.spkiSha256,
     FENCE,
     '',
-    'Argus shows the same fingerprint in Settings, under Signing key, and every public receipt page under tryargus.ca/verify checks against it. To compute it yourself:',
+    'Argus shows the same fingerprint in Settings, under Signing key, and every public receipt page under argusrcic.com/verify checks against it. To compute it yourself:',
     '',
     FENCE + 'sh',
     `openssl pkey -pubin -in ${KEY_FILE} -outform DER | openssl dgst -sha256`,
