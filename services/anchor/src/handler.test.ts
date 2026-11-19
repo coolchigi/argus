@@ -306,3 +306,21 @@ describe('Anchor signs what the agents read', () => {
     assert.ok(sentinel.includes(`export const CHANGES_HEADER = '${value}'`));
   });
 });
+
+describe('Anchor signs a check the guardrail blocked (ADR-0006)', () => {
+  it('signs blocked inside auditorStance', async () => {
+    await anchor({ detail: { ...verdictContradicted, affectedStanceContradicted: undefined, affectedStanceBlocked: true } });
+    assert.deepEqual(assessmentPut()?.Item.auditorStance, { stance: 'uncertain', reason: CONTRADICTED_REASON, blocked: true });
+    assert.equal(signed.length, 1);
+  });
+
+  it('signs the marker on "uncertain" only, and only when it is exactly true', async () => {
+    for (const extra of [{ affectedStanceBlocked: 'true' }, { affectedStanceBlocked: false }, { affectedStance: 'agree', affectedStanceBlocked: true }]) {
+      signed.length = 0;
+      puts.length = 0;
+      await anchor({ detail: { ...verdictContradicted, affectedStanceContradicted: undefined, ...extra } });
+      assert.ok(assessmentPut(), 'the verdict was signed');
+      assert.equal('blocked' in ((assessmentPut()?.Item.auditorStance ?? {}) as Item), false, JSON.stringify(extra));
+    }
+  });
+});

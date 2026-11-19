@@ -53,6 +53,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ clientI
   const toSend = data?.assessments.filter((a) => a.needsBrief).length ?? 0;
   const disagrees = data?.assessments.filter((a) => a.actionReason === "auditor-disagrees").length ?? 0;
   const unsure = data?.assessments.filter((a) => a.actionReason === "auditor-unsure").length ?? 0;
+  const blocked = data?.assessments.filter((a) => a.actionReason === "guardrail-blocked").length ?? 0;
 
   async function setStatus(next: "active" | "closed") {
     try {
@@ -125,6 +126,7 @@ export default function ClientDetailPage({ params }: { params: Promise<{ clientI
               )}
               {disagrees > 0 && <AuditorFlagBadge reason="auditor-disagrees" count={disagrees} />}
               {unsure > 0 && <AuditorFlagBadge reason="auditor-unsure" count={unsure} />}
+              {blocked > 0 && <AuditorFlagBadge reason="guardrail-blocked" count={blocked} />}
             </div>
             <dl className="grid grid-cols-1 gap-px border border-hairline bg-hairline sm:grid-cols-2 lg:grid-cols-3">
               <Item label="Program" value={humanizePolicyDomain(client.program)} />

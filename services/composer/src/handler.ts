@@ -7,6 +7,7 @@ import type { DynamoDBBatchItemFailure, DynamoDBBatchResponse, DynamoDBStreamEve
 import { randomUUID } from 'node:crypto';
 import { briefIdFor, classifyFailure, PermanentError } from './delivery';
 import { describeGuardrailBlock, describeGuardrailDetections, guarded } from './guardrail';
+import { blockedDraft } from './blocked-draft';
 import { removalDraft } from './removal-draft';
 import { isChangesText, isRemovalOnly, READING_CHANGES, ruleTextFor } from './rule-input';
 import { ruleWindow } from './rule-window';
@@ -446,7 +447,10 @@ async function compose(assessment: Assessment, ruleContent: string, runId: strin
       policies: block.policies,
       guardedInputs: ['assessment', 'rule-text'],
     });
-    throw new PermanentError('guardrail-blocked', `guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+    // A retry blocks the same way, and a dropped record leaves the client
+    // with no brief. The consultant gets a fixed draft to edit (ADR-0006).
+    log('warn', 'composer-fixed-draft', { runId, assessmentKey: assessment.assessmentKey, ruleHash: assessment.ruleHash, reason: 'guardrail-blocked' });
+    return blockedDraft(assessment.citationSourceUrl);
   }
   const detected = describeGuardrailDetections(res);
   if (detected.length > 0) log('warn', 'guardrail-detected', { runId, agent: 'composer', assessmentKey: assessment.assessmentKey, clientId: assessment.clientId, ruleHash: assessment.ruleHash, policies: detected });

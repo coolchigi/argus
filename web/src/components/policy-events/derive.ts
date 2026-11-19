@@ -68,13 +68,15 @@ export function reassessments(runs: number): number {
 }
 
 /** The ↳ line under an event title. null when there's nothing to say. */
-export function eventNote(e: Pick<PolicyEvent, "runs" | "correctionsFiled" | "auditorDisagrees" | "auditorUnsure" | "consultantReviewed">): string | null {
+export function eventNote(e: Pick<PolicyEvent, "runs" | "correctionsFiled" | "auditorDisagrees" | "auditorUnsure" | "guardrailBlocked" | "consultantReviewed">): string | null {
   const parts: string[] = [];
   const disagrees = e.auditorDisagrees ?? 0;
   const unsure = e.auditorUnsure ?? 0;
   const reviewed = e.consultantReviewed ?? 0;
   if (disagrees > 0) parts.push(`Auditor disagrees on ${disagrees} ${disagrees === 1 ? "client" : "clients"}`);
   if (unsure > 0) parts.push(`Auditor unsure on ${unsure} ${unsure === 1 ? "client" : "clients"}`);
+  const blocked = e.guardrailBlocked ?? 0;
+  if (blocked > 0) parts.push(`Not checked on ${blocked} ${blocked === 1 ? "client" : "clients"}`);
   const again = reassessments(e.runs);
   if (again > 0) parts.push(`Reassessed ${again}x`);
   if (e.correctionsFiled > 0) {

@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 // fails for a reason no retry can fix is logged and dropped, so it doesn't
 // cost more Bedrock calls or hold up the shard.
 
-export type PermanentReason = 'bad-input' | 'guardrail-blocked' | 'rule-not-found' | 'model-output-unusable' | 'request-rejected';
+export type PermanentReason = 'bad-input' | 'rule-not-found' | 'model-output-unusable' | 'request-rejected';
 
 /** A failure no retry can fix. */
 export class PermanentError extends Error {

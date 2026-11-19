@@ -42,6 +42,8 @@ export type ClientSummary = {
   auditorDisagrees?: number;
   /** Rules whose current agent verdict carries a stance the Auditor contradicted. Optional until #42 is deployed. */
   auditorUnsure?: number;
+  /** Rules whose current agent verdict the guardrail blocked from being checked (ADR-0006). Optional until #65 is deployed. */
+  guardrailBlocked?: number;
   /**
    * Rules that need the consultant: the Auditor disagrees or contradicted
    * itself, or a brief is needed, each rule once. The list sorts on it and needsAction=true filters
