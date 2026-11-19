@@ -27,6 +27,9 @@ const trailRows: Item[] = [];
 const verdicts: Item[] = [];
 let trailFails = false;
 let modelReply = '{"passed":true,"issues":[]}';
+// When set, Bedrock answers with this instead of a normal reply.
+let bedrockOverride: Item | undefined;
+let bedrockCalls = 0;
 
 type Handler = (event: unknown) => Promise<{ passed: boolean }>;
 let handler: Handler;
@@ -70,6 +73,8 @@ before(async () => {
   };
   (BedrockRuntimeClient.prototype as { send: unknown }).send = async (cmd: ConverseCommand) => {
     lastRequest = cmd.input;
+    bedrockCalls += 1;
+    if (bedrockOverride) return bedrockOverride;
     return {
       stopReason: 'end_turn',
       output: { message: { role: 'assistant', content: [{ text: modelReply }] } },
@@ -92,6 +97,8 @@ beforeEach(() => {
   verdicts.length = 0;
   trailFails = false;
   modelReply = '{"passed":true,"issues":[]}';
+  bedrockOverride = undefined;
+  bedrockCalls = 0;
 });
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
@@ -542,5 +549,67 @@ describe('Auditor reads what changed on the page', () => {
     const sent = JSON.stringify(await audit());
     assert.match(sent, /recognized federal program/);
     assert.doesNotMatch(sent, /Do not flag a claim because the rest of the page is not shown/);
+  });
+});
+
+describe('a guardrail block reaches the consultant (ADR-0006)', () => {
+  // The Nov 18 2026 block: the street-address regex on the Auditor's output.
+  // The model's text sits in the trace and must never reach the verdict.
+  const outputBlock = {
+    stopReason: 'guardrail_intervened',
+    output: { message: { role: 'assistant', content: [{ text: 'This response was blocked by Argus content policy.' }] } },
+    trace: {
+      guardrail: {
+        outputAssessments: {
+          g: [{ sensitiveInformationPolicy: { regexes: [{ name: 'street-address', match: '12 Fake Street', action: 'BLOCKED' }] } }],
+        },
+      },
+    },
+  };
+
+  async function quietly(event: Item): Promise<{ passed: boolean }> {
+    const origLog = console.log;
+    console.log = () => {};
+    try {
+      return await handler(event);
+    } finally {
+      console.log = origLog;
+    }
+  }
+
+  it('emits a signed-ready verdict for the consultant instead of throwing', async () => {
+    bedrockOverride = outputBlock;
+    const res = await quietly({ detail: hypothesis });
+    assert.equal(res.passed, true);
+    assert.equal(verdicts.length, 1);
+    const v = verdicts[0];
+    assert.equal(v.passed, true, 'Anchor drops a failed verdict, which would lose the client');
+    assert.equal(v.affectedStance, 'uncertain');
+    assert.equal(v.affectedStanceBlocked, true);
+    assert.equal(v.correctedConfidence, 'low');
+    assert.equal(v.correctedNarrative, hypothesis.narrative);
+    assert.match(String(v.affectedStanceReason), /regex:street-address/);
+    assert.equal(trailRows[0].outcome, 'guardrail-blocked');
+  });
+
+  it('keeps the blocked text and the matched text out of the verdict', async () => {
+    bedrockOverride = outputBlock;
+    await quietly({ detail: hypothesis });
+    const { originalHypothesis: _h, ...rest } = verdicts[0];
+    assert.doesNotMatch(JSON.stringify(rest), /Fake Street|content policy/);
+  });
+
+  it('makes no model call for a hypothesis the guardrail blocked at the Analyst', async () => {
+    await quietly({ detail: { ...hypothesis, guardrailBlock: { stage: 'input', policies: ['content:HATE'] } } });
+    assert.equal(bedrockCalls, 0);
+    assert.equal(verdicts.length, 1);
+    assert.equal(verdicts[0].passed, true);
+    assert.equal(verdicts[0].affectedStanceBlocked, true);
+    assert.match(String(verdicts[0].affectedStanceReason), /Analyst.*input: content:HATE/);
+  });
+
+  it('leaves the marker off a verdict the model wrote', async () => {
+    await quietly({ detail: hypothesis });
+    assert.equal(verdicts[0].affectedStanceBlocked, undefined);
   });
 });

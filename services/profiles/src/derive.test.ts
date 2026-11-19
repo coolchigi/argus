@@ -131,3 +131,25 @@ describe('a stance the Auditor contradicted needs action', () => {
     }
   });
 });
+
+describe('a check the guardrail blocked needs action (ADR-0006)', () => {
+  const blocked = (extra: Row = {}) => ({
+    auditorStance: { stance: 'uncertain', reason: "The guardrail blocked the Auditor's check (output: regex:street-address), so no model checked whether C-1 is affected.", blocked: true, ...extra },
+  });
+
+  it('counts it as action required on a not-affected verdict', () => {
+    const rows = [agent('run-1', '2026-09-20T00:00:00.000Z', { isAffected: false, ...blocked() })].map(toAssessment);
+    assert.equal(countsByClient(rows, []).get('C-1')?.actionRequired, 1);
+    assert.equal(countsByClient(rows, []).get('C-1')?.auditorUnsure, 0, 'the Auditor did not contradict itself');
+    const [c] = clientAssessments(rows, []);
+    assert.equal(c.actionReason, 'auditor-unsure');
+    assert.equal(c.auditorStance?.blocked, true);
+  });
+
+  it('ignores the marker unless it is exactly true on an uncertain stance', () => {
+    for (const extra of [{ blocked: 'true' }, { blocked: false }, { stance: 'agree' }]) {
+      const rows = [agent('run-1', '2026-09-20T00:00:00.000Z', { isAffected: false, ...blocked(extra) })].map(toAssessment);
+      assert.equal(countsByClient(rows, []).get('C-1')?.actionRequired, 0, JSON.stringify(extra));
+    }
+  });
+});

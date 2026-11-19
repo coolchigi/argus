@@ -40,6 +40,9 @@ type AuditVerdict = {
   // Set by the Auditor only when its stance-check read a self-contradicting
   // stance as "uncertain".
   affectedStanceContradicted?: unknown;
+  // Set by the Auditor only when the guardrail blocked the Analyst's or the
+  // Auditor's call, so no model checked the answer (ADR-0006).
+  affectedStanceBlocked?: unknown;
   originalHypothesis: {
     isAffected: boolean;
     impactType: ImpactType;
@@ -49,19 +52,22 @@ type AuditVerdict = {
   };
 };
 
-type AuditorStance = { stance: 'agree' | 'disagree' | 'uncertain'; reason: string; contradicted?: true };
+type AuditorStance = { stance: 'agree' | 'disagree' | 'uncertain'; reason: string; contradicted?: true; blocked?: true };
 
 // The Auditor's view of the Analyst's isAffected, signed next to it (ADR-0004).
 // A verdict without a usable stance signs exactly the fields it signed before
 // ADR-0004, so the payload only gains the key when there's something to sign.
 // The same goes for contradicted: it's signed only on an "uncertain" the
 // Auditor's stance-check produced, so every other stance keeps its bytes.
+// blocked works the same way, on an "uncertain" for a check the guardrail
+// blocked (ADR-0006).
 export function auditorStanceOf(
-  verdict: Pick<AuditVerdict, 'affectedStance' | 'affectedStanceReason' | 'affectedStanceContradicted'>,
+  verdict: Pick<AuditVerdict, 'affectedStance' | 'affectedStanceReason' | 'affectedStanceContradicted' | 'affectedStanceBlocked'>,
 ): AuditorStance | null {
   const s = verdict.affectedStance;
   if (s !== 'agree' && s !== 'disagree' && s !== 'uncertain') return null;
   const reason = typeof verdict.affectedStanceReason === 'string' ? verdict.affectedStanceReason : '';
+  if (s === 'uncertain' && verdict.affectedStanceBlocked === true) return { stance: s, reason, blocked: true };
   if (s === 'uncertain' && verdict.affectedStanceContradicted === true) return { stance: s, reason, contradicted: true };
   return { stance: s, reason };
 }

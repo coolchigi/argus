@@ -621,19 +621,25 @@ describe('Composer stream retries', () => {
     assert.equal(bedrockCalls, 1);
   });
 
-  it('drops a guardrail block with a clear log line', async () => {
+  it('writes a fixed draft for the consultant when the guardrail blocks the call (ADR-0006)', async () => {
     const send = (BedrockRuntimeClient.prototype as { send: unknown }).send;
-    (BedrockRuntimeClient.prototype as { send: unknown }).send = async () => ({ stopReason: 'guardrail_intervened', trace: {} });
+    (BedrockRuntimeClient.prototype as { send: unknown }).send = async () => ({
+      stopReason: 'guardrail_intervened',
+      output: { message: { role: 'assistant', content: [{ text: 'This response was blocked by Argus content policy.' }] } },
+      trace: { guardrail: { outputAssessments: { g: [{ sensitiveInformationPolicy: { piiEntities: [{ type: 'NAME', match: 'Jane Doe', action: 'BLOCKED' }] } }] } } },
+    });
     try {
       const res = await compose([insert({}, '401')]);
       assert.deepEqual(failuresOf(res), []);
     } finally {
       (BedrockRuntimeClient.prototype as { send: unknown }).send = send;
     }
-    assert.equal(briefs.length, 0);
-    assert.equal(permanentLog()?.reason, 'guardrail-blocked');
-    assert.equal(permanentLog()?.sequenceNumber, '401');
-    assert.equal(trailRows[0].outcome, 'failed');
+    assert.equal(briefs.length, 1, 'the client still gets a brief');
+    assert.equal(emitted.length, 1, 'the consultant hears about it');
+    assert.equal(permanentLog(), undefined);
+    assert.doesNotMatch(JSON.stringify(briefs[0]), /Jane Doe|content policy/);
+    assert.match(String(briefs[0].bodyMarkdown), /I'm checking what this means for you/);
+    assert.equal(trailRows[0].outcome, 'drafted');
   });
 
   it('drops a record whose rule is missing, before any Bedrock call', async () => {

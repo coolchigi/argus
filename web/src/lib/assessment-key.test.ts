@@ -43,8 +43,9 @@ test("the stance is read from agent rows only, and an unknown one reads as none"
     stance: "disagree",
     reason: "PNP nomination on file.",
     contradicted: false,
+    blocked: false,
   });
-  assert.deepEqual(auditorStanceOf({ auditorStance: { stance: "uncertain" } }), { stance: "uncertain", reason: "", contradicted: false });
+  assert.deepEqual(auditorStanceOf({ auditorStance: { stance: "uncertain" } }), { stance: "uncertain", reason: "", contradicted: false, blocked: false });
   assert.equal(auditorStanceOf({ auditorStance: { stance: "maybe", reason: "x" } }), null);
   assert.equal(auditorStanceOf({ auditorStance: null }), null);
   assert.equal(auditorStanceOf({ recordKind: "consultant-review", auditorStance: { stance: "disagree", reason: "x" } }), null);
@@ -74,4 +75,11 @@ test("the Auditor view says what the Auditor answered, from its note", () => {
   const disagreed = contradictionNoteOf('The Auditor answered "disagree" with isAffected=true, but its reason argues the opposite: x');
   assert.equal(contradictionHeadline(disagreed, true), "The Auditor said this client is not affected, but its reason argues the opposite.");
   assert.equal(contradictionHeadline(null, true), "The Auditor's answer and its reason disagree about whether this client is affected.");
+});
+
+test("blocked reads true only on an uncertain stance marked exactly true (ADR-0006)", () => {
+  assert.equal(auditorStanceOf({ auditorStance: { stance: "uncertain", reason: "r", blocked: true } })?.blocked, true);
+  for (const bad of [{ stance: "uncertain", blocked: "true" }, { stance: "uncertain", blocked: false }, { stance: "agree", blocked: true }]) {
+    assert.equal(auditorStanceOf({ auditorStance: bad })?.blocked, false, JSON.stringify(bad));
+  }
 });

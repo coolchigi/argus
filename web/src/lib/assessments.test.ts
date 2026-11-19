@@ -160,3 +160,13 @@ describe("a stance the Auditor contradicted", () => {
     assert.equal(isAuditorFlag(null), false);
   });
 });
+
+describe("a check the guardrail blocked (ADR-0006)", () => {
+  const blocked = { stance: "uncertain" as const, reason: "The guardrail blocked the Auditor's check (output: regex:street-address), so no model checked whether C1 is affected.", blocked: true };
+
+  it("needs the consultant on a not-affected verdict", () => {
+    assert.equal(actionReasonOf(imp({ isAffected: false, auditorStance: blocked }), false), "auditor-unsure");
+    const [row] = deriveAssessmentRows([imp({ isAffected: false, auditorStance: blocked })], [], []);
+    assert.equal(row.actionRequired, true);
+  });
+});

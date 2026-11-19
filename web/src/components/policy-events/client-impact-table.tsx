@@ -60,7 +60,7 @@ function Details({ c }: { c: PolicyEventImpact }) {
       {stance && (
         <div className={cn("border-l-2 px-3 py-2", stance.stance === "disagree" ? "border-danger bg-danger-subtle" : "border-brand-ink bg-brand-subtle")}>
           <div className={cn("label mb-1", stance.stance === "disagree" ? "text-danger-ink" : "text-brand-ink")}>
-            {stance.stance === "disagree" ? "The Auditor disagrees" : stance.contradicted ? "The Auditor contradicted itself" : "The Auditor isn't sure"}
+            {stance.stance === "disagree" ? "The Auditor disagrees" : stance.contradicted ? "The Auditor contradicted itself" : stance.blocked ? "The guardrail blocked the check" : "The Auditor isn't sure"}
           </div>
           {stance.contradicted && (
             <p className="mb-1 max-w-[68ch] text-[12px] font-medium text-ink-1">{contradictionHeadline(contradictionNoteOf(stance.reason), c.isAffected)}</p>

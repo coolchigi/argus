@@ -33,6 +33,8 @@ export function AuditorView({
   // A stance the Auditor contradicted: its answer and its reason disagree.
   const note = !disagree && stance.contradicted ? contradictionNoteOf(stance.reason) : null;
   const contradicted = !disagree && stance.contradicted === true;
+  // A check the guardrail blocked, so no model checked the answer (ADR-0006).
+  const blocked = !disagree && stance.blocked === true;
   return (
     <section
       aria-labelledby="auditor-view-heading"
@@ -42,14 +44,16 @@ export function AuditorView({
         <h2 id="auditor-view-heading" className={cn("label", disagree ? "text-danger-ink" : "text-brand-ink")}>
           Auditor&apos;s view
         </h2>
-        <Badge tone={disagree ? "danger" : "brand"}>{disagree ? "Disagrees" : contradicted ? "Contradicted itself" : "Not sure"}</Badge>
+        <Badge tone={disagree ? "danger" : "brand"}>{disagree ? "Disagrees" : contradicted ? "Contradicted itself" : blocked ? "Not checked" : "Not sure"}</Badge>
       </div>
       <p className="mt-2 text-[13px] font-medium text-ink-1">
         {disagree
           ? `The Auditor thinks this client is ${verdict(!isAffected)}.`
           : contradicted
             ? contradictionHeadline(note, isAffected)
-            : `The Auditor couldn't confirm this client is ${verdict(isAffected)}.`}
+            : blocked
+              ? "The guardrail blocked the check, so no model checked this client's file. Check it against the IRCC page."
+              : `The Auditor couldn't confirm this client is ${verdict(isAffected)}.`}
       </p>
       <p className="mt-1 max-w-[72ch] text-[13px] leading-relaxed text-ink-1">{(note ? note.modelReason : stance.reason) || "No reason recorded."}</p>
       <p className="mt-2 text-[12px] text-ink-2">

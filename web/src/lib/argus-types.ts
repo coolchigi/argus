@@ -21,14 +21,17 @@ export type Stance = "agree" | "disagree" | "uncertain";
 /**
  * The Auditor's view of the Analyst's isAffected, signed with the agent row.
  * contradicted is true only on an "uncertain" that Argus recorded because the
- * Auditor's reason argued the opposite of its stance. Absent on older rows.
+ * Auditor's reason argued the opposite of its stance. blocked is true only on
+ * an "uncertain" for a check the guardrail blocked, so no model checked the
+ * answer (ADR-0006). Both are absent on older rows.
  */
-export type AuditorStance = { stance: Stance; reason: string; contradicted?: boolean };
+export type AuditorStance = { stance: Stance; reason: string; contradicted?: boolean; blocked?: boolean };
 
 /**
  * Why a client needs the consultant. The Auditor's flags first: settle the
  * verdict before briefing on it. auditor-unsure is a stance the Auditor
- * contradicted, so nobody can tell which answer it meant.
+ * contradicted, so nobody can tell which answer it meant, or a check the
+ * guardrail blocked, so nobody checked it.
  */
 export type ActionReason = "auditor-disagrees" | "auditor-unsure" | "brief-needed";
 

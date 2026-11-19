@@ -699,7 +699,7 @@ describe('Auditor disagreement as action required (ADR-0004)', () => {
     const [c] = buildEventImpacts(rows, [], [], new Map());
     assert.equal(c.actionRequired, true);
     assert.equal(c.actionReason, 'auditor-disagrees');
-    assert.deepEqual(c.auditorStance, { stance: 'disagree', reason: 'The profile meets the condition the rule sets.', contradicted: false });
+    assert.deepEqual(c.auditorStance, { stance: 'disagree', reason: 'The profile meets the condition the rule sets.', contradicted: false, blocked: false });
   });
 
   it('puts disagreement ahead of a missing brief, and keeps it after a brief was sent', () => {
@@ -790,3 +790,28 @@ describe('A stance the Auditor contradicted is action required', () => {
   });
 });
 
+
+describe('A check the guardrail blocked is action required (ADR-0006)', () => {
+  // The Nov 18 2026 case: the Analyst said not affected and the guardrail
+  // blocked the Auditor, so no second model checked that answer.
+  const blocked = (extra: Record<string, unknown> = {}) => ({
+    auditorStance: { stance: 'uncertain', reason: "The guardrail blocked the Auditor's check (output: regex:street-address), so no model checked whether C-1 is affected.", blocked: true, ...extra },
+  });
+
+  it('flags a not-affected verdict whose check the guardrail blocked', () => {
+    const rows = [row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false, ...blocked() })];
+    const e = only(events(rows, rules(rule(RULE_A))));
+    assert.equal(e.status, 'action-required');
+    assert.equal(e.auditorUnsure, 0, 'the Auditor did not contradict itself');
+    const [c] = buildEventImpacts(rows, [], [], new Map());
+    assert.equal(c.actionReason, 'auditor-unsure');
+    assert.equal(c.auditorStance?.blocked, true);
+  });
+
+  it('ignores the marker unless it is exactly true on an uncertain stance', () => {
+    for (const extra of [{ blocked: 'true' }, { blocked: false }, { stance: 'agree' }]) {
+      const rows = [row(RUN_A1, RULE_A, 'C-1', '2026-09-20T10:01:00.000Z', { isAffected: false, ...blocked(extra) })];
+      assert.equal(only(events(rows, rules(rule(RULE_A)))).status, 'no-impact', JSON.stringify(extra));
+    }
+  });
+});

@@ -28,8 +28,10 @@ export type Stance = 'agree' | 'disagree' | 'uncertain';
 /**
  * contradicted is true only on an "uncertain" the Auditor's stance-check
  * produced, because the Auditor's reason argued the opposite of its stance.
+ * blocked is true only on an "uncertain" for a check the guardrail blocked, so
+ * no model checked the answer (ADR-0006).
  */
-export type AuditorStance = { stance: Stance; reason: string; contradicted: boolean };
+export type AuditorStance = { stance: Stance; reason: string; contradicted: boolean; blocked: boolean };
 
 /**
  * Why a client needs the consultant. The Auditor's flags come first: settle
@@ -341,7 +343,7 @@ export function actionReasonOf(
   briefSent: boolean,
 ): ActionReason | null {
   if (current.recordKind === 'agent' && current.auditorStance?.stance === 'disagree') return 'auditor-disagrees';
-  if (current.recordKind === 'agent' && current.auditorStance?.contradicted) return 'auditor-unsure';
+  if (current.recordKind === 'agent' && (current.auditorStance?.contradicted || current.auditorStance?.blocked)) return 'auditor-unsure';
   if (current.isAffected && !briefSent) return 'brief-needed';
   return null;
 }
@@ -802,9 +804,14 @@ export function recordKindOf(r: Row): RecordKind {
 /** The signed auditorStance map, or null when the row has none (signed before ADR-0004). */
 export function stanceOf(v: unknown): AuditorStance | null {
   if (!v || typeof v !== 'object') return null;
-  const { stance, reason, contradicted } = v as Row;
+  const { stance, reason, contradicted, blocked } = v as Row;
   if (stance !== 'agree' && stance !== 'disagree' && stance !== 'uncertain') return null;
-  return { stance, reason: typeof reason === 'string' ? reason : '', contradicted: stance === 'uncertain' && contradicted === true };
+  return {
+    stance,
+    reason: typeof reason === 'string' ? reason : '',
+    contradicted: stance === 'uncertain' && contradicted === true,
+    blocked: stance === 'uncertain' && blocked === true,
+  };
 }
 
 export function str(v: unknown): string {
