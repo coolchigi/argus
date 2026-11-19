@@ -141,8 +141,9 @@ describe('a check the guardrail blocked needs action (ADR-0006)', () => {
     const rows = [agent('run-1', '2026-09-20T00:00:00.000Z', { isAffected: false, ...blocked() })].map(toAssessment);
     assert.equal(countsByClient(rows, []).get('C-1')?.actionRequired, 1);
     assert.equal(countsByClient(rows, []).get('C-1')?.auditorUnsure, 0, 'the Auditor did not contradict itself');
+    assert.equal(countsByClient(rows, []).get('C-1')?.guardrailBlocked, 1, 'the client row says why it needs action');
     const [c] = clientAssessments(rows, []);
-    assert.equal(c.actionReason, 'auditor-unsure');
+    assert.equal(c.actionReason, 'guardrail-blocked');
     assert.equal(c.auditorStance?.blocked, true);
   });
 

@@ -803,8 +803,9 @@ describe('A check the guardrail blocked is action required (ADR-0006)', () => {
     const e = only(events(rows, rules(rule(RULE_A))));
     assert.equal(e.status, 'action-required');
     assert.equal(e.auditorUnsure, 0, 'the Auditor did not contradict itself');
+    assert.equal(e.guardrailBlocked, 1, 'the event says why it needs action');
     const [c] = buildEventImpacts(rows, [], [], new Map());
-    assert.equal(c.actionReason, 'auditor-unsure');
+    assert.equal(c.actionReason, 'guardrail-blocked');
     assert.equal(c.auditorStance?.blocked, true);
   });
 

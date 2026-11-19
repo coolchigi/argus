@@ -30,10 +30,10 @@ export type AuditorStance = { stance: Stance; reason: string; contradicted?: boo
 /**
  * Why a client needs the consultant. The Auditor's flags first: settle the
  * verdict before briefing on it. auditor-unsure is a stance the Auditor
- * contradicted, so nobody can tell which answer it meant, or a check the
- * guardrail blocked, so nobody checked it.
+ * contradicted, so nobody can tell which answer it meant. guardrail-blocked is
+ * a check the guardrail blocked, so no model checked it (ADR-0006).
  */
-export type ActionReason = "auditor-disagrees" | "auditor-unsure" | "brief-needed";
+export type ActionReason = "auditor-disagrees" | "auditor-unsure" | "guardrail-blocked" | "brief-needed";
 
 export type Impact = {
   rcicId: string;

@@ -189,6 +189,14 @@ export function EventDetail({
                 </span>
               </>
             )}
+            {(e.guardrailBlocked ?? 0) > 0 && (
+              <>
+                <span aria-hidden>·</span>
+                <span className="text-brand-ink tabular">
+                  Not checked on {e.guardrailBlocked} {e.guardrailBlocked === 1 ? "client" : "clients"}
+                </span>
+              </>
+            )}
             {(e.consultantReviewed ?? 0) > 0 && (
               <>
                 <span aria-hidden>·</span>

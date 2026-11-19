@@ -38,7 +38,8 @@ export function actionReasonOf(current: Impact, briefDelivered: boolean): Action
   // auditorStanceOf is null on a review.
   const stance = auditorStanceOf(current);
   if (stance?.stance === "disagree") return "auditor-disagrees";
-  if (stance?.contradicted || stance?.blocked) return "auditor-unsure";
+  if (stance?.blocked) return "guardrail-blocked";
+  if (stance?.contradicted) return "auditor-unsure";
   if (current.isAffected && !briefDelivered) return "brief-needed";
   return null;
 }
@@ -69,6 +70,7 @@ export function countActionRequired(impacts: readonly Impact[], briefs: readonly
 export const ACTION_REASON_LABEL: Record<ActionReason, string> = {
   "auditor-disagrees": "Auditor disagrees",
   "auditor-unsure": "Auditor unsure",
+  "guardrail-blocked": "Not checked",
   "brief-needed": "Needs a brief",
 };
 
@@ -76,14 +78,15 @@ export const ACTION_REASON_LABEL: Record<ActionReason, string> = {
 export const ACTION_REASON_TONE: Record<ActionReason, "danger" | "brand"> = {
   "auditor-disagrees": "danger",
   "auditor-unsure": "brand",
+  "guardrail-blocked": "brand",
   "brief-needed": "brand",
 };
 
-export type AuditorFlag = Extract<ActionReason, "auditor-disagrees" | "auditor-unsure">;
+export type AuditorFlag = Extract<ActionReason, "auditor-disagrees" | "auditor-unsure" | "guardrail-blocked">;
 
 /** The reasons that ask the consultant to settle the verdict itself. */
 export function isAuditorFlag(r: ActionReason | null | undefined): r is AuditorFlag {
-  return r === "auditor-disagrees" || r === "auditor-unsure";
+  return r === "auditor-disagrees" || r === "auditor-unsure" || r === "guardrail-blocked";
 }
 
 /**

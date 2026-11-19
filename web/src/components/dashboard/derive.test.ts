@@ -51,7 +51,16 @@ test("the dashboard counts a stance the Auditor contradicted with the same funct
 
 test("the banner and the tile name a contradicted stance", () => {
   assert.equal(bannerImpactSentence(ev({ affectedCount: 0, auditorUnsure: 1 })), "0 of your clients are affected. The Auditor contradicted itself on 1 verdict.");
-  const none = { clientsAffected: 0, clientsWaiting: 0, actionRequired: 0, auditorDisagrees: 0, auditorUnsure: 0, briefsToSend: 2, briefsDrafted: 1, eventsThisMonth: 0, correctionsFiled: 0 };
+  const none = { clientsAffected: 0, clientsWaiting: 0, actionRequired: 0, auditorDisagrees: 0, auditorUnsure: 0, guardrailBlocked: 0, briefsToSend: 2, briefsDrafted: 1, eventsThisMonth: 0, correctionsFiled: 0 };
   assert.equal(actionSub(none), "2 briefs to send, 1 drafted");
   assert.equal(actionSub({ ...none, auditorUnsure: 2 }), "2 briefs to send · Auditor unsure on 2");
+});
+
+test("the banner and the tile say why a blocked check needs action (ADR-0006)", () => {
+  assert.equal(
+    bannerImpactSentence(ev({ affectedCount: 0, guardrailBlocked: 1 })),
+    "0 of your clients are affected. The guardrail blocked the check on 1 verdict.",
+  );
+  const none = { clientsAffected: 0, clientsWaiting: 0, actionRequired: 1, auditorDisagrees: 0, auditorUnsure: 0, guardrailBlocked: 1, briefsToSend: 0, briefsDrafted: 0, eventsThisMonth: 0, correctionsFiled: 0 };
+  assert.equal(actionSub(none), "0 briefs to send · Not checked on 1");
 });

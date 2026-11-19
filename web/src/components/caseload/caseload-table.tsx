@@ -21,6 +21,8 @@ function actionLabel(c: ClientSummary): string {
   if (d > 0) parts.push(`the Auditor disagrees with ${d} ${d === 1 ? "verdict" : "verdicts"}`);
   const u = c.auditorUnsure ?? 0;
   if (u > 0) parts.push(`the Auditor contradicted itself on ${u} ${u === 1 ? "verdict" : "verdicts"}`);
+  const g = c.guardrailBlocked ?? 0;
+  if (g > 0) parts.push(`the guardrail blocked the check on ${g} ${g === 1 ? "verdict" : "verdicts"}`);
   return parts.length > 0 ? `, ${parts.join(", ")}` : "";
 }
 
@@ -43,6 +45,7 @@ const COLUMNS: Column<ClientSummary>[] = [
         <ClientChip clientId={c.clientId} needsAction={clientNeedsAction(c)} />
         {(c.auditorDisagrees ?? 0) > 0 && <AuditorFlagBadge reason="auditor-disagrees" count={c.auditorDisagrees} />}
         {(c.auditorUnsure ?? 0) > 0 && <AuditorFlagBadge reason="auditor-unsure" count={c.auditorUnsure} />}
+        {(c.guardrailBlocked ?? 0) > 0 && <AuditorFlagBadge reason="guardrail-blocked" count={c.guardrailBlocked} />}
       </div>
     ),
   },

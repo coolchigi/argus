@@ -36,9 +36,10 @@ export type AuditorStance = { stance: Stance; reason: string; contradicted: bool
 /**
  * Why a client needs the consultant. The Auditor's flags come first: settle
  * the verdict before briefing on it. auditor-unsure is a stance the Auditor
- * contradicted, so nobody knows which answer it meant.
+ * contradicted, so nobody knows which answer it meant. guardrail-blocked is a
+ * check the guardrail blocked, so no model checked it (ADR-0006).
  */
-export type ActionReason = 'auditor-disagrees' | 'auditor-unsure' | 'brief-needed';
+export type ActionReason = 'auditor-disagrees' | 'auditor-unsure' | 'guardrail-blocked' | 'brief-needed';
 
 export type Assessment = {
   assessmentKey: string;
@@ -136,6 +137,8 @@ export type PolicyEvent = {
   auditorDisagrees: number;
   /** Clients whose current verdict is the agent's and the Auditor contradicted its own stance. */
   auditorUnsure: number;
+  /** Clients whose current verdict is the agent's and the guardrail blocked its check (ADR-0006). */
+  guardrailBlocked: number;
   /** Clients whose current verdict is a consultant review. */
   consultantReviewed: number;
   correctionsFiled: number;
@@ -343,7 +346,8 @@ export function actionReasonOf(
   briefSent: boolean,
 ): ActionReason | null {
   if (current.recordKind === 'agent' && current.auditorStance?.stance === 'disagree') return 'auditor-disagrees';
-  if (current.recordKind === 'agent' && (current.auditorStance?.contradicted || current.auditorStance?.blocked)) return 'auditor-unsure';
+  if (current.recordKind === 'agent' && current.auditorStance?.blocked) return 'guardrail-blocked';
+  if (current.recordKind === 'agent' && current.auditorStance?.contradicted) return 'auditor-unsure';
   if (current.isAffected && !briefSent) return 'brief-needed';
   return null;
 }
@@ -392,6 +396,7 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
     let awaitingBrief = 0;
     let auditorDisagrees = 0;
     let auditorUnsure = 0;
+    let guardrailBlocked = 0;
     let consultantReviewed = 0;
     let needsAction = 0;
     for (const { current, prior } of clients) {
@@ -402,6 +407,7 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
       if (current.recordKind === 'consultant-review') consultantReviewed += 1;
       else if (current.auditorStance?.stance === 'disagree') auditorDisagrees += 1;
       else if (current.auditorStance?.contradicted) auditorUnsure += 1;
+      else if (current.auditorStance?.blocked) guardrailBlocked += 1;
       if (actionReasonOf(current, sent)) needsAction += 1;
     }
 
@@ -444,6 +450,7 @@ export function buildEvents(assessments: Assessment[], rules: Map<string, Rule>,
       awaitingBrief,
       auditorDisagrees,
       auditorUnsure,
+      guardrailBlocked,
       consultantReviewed,
       correctionsFiled,
       status,

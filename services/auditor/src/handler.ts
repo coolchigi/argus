@@ -183,6 +183,7 @@ async function runAudit(
     affectedStance: verdict.affectedStance,
     affectedStanceReason: verdict.affectedStanceReason,
     affectedStanceContradicted: verdict.affectedStanceContradicted ?? false,
+    affectedStanceBlocked: verdict.affectedStanceBlocked ?? false,
     correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta || verdict.correctedImpactType !== hyp.impactType,
     groundingCheck: hyp.groundingCheck ?? null,
     fewShotCount: fewShots.length,

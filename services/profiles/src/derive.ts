@@ -46,10 +46,10 @@ export type RecordKind = 'agent' | 'consultant-review';
 export type AuditorStance = { stance: 'agree' | 'disagree' | 'uncertain'; reason: string; contradicted: boolean; blocked: boolean };
 /**
  * The Auditor's flags come first: settle the verdict before briefing on it.
- * auditor-unsure is a stance the Auditor contradicted, or a check the guardrail
- * blocked.
+ * auditor-unsure is a stance the Auditor contradicted. guardrail-blocked is a
+ * check the guardrail blocked, so no model checked it (ADR-0006).
  */
-export type ActionReason = 'auditor-disagrees' | 'auditor-unsure' | 'brief-needed';
+export type ActionReason = 'auditor-disagrees' | 'auditor-unsure' | 'guardrail-blocked' | 'brief-needed';
 
 export type BriefRow = {
   briefId: string;
@@ -81,6 +81,8 @@ export type ClientCounts = {
   auditorDisagrees: number;
   /** Rules whose current verdict is the agent's and the Auditor contradicted its own stance on it. */
   auditorUnsure: number;
+  /** Rules whose current verdict is the agent's and the guardrail blocked its check (ADR-0006). */
+  guardrailBlocked: number;
   /**
    * Rules that need the consultant: the Auditor disagrees or contradicted itself, or a brief is
    * needed (same rule as policy-events actionReasonOf). The list sorts and
@@ -143,6 +145,7 @@ export const EMPTY_COUNTS: ClientCounts = {
   unsentBriefs: 0,
   auditorDisagrees: 0,
   auditorUnsure: 0,
+  guardrailBlocked: 0,
   actionRequired: 0,
   lastAssessedAt: null,
   latestAffected: null,
@@ -164,7 +167,8 @@ export function currentFirst(a: AssessmentRow, b: AssessmentRow): number {
 
 export function actionReasonOf(current: AssessmentRow, briefSent: boolean): ActionReason | null {
   if (current.recordKind === 'agent' && current.auditorStance?.stance === 'disagree') return 'auditor-disagrees';
-  if (current.recordKind === 'agent' && (current.auditorStance?.contradicted || current.auditorStance?.blocked)) return 'auditor-unsure';
+  if (current.recordKind === 'agent' && current.auditorStance?.blocked) return 'guardrail-blocked';
+  if (current.recordKind === 'agent' && current.auditorStance?.contradicted) return 'auditor-unsure';
   if (current.isAffected && !briefSent) return 'brief-needed';
   return null;
 }
@@ -228,6 +232,7 @@ export function countsByClient(assessments: AssessmentRow[], briefs: BriefRow[])
       unsentBriefs: affected.filter((a) => !sent.has(`${ruleIdOf(a)}#${clientId}`)).length,
       auditorDisagrees: current.filter((a) => a.recordKind === 'agent' && a.auditorStance?.stance === 'disagree').length,
       auditorUnsure: current.filter((a) => a.recordKind === 'agent' && a.auditorStance?.contradicted === true).length,
+      guardrailBlocked: current.filter((a) => a.recordKind === 'agent' && a.auditorStance?.blocked === true).length,
       actionRequired: current.filter((a) => actionReasonOf(a, sent.has(`${ruleIdOf(a)}#${clientId}`)) !== null).length,
       lastAssessedAt: current[0]?.timestamp ?? null,
       latestAffected: latest ? { assessmentKey: latest.assessmentKey, policyEventId: latest.policyEventId, topic: latest.topic } : null,

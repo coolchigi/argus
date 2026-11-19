@@ -181,6 +181,7 @@ async function anchor(verdict: AuditVerdict): Promise<{ anchored: boolean; outco
     signatureLength: signature.length,
     auditorStance: auditorStance?.stance ?? null,
     auditorStanceContradicted: auditorStance?.contradicted ?? false,
+    auditorStanceBlocked: auditorStance?.blocked ?? false,
   });
 
   return { anchored: true, outcome: alreadySigned ? 'already-signed' : 'signed' };
