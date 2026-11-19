@@ -53,7 +53,7 @@ export default function VerifyLookupPage() {
             spellCheck={false}
             aria-invalid={error ? true : undefined}
             aria-describedby={error ? `${hintId} ${errorId}` : hintId}
-            placeholder="https://tryargus.ca/verify/…"
+            placeholder="https://argusrcic.com/verify/…"
             className="h-11 w-full rounded-sm border border-control bg-surface px-3 font-mono text-[13px] text-ink-1 placeholder:text-ink-3"
           />
           <p id={hintId} className="text-[12px] text-ink-3">

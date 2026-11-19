@@ -8,7 +8,9 @@ import * as kms from 'aws-cdk-lib/aws-kms';
 import * as lambda from 'aws-cdk-lib/aws-lambda';
 import * as nodejs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as logs from 'aws-cdk-lib/aws-logs';
+import * as route53 from 'aws-cdk-lib/aws-route53';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as ses from 'aws-cdk-lib/aws-ses';
 import { Construct } from 'constructs';
 import {
   CA_SIN_PATTERN,
@@ -474,6 +476,15 @@ export class ArgusStatefulStack extends cdk.Stack {
     new cdk.CfnOutput(this, 'UserPoolId', { value: this.userPool.userPoolId });
     new cdk.CfnOutput(this, 'UserPoolClientId', { value: this.userPoolClient.userPoolClientId });
     new cdk.CfnOutput(this, 'SigningKeyArn', { value: this.signingKey.keyArn });
+    // Argus's own domain, registered in Route 53 on 2026-11-19. SES adds its DKIM
+    // records to the hosted zone, so alerts can come from alerts@argusrcic.com.
+    // Attributes, not a lookup, so synth still runs without an AWS account.
+    const argusZone = route53.PublicHostedZone.fromHostedZoneAttributes(this, 'ArgusZone', {
+      hostedZoneId: 'Z014461238SUS9M82PBK',
+      zoneName: 'argusrcic.com',
+    });
+    new ses.EmailIdentity(this, 'ArgusDomainIdentity', { identity: ses.Identity.publicHostedZone(argusZone) });
+
     new cdk.CfnOutput(this, 'PolicyCorpusBucketName', { value: this.policyCorpusBucket.bucketName });
   }
 }

@@ -265,7 +265,7 @@ function TrustSection() {
                 href="/verify"
                 className="mt-2 inline-block fingerprint text-ink-1 break-all underline-offset-4 decoration-hairline hover:underline"
               >
-                tryargus.ca/verify
+                argusrcic.com/verify
               </Link>
             </div>
             <div className="border border-hairline bg-card p-4">
@@ -274,7 +274,7 @@ function TrustSection() {
                 href={JWKS_PATH}
                 className="mt-2 inline-block fingerprint text-ink-1 break-all underline-offset-4 decoration-hairline hover:underline"
               >
-                tryargus.ca{JWKS_PATH}
+                argusrcic.com{JWKS_PATH}
               </a>
               <p className="mt-2 text-[12px] text-ink-2 leading-relaxed">
                 ECDSA P-256 (SHA-256), held in AWS KMS. Every receipt names this key by its ID.
