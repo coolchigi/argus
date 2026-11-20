@@ -305,8 +305,11 @@ export function buildTriageRequest(rule: PolicyRule, client: ClientSummary): Con
 async function triage(rule: PolicyRule, client: ClientSummary, runId: string): Promise<TriageDecision> {
   const res = await bedrock.send(new ConverseCommand(buildTriageRequest(rule, client)));
 
-  // A blocked pair is skipped, the same outcome a non-JSON reply had
-  // before, so one bad pair doesn't stop the rest of the run.
+  // A blocked pair is replayed (ADR-0006). Skipping it left the client with
+  // no assessment for this rule, and nobody heard. The Analyst then assesses
+  // it, and if the guardrail blocks the Analyst too, the consultant gets a
+  // "Not checked" assessment. Once that assessment exists, Recall skips the
+  // pair, so a block costs at most one replay.
   if (res.stopReason === 'guardrail_intervened') {
     const block = describeGuardrailBlock(res);
     log('error', 'guardrail-blocked', {
@@ -319,7 +322,7 @@ async function triage(rule: PolicyRule, client: ClientSummary, runId: string): P
       policies: block.policies,
       guardedInputs: ['rule-summary', 'client-profile'],
     });
-    return { deserves_analysis: false, rationale: 'guardrail-blocked' };
+    return { deserves_analysis: true, rationale: 'guardrail-blocked' };
   }
   const detected = describeGuardrailDetections(res);
   if (detected.length > 0) log('warn', 'guardrail-detected', { runId, agent: 'recall', rcicId: client.rcicId, clientId: client.clientId, ruleHash: rule.rule_hash, policies: detected });

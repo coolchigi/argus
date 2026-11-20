@@ -30,6 +30,8 @@ const trailRows: Item[] = [];
 const emitted: Item[] = [];
 // When set, triage says yes for this topic and Recall replays the rule.
 let replayTopic: string | null = null;
+// When set, the guardrail blocks triage for this topic.
+let blockTopic: string | null = null;
 
 type Handler = () => Promise<{ pairsTriaged: number }>;
 let handler: Handler;
@@ -79,6 +81,13 @@ before(async () => {
     const topic = /"topic": "([^"]+)"/.exec(joined)?.[1];
     const clientId = /"clientId": "([^"]+)"/.exec(joined)?.[1];
     triaged.push(`${topic}:${clientId}`);
+    if (blockTopic !== null && topic === blockTopic) {
+      return {
+        stopReason: 'guardrail_intervened',
+        output: { message: { role: 'assistant', content: [{ text: 'This request was blocked by Argus content policy.' }] } },
+        trace: { guardrail: { inputAssessment: { g: { contentPolicy: { filters: [{ type: 'HATE', confidence: 'HIGH', action: 'BLOCKED', detected: true }] } } } } },
+      };
+    }
     const yes = replayTopic !== null && topic === replayTopic;
     return {
       stopReason: 'end_turn',
@@ -86,7 +95,7 @@ before(async () => {
     };
   };
   (EventBridgeClient.prototype as { send: unknown }).send = async (cmd: { input: { Entries: Array<{ Detail: string }> } }) => {
-    if (replayTopic === null) throw new Error('Recall should not emit when every triage says no');
+    if (replayTopic === null && blockTopic === null) throw new Error('Recall should not emit when every triage says no');
     emitted.push(JSON.parse(cmd.input.Entries[0].Detail) as Item);
     return {};
   };
@@ -127,6 +136,7 @@ async function run() {
 
 beforeEach(() => {
   replayTopic = null;
+  blockTopic = null;
   trailRows.length = 0;
   emitted.length = 0;
   users.length = 0;
@@ -182,5 +192,15 @@ describe('Recall step telemetry', () => {
   it('records nothing when every triage says no', async () => {
     await run();
     assert.equal(trailRows.length, 0);
+  });
+});
+
+describe('a guardrail block on triage (ADR-0006)', () => {
+  it('replays the rule so the client still gets an assessment', async () => {
+    blockTopic = 'pgp-intake';
+    await run();
+    assert.equal(emitted.length, 1, 'a blocked pair used to be skipped, leaving the client with nothing');
+    assert.equal(emitted[0].ruleHash, 'h-pgp');
+    assert.doesNotMatch(JSON.stringify(emitted[0]), /content policy/);
   });
 });
