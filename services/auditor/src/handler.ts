@@ -9,7 +9,7 @@ import { EventBridgeClient, PutEventsCommand } from '@aws-sdk/client-eventbridge
 import { DynamoDBDocumentClient, GetCommand, QueryCommand } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 import { AFFECTED_DEFINITION } from './affected';
-import { describeGuardrailBlock, describeGuardrailDetections, guarded, type GroundingCheck } from './guardrail';
+import { describeGuardrailBlock, describeGuardrailDetections, guarded, type GroundingCheck, type GuardrailBlock } from './guardrail';
 import { isChangesText, isRemovalOnly, READING_CHANGES, ruleTextFor } from './rule-input';
 import { ruleWindow } from './rule-window';
 import { stanceContradictsReason } from './stance-check';
@@ -60,6 +60,9 @@ export type ImpactHypothesis = {
   clientProfile: Record<string, unknown>;
   // Absent on hypotheses emitted before grounding moved to detect mode.
   groundingCheck?: GroundingCheck;
+  // Set only when the guardrail blocked the Analyst's call (ADR-0006). The
+  // hypothesis is then fixed text, and the Auditor makes no model call.
+  guardrailBlock?: GuardrailBlock;
 };
 
 type EventBridgeInput = { source?: string; 'detail-type'?: string; detail?: ImpactHypothesis };
@@ -99,6 +102,10 @@ type AuditVerdict = {
   // the opposite of the stance and the stance was read as "uncertain".
   // Anchor signs it, and it counts as action required.
   affectedStanceContradicted?: true;
+  // Present, and true, only when the guardrail blocked the Analyst's or the
+  // Auditor's call, so no model checked the answer (ADR-0006). Set by our
+  // code, never the model. Anchor signs it, and it counts as action required.
+  affectedStanceBlocked?: true;
   originalHypothesis: ImpactHypothesis;
 };
 
@@ -106,13 +113,13 @@ export const handler = async (event: EventBridgeInput | ImpactHypothesis): Promi
   const runId = randomUUID();
   const hyp: ImpactHypothesis = 'detail' in event && event.detail ? event.detail : (event as ImpactHypothesis);
   const startedAt = performance.now();
-  let outcome: 'passed' | 'rejected' | 'failed' = 'failed';
+  let outcome: 'passed' | 'rejected' | 'guardrail-blocked' | 'failed' = 'failed';
   let fewShotCorrectionKeys: string[] = [];
   try {
     const res = await runAudit(hyp, runId, (keys) => {
       fewShotCorrectionKeys = keys;
     });
-    outcome = res.passed ? 'passed' : 'rejected';
+    outcome = res.blocked ? 'guardrail-blocked' : res.passed ? 'passed' : 'rejected';
     return res;
   } finally {
     // Written after the verdict is emitted. The correction keys go on the
@@ -131,7 +138,7 @@ async function runAudit(
   hyp: ImpactHypothesis,
   runId: string,
   onFewShots: (correctionKeys: string[]) => void,
-): Promise<{ passed: boolean }> {
+): Promise<{ passed: boolean; blocked: boolean }> {
   log('info', 'audit-start', {
     runId,
     hypothesisId: hyp.hypothesisId,
@@ -176,12 +183,13 @@ async function runAudit(
     affectedStance: verdict.affectedStance,
     affectedStanceReason: verdict.affectedStanceReason,
     affectedStanceContradicted: verdict.affectedStanceContradicted ?? false,
+    affectedStanceBlocked: verdict.affectedStanceBlocked ?? false,
     correctionApplied: verdict.correctedNumericDelta !== hyp.numericDelta || verdict.correctedImpactType !== hyp.impactType,
     groundingCheck: hyp.groundingCheck ?? null,
     fewShotCount: fewShots.length,
   });
 
-  return { passed: verdict.passed };
+  return { passed: verdict.passed, blocked: verdict.affectedStanceBlocked === true };
 }
 
 async function loadRuleContent(ruleHash: string, profile?: Record<string, unknown>): Promise<string> {
@@ -473,6 +481,14 @@ export function auditOutcome(
 }
 
 async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Correction[], runId: string): Promise<AuditVerdict> {
+  // The guardrail blocked the Analyst on this rule text and profile, and the
+  // Auditor reads the same text, so a model call would block too (ApplyGuardrail
+  // gave the same answer 10 of 10 on fixed text, measured 2026-11-12).
+  if (hyp.guardrailBlock) {
+    log('info', 'audit-skipped-analyst-blocked', { runId, hypothesisId: hyp.hypothesisId, clientId: hyp.clientId, ruleHash: hyp.ruleHash, stage: hyp.guardrailBlock.stage, policies: hyp.guardrailBlock.policies });
+    return blockedVerdict(hyp, 'analyst', hyp.guardrailBlock);
+  }
+
   const res = await bedrock.send(new ConverseCommand(buildAuditRequest(hyp, ruleContent, fewShots)));
 
   if (res.stopReason === 'guardrail_intervened') {
@@ -492,7 +508,8 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
         ...(fewShots.length > 0 ? ['consultant-corrections'] : []),
       ],
     });
-    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+    // A retry blocks the same way (3 of 3 on 2026-11-18), so no throw.
+    return blockedVerdict(hyp, 'auditor', block);
   }
   const detected = describeGuardrailDetections(res);
   if (detected.length > 0) log('warn', 'guardrail-detected', { runId, agent: 'auditor', hypothesisId: hyp.hypothesisId, clientId: hyp.clientId, ruleHash: hyp.ruleHash, policies: detected });
@@ -520,6 +537,39 @@ async function audit(hyp: ImpactHypothesis, ruleContent: string, fewShots: Corre
     ...outcome,
     auditorReasoning: parsed.auditorReasoning ?? '(no reasoning)',
     ...stance,
+    originalHypothesis: hyp,
+  };
+}
+
+// The verdict for a check the guardrail blocked (ADR-0006). All fixed text:
+// nothing the blocked model wrote is used, since it can hold whatever tripped
+// the filter. Policy names are safe to show, matched text never is. Anchor
+// signs it like any verdict, so the client keeps a record and the consultant
+// sees it as action required instead of the client going missing.
+export function blockedVerdict(hyp: ImpactHypothesis, agent: 'analyst' | 'auditor', block: GuardrailBlock): AuditVerdict {
+  const where = `${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`;
+  const who = agent === 'analyst' ? 'Analyst' : 'Auditor';
+  return {
+    verdictId: randomUUID(),
+    timestamp: new Date().toISOString(),
+    hypothesisId: hyp.hypothesisId,
+    rcicId: hyp.rcicId,
+    clientId: hyp.clientId,
+    policyEventId: hyp.policyEventId,
+    ruleHash: hyp.ruleHash,
+    passed: true,
+    issues: [{ type: 'other', detail: `The guardrail blocked the ${who}'s check (${where}).` }],
+    correctedNumericDelta: hyp.numericDelta,
+    correctedImpactType: hyp.impactType,
+    correctedNarrative: hyp.narrative,
+    correctedRecommendedAction: hyp.recommendedAction,
+    correctedConfidence: 'low',
+    auditorReasoning: agent === 'analyst'
+      ? "The guardrail stopped the Analyst, so no model assessed this client. A consultant needs to check the client's file against the IRCC page."
+      : "The guardrail stopped the Auditor, so no second model checked the Analyst's answer. A consultant needs to check it against the IRCC page.",
+    affectedStance: 'uncertain',
+    affectedStanceReason: `The guardrail blocked the ${who}'s check (${where}), so no model checked whether ${hyp.clientId} is affected.`.slice(0, STANCE_REASON_MAX),
+    affectedStanceBlocked: true,
     originalHypothesis: hyp,
   };
 }

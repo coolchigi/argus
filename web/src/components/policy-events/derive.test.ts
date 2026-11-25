@@ -256,3 +256,7 @@ test("an unaffected client the Auditor is unsure about stays visible and needs a
   assert.equal(clientNeedsAction(unsure), true);
   assert.deepEqual(visibleClients([unsure, settled], false).map((c) => c.clientId), ["C-1"]);
 });
+
+test("the event note says why a blocked check needs action (ADR-0006)", () => {
+  assert.equal(eventNote({ runs: 1, correctionsFiled: 0, guardrailBlocked: 1 }), "Not checked on 1 client");
+});

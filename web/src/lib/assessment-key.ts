@@ -46,9 +46,14 @@ export function auditorStanceOf(row: { recordKind?: string | null; auditorStance
   if (isReview(row)) return null;
   const v = row.auditorStance;
   if (!v || typeof v !== "object") return null;
-  const { stance, reason, contradicted } = v as { stance?: unknown; reason?: unknown; contradicted?: unknown };
+  const { stance, reason, contradicted, blocked } = v as { stance?: unknown; reason?: unknown; contradicted?: unknown; blocked?: unknown };
   if (stance !== "agree" && stance !== "disagree" && stance !== "uncertain") return null;
-  return { stance, reason: typeof reason === "string" ? reason : "", contradicted: stance === "uncertain" && contradicted === true };
+  return {
+    stance,
+    reason: typeof reason === "string" ? reason : "",
+    contradicted: stance === "uncertain" && contradicted === true,
+    blocked: stance === "uncertain" && blocked === true,
+  };
 }
 
 // The note the Auditor puts in front of a contradicted stance's reason

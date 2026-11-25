@@ -62,7 +62,9 @@ export function bannerImpactSentence(e: PolicyEvent): string {
   const unsure = e.auditorUnsure ?? 0;
   const dissent = disagrees > 0 ? ` The Auditor disagrees with ${disagrees} ${plural(disagrees, "verdict", "verdicts")}.` : "";
   const contradicted = unsure > 0 ? ` The Auditor contradicted itself on ${unsure} ${plural(unsure, "verdict", "verdicts")}.` : "";
-  return `${briefSentence(e)}${dissent}${contradicted}`;
+  const blocked = e.guardrailBlocked ?? 0;
+  const notChecked = blocked > 0 ? ` The guardrail blocked the check on ${blocked} ${plural(blocked, "verdict", "verdicts")}.` : "";
+  return `${briefSentence(e)}${dissent}${contradicted}${notChecked}`;
 }
 
 function briefSentence(e: PolicyEvent): string {
@@ -89,6 +91,8 @@ export type DashboardStats = {
   auditorDisagrees: number;
   /** The part of actionRequired that's there because the Auditor contradicted its stance. */
   auditorUnsure: number;
+  /** The part of actionRequired that's there because the guardrail blocked the check (ADR-0006). */
+  guardrailBlocked: number;
   /** Affected assessments with no sent brief. */
   briefsToSend: number;
   /** Brief rows that exist but aren't sent, summed over events. */
@@ -114,6 +118,7 @@ export function dashboardStats(input: {
     actionRequired: countActionRequired(input.impacts, input.briefs),
     auditorDisagrees: rows.filter((r) => r.actionReason === "auditor-disagrees").length,
     auditorUnsure: rows.filter((r) => r.actionReason === "auditor-unsure").length,
+    guardrailBlocked: rows.filter((r) => r.actionReason === "guardrail-blocked").length,
     briefsToSend: unsentAffected.length,
     briefsDrafted: input.events.reduce((n, e) => n + e.briefsUnsent, 0),
     eventsThisMonth: input.detectedThisMonth,
@@ -127,6 +132,7 @@ export function actionSub(s: DashboardStats): string {
   const flags = [
     s.auditorDisagrees > 0 ? `Auditor disagrees on ${s.auditorDisagrees}` : null,
     s.auditorUnsure > 0 ? `Auditor unsure on ${s.auditorUnsure}` : null,
+    s.guardrailBlocked > 0 ? `Not checked on ${s.guardrailBlocked}` : null,
   ].filter((f): f is string => f !== null);
   return flags.length > 0 ? [briefs, ...flags].join(" · ") : `${briefs}, ${s.briefsDrafted} drafted`;
 }

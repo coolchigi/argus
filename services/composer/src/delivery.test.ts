@@ -40,7 +40,7 @@ describe('classifyFailure', () => {
   });
 
   it('drops a permanent error with its reason', () => {
-    for (const reason of ['bad-input', 'guardrail-blocked', 'rule-not-found', 'model-output-unusable'] as const) {
+    for (const reason of ['bad-input', 'rule-not-found', 'model-output-unusable'] as const) {
       assert.deepEqual(classifyFailure(new PermanentError(reason, 'x')), { retryable: false, reason });
     }
   });

@@ -25,6 +25,7 @@ const emitted: string[] = [];
 const trailRows: Item[] = [];
 let trailFails = false;
 let failClient: string | null = null;
+let blockClient: string | null = null;
 const guardedTexts: string[] = [];
 const emittedDetails: Item[] = [];
 const systemPrompts: string[] = [];
@@ -89,6 +90,14 @@ before(async () => {
     });
     // The profile appears in more than one guarded block. One call is one client.
     reasoned.push(...new Set(ids));
+    if (blockClient && ids.includes(blockClient)) {
+      // The Nov 9 2026 block: HATE on the Analyst's input.
+      return {
+        stopReason: 'guardrail_intervened',
+        output: { message: { role: 'assistant', content: [{ text: 'This request was blocked by Argus content policy.' }] } },
+        trace: { guardrail: { inputAssessment: { g: { contentPolicy: { filters: [{ type: 'HATE', confidence: 'HIGH', action: 'BLOCKED', detected: true }] } } } } },
+      };
+    }
     if (failClient && ids.includes(failClient)) return { stopReason: 'end_turn', output: { message: { role: 'assistant', content: [{ text: 'junk' }] } } };
     return {
       stopReason: 'end_turn',
@@ -146,6 +155,7 @@ beforeEach(() => {
   ruleRowExtra = {};
   trailFails = false;
   failClient = null;
+  blockClient = null;
   users.length = 0;
   profiles.length = 0;
   users.push(
@@ -349,5 +359,27 @@ describe('Analyst reads what changed on the page', () => {
       assert.ok(value, `${name} is exported from rule-input.ts`);
       assert.ok(sentinel.includes(`export const ${name} = '${value}'`), `Sentinel writes the same ${name}`);
     }
+  });
+});
+
+describe('a guardrail block reaches the consultant (ADR-0006)', () => {
+  it('emits a manual-check hypothesis instead of dropping the client', async () => {
+    blockClient = 'R2-EE';
+    assert.deepEqual(await run('general'), ['R1/R1-PGP', 'R2/R2-EE']);
+    const hyp = emittedDetails.find((d) => d.clientId === 'R2-EE');
+    assert.ok(hyp, 'the blocked client still gets a hypothesis');
+    assert.equal(hyp.isAffected, true);
+    assert.equal(hyp.impactType, 'procedural');
+    assert.equal(hyp.confidence, 'low');
+    assert.deepEqual(hyp.guardrailBlock, { stage: 'input', policies: ['content:HATE'] });
+    assert.doesNotMatch(JSON.stringify(hyp), /content policy/);
+    const outcomes = Object.fromEntries(trailRows.map((r) => [r.clientId, r.outcome]));
+    assert.equal(outcomes['R2-EE'], 'guardrail-blocked');
+  });
+
+  it('leaves the marker off a hypothesis the model wrote', async () => {
+    blockClient = 'R2-EE';
+    await run('general');
+    assert.equal(emittedDetails.find((d) => d.clientId === 'R1-PGP')?.guardrailBlock, undefined);
   });
 });

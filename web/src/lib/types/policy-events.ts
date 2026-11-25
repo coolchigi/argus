@@ -60,6 +60,8 @@ export type PolicyEvent = {
   auditorDisagrees?: number;
   /** Clients whose current agent verdict carries a stance the Auditor contradicted. Optional until #42 is deployed. */
   auditorUnsure?: number;
+  /** Clients whose current agent verdict the guardrail blocked from being checked (ADR-0006). Optional until #65 is deployed. */
+  guardrailBlocked?: number;
   /** Clients whose current verdict is a consultant review. */
   consultantReviewed?: number;
   /** Corrections filed on any run of this rule. */

@@ -834,7 +834,7 @@ export class ArgusApiStack extends cdk.Stack {
     // severity, and sends SES email for high-severity impacts only. Medium and
     // low route into the weekly digest (deferred). SES runs in sandbox mode
     // until the domain is verified, which is fine for the demo path.
-    const alertsFromEmail = process.env.ARGUS_SES_FROM ?? 'alerts@tryargus.ca';
+    const alertsFromEmail = process.env.ARGUS_SES_FROM ?? 'alerts@argusrcic.com';
     const alertsDemoRecipient = process.env.ARGUS_DEMO_RCIC_EMAIL ?? '';
 
     const alertsLogGroup = new logs.LogGroup(this, 'AlertsHandlerLogs', {
@@ -958,7 +958,7 @@ export class ArgusApiStack extends cdk.Stack {
         PUBLIC_COUNTERS_TABLE: props.publicCountersTable.tableName,
         DEFAULT_FROM_EMAIL: alertsFromEmail,
         // Base of the "Verify this message" link in every sent brief.
-        ARGUS_PUBLIC_BASE_URL: process.env.ARGUS_PUBLIC_BASE_URL ?? 'https://main.d270cjhakw6y7j.amplifyapp.com',
+        ARGUS_PUBLIC_BASE_URL: process.env.ARGUS_PUBLIC_BASE_URL ?? 'https://argusrcic.com',
         // Relay From ("Name via Argus <relay>", Reply-To the consultant).
         // Off until the relay domain is verified in SES.
         BRIEFS_RELAY_ENABLED: process.env.ARGUS_BRIEFS_RELAY_ENABLED === 'true' ? 'true' : 'false',
@@ -1142,7 +1142,8 @@ export class ArgusApiStack extends cdk.Stack {
           apigwv2.CorsHttpMethod.OPTIONS,
         ],
         allowOrigins: [
-          'https://tryargus.ca',
+          'https://argusrcic.com',
+          'https://www.argusrcic.com',
           'https://main.d270cjhakw6y7j.amplifyapp.com',
           'http://localhost:3000',
           'https://phase-8-frontend.d270cjhakw6y7j.amplifyapp.com',

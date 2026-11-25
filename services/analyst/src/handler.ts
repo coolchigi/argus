@@ -11,7 +11,7 @@ import {
 } from '@aws-sdk/lib-dynamodb';
 import { randomUUID } from 'node:crypto';
 import { AFFECTED_DEFINITION } from './affected';
-import { describeGuardrailBlock, describeGuardrailDetections, guarded, readGroundingCheck, type GroundingCheck } from './guardrail';
+import { describeGuardrailBlock, describeGuardrailDetections, guarded, readGroundingCheck, type GroundingCheck, type GuardrailBlock } from './guardrail';
 import { eligibleClients, tenantFromItem, TENANT_ATTRIBUTES, type Tenant } from './eligibility';
 import { groundingTextFor, isChangesText, isPartialView, READING_CHANGES, ruleTextFor } from './rule-input';
 import { ruleWindow } from './rule-window';
@@ -122,6 +122,9 @@ type ImpactHypothesis = {
   confidence: 'low' | 'medium' | 'high';
   reasoning: string;
   groundingCheck: GroundingCheck;
+  // Set only when the guardrail blocked this call (ADR-0006). Every text
+  // field is then ours, and the Auditor makes no model call on it.
+  guardrailBlock?: GuardrailBlock;
 };
 
 export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ hypothesesEmitted: number }> => {
@@ -179,11 +182,11 @@ export const handler = async (event: EventBridgeInput | PolicyDelta): Promise<{ 
 
     for (const client of candidates) {
       const startedAt = performance.now();
-      let outcome: 'affected' | 'not-affected' | 'failed' = 'failed';
+      let outcome: 'affected' | 'not-affected' | 'guardrail-blocked' | 'failed' = 'failed';
       try {
         const hyp = await reason(delta, rule, client, runId);
         await emitHypothesis(hyp, delta, client);
-        outcome = hyp.isAffected ? 'affected' : 'not-affected';
+        outcome = hyp.guardrailBlock ? 'guardrail-blocked' : hyp.isAffected ? 'affected' : 'not-affected';
         log('info', 'hypothesis-emitted', {
           runId,
           rcicId,
@@ -434,7 +437,7 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
       policies: block.policies,
       guardedInputs: ['policy-change', 'rule-text', 'client-profile'],
     });
-    throw new Error(`guardrail-blocked at ${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`);
+    return blockedHypothesis(delta, client, block);
   }
   const detected = describeGuardrailDetections(res);
   if (detected.length > 0) log('warn', 'guardrail-detected', { runId, agent: 'analyst', rcicId: client.rcicId, clientId: client.clientId, ruleHash: delta.ruleHash, policies: detected });
@@ -468,6 +471,32 @@ async function reason(delta: PolicyDelta, rule: PolicyRule, client: ClientProfil
     confidence: partial ? 'low' : ((parsed.confidence ?? 'low') as ImpactHypothesis['confidence']),
     reasoning: parsed.reasoning ?? '(no reasoning)',
     groundingCheck: readGroundingCheck(res),
+  };
+}
+
+// The hypothesis for a call the guardrail blocked (ADR-0006). A thrown error
+// dropped the client, so the consultant never heard about the change for
+// them. All fixed text, nothing the blocked model wrote. Marked affected so
+// it reaches the consultant, the same as a rule too long to read at once.
+export function blockedHypothesis(delta: PolicyDelta, client: Pick<ClientProfile, 'rcicId' | 'clientId'>, block: GuardrailBlock): ImpactHypothesis {
+  const where = `${block.stage}: ${block.policies.join(', ') || 'unknown policy'}`;
+  return {
+    hypothesisId: randomUUID(),
+    timestamp: new Date().toISOString(),
+    rcicId: client.rcicId,
+    clientId: client.clientId,
+    policyEventId: delta.eventId,
+    ruleHash: delta.ruleHash,
+    topic: delta.topic,
+    isAffected: true,
+    impactType: 'procedural',
+    numericDelta: null,
+    narrative: `Argus couldn't check ${client.clientId}'s file against this change because the guardrail blocked the check, so it needs a manual check.`,
+    recommendedAction: "Read the IRCC page and check this client's file against it.",
+    confidence: 'low',
+    reasoning: `The guardrail blocked the Analyst's call (${where}).`,
+    groundingCheck: { grounding: null, groundingThreshold: null, relevance: null, relevanceThreshold: null },
+    guardrailBlock: block,
   };
 }
 
