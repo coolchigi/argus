@@ -98,6 +98,14 @@ function cutSide(side: string, codes: string[], room: number): string {
   return [...head, note, ...later.filter((l) => !head.includes(l))].join('\n');
 }
 
+// True when the page lists values shaped like this code (same digit count, same dot).
+// 3 different ones, so a lone placeholder such as LMIA number 00000 isn't a list.
+function listsCodesLike(page: string, code: string): boolean {
+  const shape = code.replace(/\d/g, '0');
+  const alike = new Set((page.match(/\b\d+(?:\.\d+)?\b/g) ?? []).filter((n) => n.replace(/\d/g, '0') === shape));
+  return alike.size >= 3;
+}
+
 // Stated from a search of the whole page, so "not on the page" is true when it's
 // said. A plain substring search, so a replay gets the same text. A line showing only
 // among the removed lines doesn't count as shown: the same wording can be gone from
@@ -138,7 +146,10 @@ function unchangedMentions(page: string, shown: string, codes: string[]): string
     }
   }
 
-  const missing = codes.filter((c) => !page.includes(c));
+  // Said only for a code whose kind the page lists. On a page with no occupation
+  // codes, "none of it contains 41200" read as "the rule doesn't apply" (Llama 4
+  // Maverick rejected 4 of 4 correct Oct 16 answers that way, measured 2026-11-18).
+  const missing = codes.filter((c) => !page.includes(c) && listsCodesLike(page, c));
   if (groups.size === 0 && missing.length === 0) return '';
 
   const out: string[] = [UNCHANGED_HEADER];

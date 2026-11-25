@@ -52,8 +52,14 @@ describe('ruleTextFor', () => {
   });
 
   it('says a code is absent only after searching the whole page', () => {
-    const text = ruleTextFor({ rule_content: NOC_PAGE, rule_changes: { text: ONE_ROW_ADDED } }, { ...client, nocCode: '12345' });
+    const text = ruleTextFor({ rule_content: `${NOC_PAGE}\n10001 | Another occupation`, rule_changes: { text: ONE_ROW_ADDED } }, { ...client, nocCode: '12345' });
     assert.match(text, /\[The whole page was searched\. None of it contains: 12345\.\]/);
+  });
+
+  it('says nothing about a code on a page that lists no codes of that kind', () => {
+    const page = '## Job offers\nYou do not need an LMIA. Enter 00000 as the LMIA number.';
+    const text = ruleTextFor({ rule_content: page, rule_changes: { text: ONE_ROW_ADDED } }, client);
+    assert.doesNotMatch(text, /None of it contains|OTHER PAGE TEXT/);
   });
 
   it('leaves the block out when there is no profile, as for Composer', () => {
