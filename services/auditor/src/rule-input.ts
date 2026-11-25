@@ -6,6 +6,14 @@
 
 import { profileNeedles, RULE_WINDOW_CHARS } from './rule-window.ts';
 
+// Headings that limit a section to one answer on the client's profile. A heading
+// that covers both ("with or without an LMIA") matches neither.
+const LMIA = '(?:LMIA|Labour Market Impact Assessment)\\b';
+const LIMITED_SECTIONS = [
+  { field: 'jobOfferHasLmia', heading: new RegExp(`(?<!with or )\\bwithout an? ${LMIA}`, 'i'), needs: false, when: 'the job offer has no LMIA' },
+  { field: 'jobOfferHasLmia', heading: new RegExp(`\\bwith an? ${LMIA}`, 'i'), needs: true, when: 'the job offer has an LMIA' },
+];
+
 export const CHANGES_HEADER = 'CHANGES TO THIS IRCC PAGE';
 export const ADDED_HEADER = 'LINES ADDED TO THE PAGE';
 export const REMOVED_HEADER = 'LINES REMOVED FROM THE PAGE';
@@ -27,11 +35,39 @@ export function ruleTextFor(
   const page = typeof row?.rule_content === 'string' ? row.rule_content : '';
   const changes = row?.rule_changes?.text;
   if (typeof changes !== 'string' || !changes.startsWith(CHANGES_HEADER)) return page;
+  const forClient = limitedSections(changes, profile);
 
   const codes = profileNeedles(profile);
-  const shown = fitted(changes, codes, RULE_WINDOW_CHARS - (codes.length > 0 ? UNCHANGED_MAX_CHARS + 2 : 0));
+  const shown = fitted(forClient, codes, RULE_WINDOW_CHARS - (codes.length > 0 ? UNCHANGED_MAX_CHARS + 2 : 0));
   const unchanged = unchangedMentions(page, shown, codes);
   return unchanged ? `${shown}\n\n${unchanged}` : shown;
+}
+
+// IRCC's headings say who a section is for, and the models kept dropping that: told
+// in the prompt to leave out a step the profile rules out, the signed advice still
+// carried it in 8 of 10 runs for a client with an LMIA (measured 2026-11-25). So code
+// applies the heading. Removed lines are left alone, since nobody is told to do them.
+function limitedSections(changes: string, profile?: Record<string, unknown>): string {
+  const at = changes.indexOf(`\n${REMOVED_HEADER}`);
+  const added = at === -1 ? changes : changes.slice(0, at);
+  let mode: { drop: boolean; when: string } | null = null;
+  const out: string[] = [];
+  for (const line of added.split('\n')) {
+    if (line.startsWith('Section: ')) {
+      const limit = LIMITED_SECTIONS.find((l) => l.heading.test(line));
+      const answer = limit ? profile?.[limit.field] : undefined;
+      mode = !limit || answer === limit.needs ? null : { drop: typeof answer === 'boolean', when: limit.when };
+      out.push(line);
+      if (mode?.drop) out.push(`(left out: this section applies only if ${mode.when}, and this client's profile says otherwise)`);
+    } else if (mode?.drop && line.trim()) {
+      continue;
+    } else if (mode && line.trim() && !line.startsWith('(')) {
+      out.push(`(only if ${mode.when}) ${line}`);
+    } else {
+      out.push(line);
+    }
+  }
+  return at === -1 ? out.join('\n') : out.join('\n') + changes.slice(at);
 }
 
 export function isChangesText(text: string): boolean {
@@ -179,6 +215,8 @@ export const READING_CHANGES = [
   '- A line after "(same wording, order changed)" kept its wording but not its place in the order, and "(now follows)" shows the line above it now. Order can change what a line means.',
   '- A line marked "(unchanged ...)" or "(now follows)" is shown only so the lines around it make sense. It is not part of the change.',
   '- A value missing from these lines may still be on the part of the page that is not shown, so missing from these lines is not a finding. It counts as absent from a list only when the whole list is among the added lines, or a note says the whole page was searched and does not contain it.',
+  '- A line that starts "(only if ...)" is for that case only, and the profile does not say whether it is this client\'s. Keep that "if" in the same sentence every time you state the line.',
+  '- A section marked "(left out: ...)" is not for this client. Do not mention it.',
   '- If a note says part of this change is not shown, say so in your reasoning and advise reading the page.',
   '- Before you state a step from the added lines, find the case it belongs to: the heading above it, or the "if" that opens its sentence. If the client profile does not show that case is true, open the step with that same "if", in the page\'s words. Keep "should" where the page says "should".',
   '- Report what the page tells people to enter or select as the page\'s own instruction ("IRCC\'s page says to enter..."), using the page\'s words and values. Add no words of your own about the values.',
