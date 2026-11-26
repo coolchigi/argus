@@ -165,3 +165,41 @@ describe('agent failure queues', () => {
     });
   }
 });
+
+describe('Sentinel guardrail-block alarm', () => {
+  // Sentinel keeps no snapshot on a block, so it retries the page every hour
+  // and blocks again. No queue fills and the Lambda doesn't error, so only
+  // this alarm tells the operator.
+  const filters = Object.values(all).filter((r) => r.Type === 'AWS::Logs::MetricFilter');
+  const sentinelLogsId = logicalIdOf('AWS::Logs::LogGroup', (p) => p.LogGroupName === '/aws/lambda/argus-sentinel');
+
+  it("counts Sentinel's guardrail-blocked lines and sends nothing in an hour without one", () => {
+    const hits = filters.filter((r) => JSON.stringify(r.Properties.LogGroupName) === JSON.stringify({ Ref: sentinelLogsId }));
+    assert.equal(hits.length, 1);
+    const p = hits[0].Properties;
+    assert.equal(p.FilterPattern, '{ $.msg = "guardrail-blocked" }');
+    assert.equal(p.MetricTransformations.length, 1);
+    const t = p.MetricTransformations[0];
+    assert.equal(t.MetricValue, '1');
+    // A default value would send a 0 every hour, which bills the metric
+    // every hour instead of only in hours with a block.
+    assert.equal(t.DefaultValue, undefined);
+  });
+
+  it('emails the operator on 1 block and clears after 3 hourly runs without one', () => {
+    const t = filters[0].Properties.MetricTransformations[0];
+    const alarms = Object.values(all).filter(
+      (r) => r.Type === 'AWS::CloudWatch::Alarm' && r.Properties.MetricName === t.MetricName && r.Properties.Namespace === t.MetricNamespace,
+    );
+    assert.equal(alarms.length, 1);
+    const p = alarms[0].Properties;
+    assert.equal(p.Statistic, 'Sum');
+    assert.equal(p.Period, 3600);
+    assert.equal(p.ComparisonOperator, 'GreaterThanOrEqualToThreshold');
+    assert.equal(p.Threshold, 1);
+    assert.equal(p.EvaluationPeriods, 3);
+    assert.equal(p.DatapointsToAlarm, 1);
+    assert.equal(p.TreatMissingData, 'notBreaching');
+    assert.deepEqual(p.AlarmActions, [{ Ref: topicId }]);
+  });
+});
