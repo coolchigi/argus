@@ -1284,6 +1284,31 @@ export class ArgusApiStack extends cdk.Stack {
       targets: [new targets.LambdaFunction(sentinelHandler)],
     });
 
+    // A guardrail block at Sentinel stores no snapshot, so the next hourly run
+    // retries the page and blocks again. The Lambda doesn't error and no queue
+    // fills, so this alarm is the only signal. The filter has no default
+    // value, so the metric only gets data (and is only billed) in hours with
+    // a block. 1 block alarms, and 3 hourly runs without one clear it.
+    const sentinelBlocks = new logs.MetricFilter(this, 'SentinelGuardrailBlocks', {
+      logGroup: sentinelLogGroup,
+      filterPattern: logs.FilterPattern.stringValue('$.msg', '=', 'guardrail-blocked'),
+      metricNamespace: 'Argus',
+      metricName: 'SentinelGuardrailBlocks',
+      metricValue: '1',
+    });
+    const sentinelBlockAlarm = new cloudwatch.Alarm(this, 'SentinelGuardrailBlockAlarm', {
+      alarmName: 'argus-sentinel-guardrail-blocked',
+      alarmDescription:
+        'The guardrail blocked Sentinel on an IRCC page change, so that change reaches no client until the block stops. Find the page and policy with Logs Insights on /aws/lambda/argus-sentinel, filter msg = "guardrail-blocked".',
+      metric: sentinelBlocks.metric({ period: cdk.Duration.hours(1), statistic: cloudwatch.Stats.SUM }),
+      threshold: 1,
+      comparisonOperator: cloudwatch.ComparisonOperator.GREATER_THAN_OR_EQUAL_TO_THRESHOLD,
+      evaluationPeriods: 3,
+      datapointsToAlarm: 1,
+      treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+    });
+    sentinelBlockAlarm.addAlarmAction(new cwActions.SnsAction(operatorAlarms));
+
     new events.Rule(this, 'RecallDaily', {
       ruleName: 'argus-recall-daily',
       description: 'Trigger Recall Lambda daily at 03:00 UTC to re-run stored rules from the last 30 days',
