@@ -21,6 +21,7 @@ const eb = new EventBridgeClient({});
 
 const POLICY_RULES_TABLE = requiredEnv('POLICY_RULES_TABLE');
 const BRIEFS_TABLE = requiredEnv('BRIEFS_TABLE');
+const CLIENT_PROFILES_TABLE = requiredEnv('CLIENT_PROFILES_TABLE');
 const COMPOSER_MODEL = requiredEnv('BEDROCK_COMPOSER_MODEL');
 const GUARDRAIL_ID = process.env.BEDROCK_GUARDRAIL_ID;
 const GUARDRAIL_VERSION = process.env.BEDROCK_GUARDRAIL_VERSION ?? 'DRAFT';
@@ -187,8 +188,8 @@ async function composeOne(assessment: Assessment, runId: string): Promise<Outcom
     return 'already-drafted';
   }
 
-  const rule = await loadRule(assessment.ruleHash);
-  const draft = await compose(assessment, rule.agentText, runId);
+  const [rule, profile] = await Promise.all([loadRule(assessment.ruleHash), loadSectionAnswers(assessment)]);
+  const draft = await compose(assessment, ruleTextFor(rule.row, profile), runId);
 
   const now = new Date().toISOString();
   try {
@@ -272,12 +273,25 @@ async function composeOne(assessment: Assessment, runId: string): Promise<Outcom
 // A brief with no rule text would state IRCC facts from model memory, so a
 // missing rule stops the draft. Rules are never deleted (ADR-0002), so a
 // retry would find the same nothing.
-async function loadRule(ruleHash: string): Promise<{ content: string; agentText: string; severity: string | null }> {
+async function loadRule(ruleHash: string): Promise<{ content: string; row: Record<string, unknown>; severity: string | null }> {
   const res = await ddb.send(new GetCommand({ TableName: POLICY_RULES_TABLE, Key: { rule_hash: ruleHash } }));
   const content = res.Item?.rule_content;
   const severity = res.Item?.severity;
   if (typeof content !== 'string' || !content.trim()) throw new PermanentError('rule-not-found', `no rule_content for rule ${ruleHash}`);
-  return { content, agentText: ruleTextFor(res.Item), severity: typeof severity === 'string' ? severity : null };
+  return { content, row: res.Item ?? {}, severity: typeof severity === 'string' ? severity : null };
+}
+
+// The answers that decide which limited sections are this client's (rule-input.ts),
+// and nothing else from the profile. A missing row or answer reads as not known.
+async function loadSectionAnswers(assessment: Assessment): Promise<Record<string, unknown>> {
+  const res = await ddb.send(
+    new GetCommand({
+      TableName: CLIENT_PROFILES_TABLE,
+      Key: { rcicId: assessment.rcicId, clientId: assessment.clientId },
+      ProjectionExpression: 'rcicId, clientId, jobOfferHasLmia',
+    }),
+  );
+  return typeof res.Item?.jobOfferHasLmia === 'boolean' ? { jobOfferHasLmia: res.Item.jobOfferHasLmia } : {};
 }
 
 // Strongly consistent, so a record redelivered right after a write sees it.

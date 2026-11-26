@@ -756,6 +756,7 @@ export class ArgusApiStack extends cdk.Stack {
       environment: {
         POLICY_RULES_TABLE: props.policyRulesTable.tableName,
         BRIEFS_TABLE: props.briefsTable.tableName,
+        CLIENT_PROFILES_TABLE: props.clientProfilesTable.tableName,
         BEDROCK_COMPOSER_MODEL: 'us.amazon.nova-lite-v1:0',
         AUDIT_TRAIL_TABLE: props.auditTrailTable.tableName,
         BEDROCK_GUARDRAIL_ID: props.guardrail.attrGuardrailId,
@@ -775,6 +776,17 @@ export class ArgusApiStack extends cdk.Stack {
       new iam.PolicyStatement({
         actions: ['dynamodb:GetItem'],
         resources: [props.briefsTable.tableArn],
+      }),
+    );
+    // One answer from the client's profile. The condition limits it to that attribute.
+    composerHandler.addToRolePolicy(
+      new iam.PolicyStatement({
+        actions: ['dynamodb:GetItem'],
+        resources: [props.clientProfilesTable.tableArn],
+        conditions: {
+          'ForAllValues:StringEquals': { 'dynamodb:Attributes': ['rcicId', 'clientId', 'jobOfferHasLmia'] },
+          StringEqualsIfExists: { 'dynamodb:Select': 'SPECIFIC_ATTRIBUTES' },
+        },
       }),
     );
     props.impactAssessmentsTable.grantStreamRead(composerHandler);

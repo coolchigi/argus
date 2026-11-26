@@ -47,6 +47,8 @@ let handler: Handler;
 let buildComposeRequest: (assessment: unknown, ruleContent: string) => Request;
 let logLines: Record<string, unknown>[] = [];
 let ruleChangesText: string | null = null;
+let profileRow: Record<string, unknown> | null = null;
+const profileReads: unknown[] = [];
 // The code appends this when the model leaves the citation out, and nothing else.
 const cited = (body: string, url: unknown) => `${body}\n\n[IRCC's notice](${url})`;
 const insertedUrl = (a: object) => (a as { citationSourceUrl?: unknown }).citationSourceUrl ?? 'https://www.canada.ca/x';
@@ -66,6 +68,7 @@ before(async () => {
   });
   Object.assign(process.env, {
     POLICY_RULES_TABLE: 'rules',
+    CLIENT_PROFILES_TABLE: 'profiles',
     BRIEFS_TABLE: 'briefs',
     BEDROCK_COMPOSER_MODEL: 'us.test-composer',
     AUDIT_TRAIL_TABLE: 'audit-trail',
@@ -77,6 +80,10 @@ before(async () => {
     const findBrief = (key: Item) => briefs.find((b) => b.rcicId === key.rcicId && b.briefId === key.briefId);
     if (cmd instanceof GetCommand && input.TableName === 'rules') {
       return ruleMissing ? {} : { Item: { rule_hash: 'h1', rule_content: ruleContent, severity: 'high', ...(ruleChangesText ? { rule_changes: { text: ruleChangesText } } : {}) } };
+    }
+    if (cmd instanceof GetCommand && input.TableName === 'profiles') {
+      profileReads.push(cmd.input);
+      return profileRow ? { Item: profileRow } : {};
     }
     if (cmd instanceof GetCommand && input.TableName === 'briefs') {
       assert.equal(input.ConsistentRead, true, 'the brief read must be strongly consistent');
@@ -780,6 +787,46 @@ describe('Composer reads what changed on the page', () => {
     it('still asks the model when anything was added', async () => {
       await draftFor(CHANGED_LINES, 'removal#c3');
       assert.ok(lastComposeRequest, 'the handler called Bedrock');
+    });
+  });
+
+  describe('a section IRCC limits to some clients', () => {
+    const LIMITED = ['CHANGES TO THIS IRCC PAGE', 'Page: https://www.canada.ca/x', 'Detected: 2026-10-16', '', 'LINES ADDED TO THE PAGE', 'Section: Job offer > If you have a job offer without an LMIA', 'LMIA Number | 00000', '', 'LINES REMOVED FROM THE PAGE', '(none)'].join('\n');
+
+    async function promptFor(profile: Record<string, unknown> | null, key: string): Promise<string> {
+      ruleContent = PAGE_WITH_OLDER_TEXT;
+      ruleChangesText = LIMITED;
+      profileRow = profile;
+      profileReads.length = 0;
+      modelReply = draftWith('A change.');
+      try {
+        await compose([insert({ assessmentKey: key })]);
+      } finally {
+        ruleChangesText = null;
+        profileRow = null;
+      }
+      assert.ok(lastComposeRequest);
+      return promptText(lastComposeRequest);
+    }
+
+    it('never shows the model a step the profile rules out', async () => {
+      assert.doesNotMatch(await promptFor({ jobOfferHasLmia: true }, 'limited#1'), /00000/);
+    });
+
+    it('marks the step with its case when the profile has no answer, or no row', async () => {
+      assert.match(await promptFor({}, 'limited#2'), /\(only if the job offer has no LMIA\) LMIA Number/);
+      assert.match(await promptFor(null, 'limited#3'), /\(only if the job offer has no LMIA\) LMIA Number/);
+    });
+
+    it('shows the step as it is to the client it is for', async () => {
+      const sent = await promptFor({ jobOfferHasLmia: false }, 'limited#4');
+      assert.match(sent, /LMIA Number \| 00000/);
+      assert.doesNotMatch(sent, /\(only if the job offer has no LMIA\) LMIA/);
+    });
+
+    it('reads that one answer and nothing else from the profile', async () => {
+      await promptFor({ jobOfferHasLmia: true }, 'limited#5');
+      assert.equal((profileReads[0] as { ProjectionExpression: string }).ProjectionExpression, 'rcicId, clientId, jobOfferHasLmia');
     });
   });
 

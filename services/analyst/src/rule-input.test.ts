@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { groundingTextFor, isPartialView, ruleTextFor } from './rule-input.ts';
+import { groundingTextFor, isPartialView, isRemovalOnly, ruleTextFor } from './rule-input.ts';
 import { RULE_WINDOW_CHARS, ruleWindow } from './rule-window.ts';
 
 function changeText(added: string, removed = '(none)'): string {
@@ -134,3 +134,58 @@ describe('groundingTextFor', () => {
     assert.equal(groundingTextFor(NOC_PAGE), NOC_PAGE);
   });
 });
+
+describe('sections IRCC limits to some clients', () => {
+  // Real heading and steps from the job offer page, Oct 16 2026. A client with an LMIA
+  // was told to enter the fake one in 6 of 10 signed records (measured 2026-11-25).
+  const changes = changeText(
+    ['Section: Job offer', 'General line.', '', 'Section: Job offer > How to update your profile if you have a job offer without an LMIA', '(unchanged lead-in) Enter this:', 'LMIA Number | 00000', '', 'Section: Job offer > Other', 'Last line.'].join('\n'),
+    'Section: Job offer > If you have a job offer without an LMIA\nOld step.',
+  );
+  const textFor = (p?: Record<string, unknown>) => ruleTextFor({ rule_content: 'x', rule_changes: { text: changes } }, p);
+
+  it('leaves the section out when the profile rules it out, says so, and keeps the rest', () => {
+    const text = textFor({ jobOfferHasLmia: true });
+    assert.doesNotMatch(text, /00000|Enter this/);
+    assert.match(text, /\(left out: this section applies only if the job offer has no LMIA/);
+    assert.match(text, /General line\.[\s\S]*Last line\./);
+  });
+
+  it('marks each line of it when the answer is missing, and no other line', () => {
+    for (const p of [undefined, {}]) {
+      const text = textFor(p);
+      assert.match(text, /^\(only if the job offer has no LMIA\) LMIA Number \| 00000$/m);
+      assert.match(text, /^General line\.$/m);
+      assert.match(text, /^Last line\.$/m);
+    }
+  });
+
+  it('changes nothing for the client the section is for', () => {
+    assert.equal(textFor({ jobOfferHasLmia: false }), changes);
+  });
+
+  it('works the other way round for a section about offers that have one', () => {
+    const withOne = changeText('Section: If you have an offer with an LMIA\nEnter its number.');
+    const t = (v: unknown) => ruleTextFor({ rule_content: 'x', rule_changes: { text: withOne } }, { jobOfferHasLmia: v });
+    assert.doesNotMatch(t(false), /Enter its number/);
+    assert.match(t(true), /^Enter its number\.$/m);
+  });
+
+  it('leaves a heading alone when it covers both cases or only names an LMIA', () => {
+    for (const h of ['Job offers with or without an LMIA', 'Who needs an LMIA', 'LMIA basics']) {
+      const c = changeText(`Section: ${h}\nA line.`);
+      assert.equal(ruleTextFor({ rule_content: 'x', rule_changes: { text: c } }, { jobOfferHasLmia: true }), c, h);
+    }
+  });
+
+  it('leaves removed lines alone', () => {
+    assert.match(textFor({ jobOfferHasLmia: true }), /LINES REMOVED FROM THE PAGE[\s\S]*Old step\./);
+  });
+
+  it('is never mistaken for a removal-only change when it drops the only section', () => {
+    const only = changeText('Section: If you have a job offer without an LMIA\nStep.', 'Section: A\nGone.');
+    const text = ruleTextFor({ rule_content: 'x', rule_changes: { text: only } }, { jobOfferHasLmia: true });
+    assert.equal(isRemovalOnly(text), false);
+  });
+});
+
